@@ -1,4 +1,5 @@
 import { SignJWT, jwtVerify } from "jose";
+import type { NextRequest } from "next/server";
 import { cookies } from "next/headers";
 import { db } from "./db";
 
@@ -71,12 +72,26 @@ export async function createSession(
   return token;
 }
 
+/** Use Secure cookies only when the client connection is HTTPS (incl. TLS at nginx). */
+export function shouldUseSecureCookies(request?: NextRequest): boolean {
+  if (request) {
+    const forwarded = request.headers.get("x-forwarded-proto");
+    if (forwarded) return forwarded === "https";
+    return request.nextUrl.protocol === "https:";
+  }
+  const base =
+    process.env.APP_URL ||
+    process.env.NEXT_PUBLIC_APP_URL ||
+    "";
+  return base.startsWith("https://");
+}
+
 // Set the session cookie
-export async function setSessionCookie(token: string) {
+export async function setSessionCookie(token: string, request?: NextRequest) {
   const cookieStore = await cookies();
   cookieStore.set(COOKIE_NAME, token, {
     httpOnly: true,
-    secure: process.env.NODE_ENV === "production",
+    secure: shouldUseSecureCookies(request),
     sameSite: "lax",
     maxAge: SESSION_DURATION,
     path: "/",
