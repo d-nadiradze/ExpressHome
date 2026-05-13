@@ -18,7 +18,8 @@ jobs:
       JWT_SECRET: ci-jwt-secret-must-be-long-enough-for-hs256
       ENCRYPTION_KEY: "12345678901234567890123456789012"
       NEXT_PUBLIC_APP_URL: http://localhost:3000
-      NODE_ENV: production
+      # Do not set NODE_ENV=production here — npm ci would skip devDependencies
+      # and Next.js could not load next.config.ts (needs typescript).
 
     steps:
       - uses: actions/checkout@v4
