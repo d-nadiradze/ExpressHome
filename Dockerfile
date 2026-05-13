@@ -33,7 +33,7 @@ COPY --from=builder --chown=nextjs:nodejs /app/node_modules/@prisma ./node_modul
 COPY --from=builder --chown=nextjs:nodejs /app/node_modules/playwright ./node_modules/playwright
 COPY --from=builder --chown=nextjs:nodejs /app/node_modules/playwright-core ./node_modules/playwright-core
 
-RUN npx playwright install chromium && \
+RUN node node_modules/playwright-core/cli.js install chromium && \
     chown -R nextjs:nodejs /ms-playwright
 
 USER nextjs
