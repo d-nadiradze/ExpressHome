@@ -1,0 +1,33 @@
+# Dependencies
+node_modules/
+
+# Next.js build
+.next/
+out/
+
+# Environment variables
+.env
+.env.local
+.env.production
+
+# Database
+prisma/*.db
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# IDE
+.vscode/
+.idea/
+
+# Docker volumes
+certbot/
+mysql-data/
+
+# Debug/test scripts
+scripts/
+
+# Misc
+*.log
+npm-debug.log*

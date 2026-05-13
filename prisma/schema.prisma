@@ -1,0 +1,118 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "mysql"
+  url      = env("DATABASE_URL")
+}
+
+enum Role {
+  USER
+  MODERATOR
+  ADMIN
+}
+
+model User {
+  id            String         @id @default(cuid())
+  email         String         @unique
+  passwordHash  String
+  name          String?
+  role          Role           @default(USER)
+  isActive      Boolean        @default(true)
+  createdAt     DateTime       @default(now())
+  updatedAt     DateTime       @updatedAt
+
+  session       Session?
+  myhomeAccount MyhomeAccount?
+  parsedListings ParsedListing[]
+
+  @@map("users")
+}
+
+// One active session per user (userId is unique)
+model Session {
+  id        String   @id @default(cuid())
+  userId    String   @unique
+  token     String   @unique @db.VarChar(512)
+  expiresAt DateTime
+  createdAt DateTime @default(now())
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@map("sessions")
+}
+
+model MyhomeAccount {
+  id               String   @id @default(cuid())
+  userId           String   @unique
+  myhomeEmail      String
+  myhomePassword   String   @db.Text  // AES-256 encrypted
+  isVerified       Boolean  @default(false)
+  lastLoginAt      DateTime?
+  createdAt        DateTime @default(now())
+  updatedAt        DateTime @updatedAt
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@map("myhome_accounts")
+}
+
+model ParsedListing {
+  id             String   @id @default(cuid())
+  userId         String
+  sourceUrl      String   @db.VarChar(1024)
+  title          String?
+
+  // Property classification
+  propertyType   String?  // ბინა, კერძო სახლი, აგარაკი, მიწის ნაკვეთი, კომერციული ფართი, სასტუმრო
+  dealType       String?  // იყიდება, ქირავდება, გირავდება, ქირავდება დღიურად
+  buildingStatus String?  // ძველი აშენებული, ახალი აშენებული, მშენებარე
+  condition      String?  // ახალი გარემონტებული, სარემონტო, თეთრი კარკასი, etc.
+
+  // Location
+  city           String?
+  address        String?
+  street         String?
+  streetNumber   String?
+  cadastralCode  String?
+
+  // Pricing
+  price          String?
+  pricePerSqm    String?
+  currency       String?
+
+  // Specs
+  area           String?
+  rooms          String?
+  bedrooms       String?
+  floor          String?
+  totalFloors    String?
+  projectType    String?  // არასტანდარტული, etc.
+
+  // Extras
+  bathrooms      String?  // სველი წერტილი
+  balconyArea    String?
+  verandaArea    String?
+  loggiaArea     String?
+
+  // Content
+  description    String?  @db.LongText
+  images         Json?    // array of image URLs
+  rawData        Json?    // full scraped data object
+
+  postStatus     PostStatus @default(PENDING)
+  postUrl        String?  // URL of created post on myhome.ge
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@map("parsed_listings")
+}
+
+enum PostStatus {
+  PENDING
+  POSTED
+  FAILED
+}

@@ -1,0 +1,16 @@
+node_modules
+.next
+.env
+.env.local
+.git
+.gitignore
+*.md
+scripts/
+certbot/
+nginx/
+docker-compose.yml
+Dockerfile
+.dockerignore
+.cursor/
+terminals/
+agent-transcripts/
