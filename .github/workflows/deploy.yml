@@ -1,0 +1,37 @@
+name: Deploy
+
+on:
+  workflow_dispatch:
+    inputs:
+      branch:
+        description: "Git branch to deploy"
+        required: true
+        default: main
+
+# Required repository secrets (Settings → Secrets and variables → Actions):
+#   DEPLOY_HOST       — server hostname or IP
+#   DEPLOY_USER       — SSH user (e.g. ubuntu)
+#   DEPLOY_SSH_KEY    — private key (full PEM, including BEGIN/END lines)
+#
+# Optional repository variable DEPLOY_APP_DIR (defaults to /opt/myhome-parser)
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Deploy over SSH
+        uses: appleboy/ssh-action@v1.2.5
+        with:
+          host: ${{ secrets.DEPLOY_HOST }}
+          username: ${{ secrets.DEPLOY_USER }}
+          key: ${{ secrets.DEPLOY_SSH_KEY }}
+          script_stop: true
+          script: |
+            set -e
+            APP_DIR='${{ vars.DEPLOY_APP_DIR }}'
+            [ -z "$APP_DIR" ] && APP_DIR=/opt/myhome-parser
+            cd "$APP_DIR"
+            git fetch origin
+            git checkout "${{ github.event.inputs.branch }}"
+            git pull origin "${{ github.event.inputs.branch }}"
+            sudo docker compose up -d --build app

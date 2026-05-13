@@ -153,6 +153,12 @@ src/
 
 ---
 
+## GitHub CI/CD
+
+Step-by-step setup (CI on every push, manual deploy over SSH): **[docs/GITHUB_CI_CD.md](docs/GITHUB_CI_CD.md)**.
+
+---
+
 ## Production deployment
 
 1. Set `NODE_ENV=production` in your environment
