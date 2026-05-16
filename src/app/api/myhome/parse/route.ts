@@ -31,7 +31,7 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    const d = result.data;
+    const d = result.data; // price in USD from listing page currency toggle
     const listing = await db.parsedListing.create({
       data: {
         userId,
