@@ -55,6 +55,7 @@ let postSession: {
 const PREFILL_PAUSE_MS = 40;
 const CHIP_CLICK_TIMEOUT_MS = 1500;
 const DROPDOWN_PAUSE_MS = 60;
+const LUK_DROPDOWN_PAUSE_MS = 400;
 
 async function prefillPause(page: Page, ms = PREFILL_PAUSE_MS) {
   if (ms > 0) await page.waitForTimeout(ms);
@@ -81,6 +82,457 @@ function escapeRegExp(text: string): string {
   return text.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 }
 
+/** Normalize form field labels (trim, drop trailing *). */
+function normFieldLabel(text: string): string {
+  return (text || "").replace(/\s*\*\s*$/, "").trim().replace(/\s+/g, " ");
+}
+
+/** Dropdown option variants — prefer listing form (often genitive: თუხარელის). */
+function projectTypeOptionVariants(value: string): string[] {
+  const raw = normFieldLabel(dedupeRepeatedLabelValue(value));
+  if (!raw) return [];
+  const ordered: string[] = [raw];
+  if (/ის$/u.test(raw)) ordered.push(raw.replace(/ის$/u, "ი"));
+  else if (/ი$/u.test(raw) && !/ის$/u.test(raw)) ordered.push(`${raw}ს`);
+  return [...new Set(ordered)];
+}
+
+/** Parsed rawData may use გათბობა; tolerate old typo key გათბომა. */
+function getRawPreferenceValue(
+  listing: MyhomeListing,
+  label: string
+): string {
+  const rd = listing.rawData || {};
+  const direct = rd[label]?.trim();
+  if (direct) return direct;
+  if (label === "გათბობა") return rd["გათბომა"]?.trim() || "";
+  return "";
+}
+
+async function scrollToFormField(page: Page, label: string): Promise<void> {
+  const re = new RegExp(label.replace(/\./g, "\\."), "iu");
+  await page
+    .locator("label, span, p, h2, h3, h4, div")
+    .filter({ hasText: re })
+    .first()
+    .scrollIntoViewIfNeeded()
+    .catch(() => {});
+  await prefillPause(page, 30);
+}
+
+async function expandCreateFormSections(page: Page): Promise<void> {
+  await page
+    .getByRole("button", { name: "ყველა პარამეტრი" })
+    .click({ timeout: CHIP_CLICK_TIMEOUT_MS })
+    .catch(() => expandAllParameterSections(page));
+  await page
+    .getByText(/დამატებითი პარამეტრები/i)
+    .first()
+    .click({ timeout: CHIP_CLICK_TIMEOUT_MS })
+    .catch(() => {});
+  await prefillPause(page, 120);
+}
+
+async function markLukFieldTrigger(
+  page: Page,
+  sectionLabel: string
+): Promise<boolean> {
+  return page.evaluate((label) => {
+    document.querySelectorAll("[data-prefill-luk-trigger]").forEach((el) => {
+      el.removeAttribute("data-prefill-luk-trigger");
+      el.removeAttribute("data-prefill-field-label");
+    });
+
+    function norm(s: string) {
+      return (s || "").replace(/\s*\*\s*$/, "").trim().replace(/\s+/g, " ");
+    }
+    function labelMatches(text: string) {
+      const t = norm(text).replace(/\s*\*$/, "");
+      const l = norm(label);
+      if (l === "პროექტის ტიპი" || l === "გათბობა") return t === l;
+      return t === l || t.startsWith(l);
+    }
+
+    for (const el of document.querySelectorAll(
+      "label, span, p, div, motion.div, h2, h3, h4"
+    )) {
+      if (!labelMatches(el.textContent || "")) continue;
+      let node: Element | null = el.parentElement;
+      for (let depth = 0; depth < 16 && node; depth++) {
+        const sel =
+          node.querySelector("motion.div[class*='luk-custom-select']") ||
+          node.querySelector("motion.div[class*='custom-select']") ||
+          node.querySelector(".luk-custom-select") ||
+          node.querySelector("[role='combobox']") ||
+          node.querySelector("[aria-haspopup='listbox']");
+        if (sel) {
+          sel.setAttribute("data-prefill-luk-trigger", "1");
+          sel.setAttribute("data-prefill-field-label", label);
+          return true;
+        }
+        node = node.parentElement;
+      }
+    }
+    return false;
+  }, sectionLabel);
+}
+
+async function lukFieldShowsValue(
+  page: Page,
+  sectionLabel: string,
+  variants: string[]
+): Promise<boolean> {
+  return page.evaluate(
+    ({ sectionLabel, variants: targets }) => {
+      function norm(s: string) {
+        return (s || "").replace(/\s+/g, " ").trim();
+      }
+      function exactMatch(text: string) {
+        const t = norm(text);
+        if (!t || /აირჩიეთ/i.test(t)) return false;
+        return targets.some((target) => {
+          const o = norm(target);
+          return t === o || t === o.replace(/ის$/u, "ი") || t === `${o}ს`;
+        });
+      }
+
+      const trigger = document.querySelector(
+        `[data-prefill-field-label="${sectionLabel}"]`
+      );
+      if (!trigger) return false;
+
+      const valueParts = trigger.querySelectorAll(
+        "[class*='single-value'], [class*='singleValue'], [class*='value-container'] > *"
+      );
+      for (const el of valueParts) {
+        if (exactMatch(el.textContent || "")) return true;
+      }
+
+      const control = trigger.querySelector(
+        "[class*='control'], [class*='value-container']"
+      );
+      if (control && exactMatch(control.textContent || "")) return true;
+
+      return exactMatch(trigger.textContent || "");
+    },
+    { sectionLabel, variants }
+  );
+}
+
+async function markLukFieldMenu(page: Page): Promise<boolean> {
+  return page.evaluate(() => {
+    document.querySelectorAll("[data-prefill-luk-menu]").forEach((el) => {
+      el.removeAttribute("data-prefill-luk-menu");
+    });
+
+    const trigger = document.querySelector("[data-prefill-luk-trigger='1']");
+    if (!trigger) return false;
+
+    function markMenu(menu: Element | null): boolean {
+      if (!menu) return false;
+      const style = window.getComputedStyle(menu);
+      if (style.display === "none" || style.visibility === "hidden") return false;
+      const r = menu.getBoundingClientRect();
+      if (r.height < 20 || r.width < 40) return false;
+      menu.setAttribute("data-prefill-luk-menu", "1");
+      return true;
+    }
+
+    const controlsId = trigger.getAttribute("aria-controls");
+    if (controlsId) {
+      const linked = document.getElementById(controlsId);
+      if (markMenu(linked)) return true;
+    }
+
+    const lukRoot =
+      trigger.closest("[class*='luk-custom-select']")?.parentElement || trigger.parentElement;
+    if (lukRoot) {
+      for (const menu of lukRoot.querySelectorAll(
+        '[role="listbox"], [class*="menu"], [class*="dropdown"]'
+      )) {
+        if (markMenu(menu)) return true;
+      }
+    }
+
+    const tr = trigger.getBoundingClientRect();
+    let best: Element | null = null;
+    let bestScore = Infinity;
+    for (const menu of document.querySelectorAll('[role="listbox"]')) {
+      const style = window.getComputedStyle(menu);
+      if (style.display === "none" || style.visibility === "hidden") continue;
+      const r = menu.getBoundingClientRect();
+      if (r.height < 24 || r.width < 50) continue;
+      if (r.top < tr.bottom - 8) continue;
+      const score = r.top - tr.bottom;
+      if (score >= 0 && score < bestScore) {
+        bestScore = score;
+        best = menu;
+      }
+    }
+    return markMenu(best);
+  });
+}
+
+function optionTextMatchesVariant(text: string, variant: string): boolean {
+  const t = (text || "").replace(/\s+/g, " ").trim();
+  const o = variant.replace(/\s+/g, " ").trim();
+  if (!t || !o) return false;
+  return t === o || t === o.replace(/ის$/u, "ი") || t === `${o}ს`;
+}
+
+async function clickLukMenuOption(page: Page, variant: string): Promise<boolean> {
+  const marked = await page.evaluate((target) => {
+    document.querySelectorAll("[data-prefill-luk-option]").forEach((el) => {
+      el.removeAttribute("data-prefill-luk-option");
+    });
+    const menu = document.querySelector("[data-prefill-luk-menu='1']");
+    if (!menu) return false;
+
+    function norm(s: string) {
+      return (s || "").replace(/\s+/g, " ").trim();
+    }
+    function matches(t: string) {
+      const o = norm(target);
+      return t === o || t === o.replace(/ის$/u, "ი") || t === `${o}ს`;
+    }
+
+    const candidates: { el: Element; depth: number; len: number }[] = [];
+    for (const el of menu.querySelectorAll(
+      '[role="option"], [class*="option"], li, div, span, p'
+    )) {
+      const t = norm(el.textContent || "");
+      if (!matches(t)) continue;
+      if (t.length > 60) continue;
+      let depth = 0;
+      let p: Element | null = el.parentElement;
+      while (p && p !== menu) {
+        depth++;
+        p = p.parentElement;
+      }
+      candidates.push({ el, depth, len: t.length });
+    }
+
+    candidates.sort((a, b) => b.depth - a.depth || a.len - b.len);
+    const pick = candidates[0]?.el;
+    if (!pick) return false;
+
+    const clickTarget =
+      pick.closest("[role='option']") ||
+      pick.closest('[class*="option"]') ||
+      pick.closest("li") ||
+      pick;
+    clickTarget.setAttribute("data-prefill-luk-option", "1");
+    return true;
+  }, variant);
+
+  if (!marked) return false;
+
+  const opt = page.locator("[data-prefill-luk-option='1']").first();
+  await opt.scrollIntoViewIfNeeded().catch(() => {});
+  const box = await opt.boundingBox().catch(() => null);
+  if (box) {
+    await page.mouse.click(box.x + box.width / 2, box.y + box.height / 2);
+  } else {
+    await opt.click({ timeout: CHIP_CLICK_TIMEOUT_MS, force: true });
+  }
+  return true;
+}
+
+/** Luk/custom-select on statements.myhome.ge — Playwright-only clicks, menu scoped to field. */
+async function prefillLukDropdownField(
+  page: Page,
+  sectionLabel: string,
+  optionText: string,
+  placeholder?: string
+): Promise<boolean> {
+  const value = optionText.trim();
+  if (!value) return false;
+
+  const variants =
+    sectionLabel === "პროექტის ტიპი"
+      ? projectTypeOptionVariants(value)
+      : [value];
+
+  await scrollToFormField(page, sectionLabel);
+
+  for (let attempt = 0; attempt < 3; attempt++) {
+    await closeOpenDropdowns(page);
+
+    const marked = await markLukFieldTrigger(page, sectionLabel);
+    if (marked) {
+      const trigger = page.locator("[data-prefill-luk-trigger='1']").first();
+      await trigger.scrollIntoViewIfNeeded().catch(() => {});
+      const inner = trigger
+        .locator(
+          "[class*='control'], [class*='indicator'], [class*='value-container']"
+        )
+        .first();
+      if (await inner.isVisible({ timeout: 500 }).catch(() => false)) {
+        await inner.click({ timeout: CHIP_CLICK_TIMEOUT_MS, force: true });
+      } else {
+        await trigger.click({ timeout: CHIP_CLICK_TIMEOUT_MS, force: true });
+      }
+    } else {
+      const label = page
+        .locator("label, span, p")
+        .filter({ hasText: new RegExp(`^${escapeRegExp(sectionLabel)}`, "iu") })
+        .first();
+      const select = label
+        .locator(
+          "xpath=ancestor::*[position()<=10]//*[contains(@class,'luk-custom-select') or contains(@class,'custom-select')][1]"
+        )
+        .first();
+      await select.click({ timeout: CHIP_CLICK_TIMEOUT_MS, force: true }).catch(() => {});
+    }
+
+    await prefillPause(page, LUK_DROPDOWN_PAUSE_MS);
+    await markLukFieldMenu(page);
+
+    const menu = page.locator("[data-prefill-luk-menu='1']");
+    for (const variant of variants) {
+      const options = menu.locator('[role="option"], [class*="option"]');
+      const count = await options.count().catch(() => 0);
+      for (let i = 0; i < count; i++) {
+        const opt = options.nth(i);
+        const text = ((await opt.textContent().catch(() => "")) || "").trim();
+        if (!optionTextMatchesVariant(text, variant)) continue;
+        await opt.scrollIntoViewIfNeeded().catch(() => {});
+        await opt.click({ timeout: CHIP_CLICK_TIMEOUT_MS, force: true });
+        await prefillPause(page, 120);
+        if (await lukFieldShowsValue(page, sectionLabel, variants)) return true;
+        await markLukFieldMenu(page);
+      }
+
+      if (await clickLukMenuOption(page, variant)) {
+        await prefillPause(page, 120);
+        if (await lukFieldShowsValue(page, sectionLabel, variants)) return true;
+        await markLukFieldMenu(page);
+      }
+    }
+
+    if (sectionLabel !== "პროექტის ტიპი") {
+      const searchInput = page
+        .locator("[data-prefill-luk-trigger='1'] input")
+        .first();
+      if (await searchInput.isVisible({ timeout: 400 }).catch(() => false)) {
+        await searchInput.fill(variants[0]);
+        await prefillPause(page, 200);
+        const filtered = menu.locator('[role="option"], [class*="option"]').first();
+        if (await filtered.isVisible({ timeout: 500 }).catch(() => false)) {
+          const text = ((await filtered.textContent().catch(() => "")) || "").trim();
+          if (optionTextMatchesVariant(text, variants[0])) {
+            await filtered.click({ timeout: CHIP_CLICK_TIMEOUT_MS, force: true });
+            if (await lukFieldShowsValue(page, sectionLabel, variants)) return true;
+          }
+        }
+      }
+    }
+  }
+
+  return false;
+}
+
+/** Chip row or dropdown (გათბობა may be either on the create form). */
+async function prefillPreferenceField(
+  page: Page,
+  sectionLabel: string,
+  value: string,
+  placeholder?: string
+): Promise<boolean> {
+  await scrollToFormField(page, sectionLabel);
+  await clickChipInSection(page, sectionLabel, value);
+  await prefillPause(page, 80);
+  const chipOk = await page.evaluate(
+    ({ sectionLabel, value }) => {
+      function norm(s: string) {
+        return (s || "").replace(/\s+/g, " ").trim();
+      }
+      for (const el of document.querySelectorAll("label, span, p, motion.div, div")) {
+        if (norm(el.textContent || "") !== norm(sectionLabel)) continue;
+        let node: Element | null = el.parentElement;
+        for (let depth = 0; depth < 12 && node; depth++) {
+          for (const chip of node.querySelectorAll(
+            "motion.div, button, [role=button], [class*='rounded']"
+          )) {
+            const t = norm(chip.textContent || "");
+            if (t !== norm(value)) continue;
+            const cls = chip.className?.toString() || "";
+            if (/border-green|bg-green|selected|active|checked|primary/i.test(cls)) {
+              return true;
+            }
+            if (chip.getAttribute("aria-pressed") === "true") return true;
+          }
+          node = node.parentElement;
+        }
+      }
+      return false;
+    },
+    { sectionLabel, value }
+  );
+  if (chipOk) return true;
+
+  return prefillLukDropdownField(page, sectionLabel, value, placeholder);
+}
+
+/**
+ * Playwright click on count chips (ოთახი, საძინებელი) — reliable React state vs evaluate .click().
+ */
+async function prefillCountChipPlaywright(
+  page: Page,
+  sectionLabels: string[],
+  rawValue: string
+): Promise<boolean> {
+  const chip = normalizeCountChipValue(rawValue);
+  if (!chip) return false;
+  const chipRe = new RegExp(`^${escapeRegExp(chip)}\\+?$`, "u");
+
+  for (const label of sectionLabels) {
+    const labelRe = new RegExp(`^${escapeRegExp(label)}(?:\\s*\\*)?$`, "iu");
+    const labelLocators = page.locator("label, span, p, div, motion.div").filter({
+      hasText: labelRe,
+    });
+    const n = await labelLocators.count();
+
+    for (let i = 0; i < n; i++) {
+      const labelEl = labelLocators.nth(i);
+      if (!(await labelEl.isVisible({ timeout: 500 }).catch(() => false))) continue;
+
+      let scope = labelEl;
+      for (let depth = 0; depth < 10; depth++) {
+        const chips = scope.getByText(chipRe, { exact: true });
+        const chipCount = await chips.count();
+        for (let c = 0; c < chipCount; c++) {
+          const chipEl = chips.nth(c);
+          if (!(await chipEl.isVisible({ timeout: 300 }).catch(() => false))) continue;
+          await chipEl.click({ timeout: CHIP_CLICK_TIMEOUT_MS, force: true });
+          await prefillPause(page, 40);
+          return true;
+        }
+        const parent = scope.locator("xpath=..");
+        if ((await parent.count()) === 0) break;
+        scope = parent;
+      }
+    }
+  }
+
+  return false;
+}
+
+/** Open პროექტის ტიპი luk-select and pick option (e.g. თუხარელი). */
+async function selectProjectTypePlaywright(
+  page: Page,
+  rawValue: string
+): Promise<boolean> {
+  const value = dedupeRepeatedLabelValue(rawValue.trim());
+  if (!value) return false;
+  return prefillLukDropdownField(
+    page,
+    "პროექტის ტიპი",
+    value,
+    "აირჩიეთ პროექტის ტიპი"
+  );
+}
+
 // Click a chip inside a labeled section (სტატუსი, მდგომარეობა). Playwright click updates React state.
 async function clickChipInSection(
   page: Page,
@@ -99,7 +551,7 @@ async function clickChipInSection(
       function chipRowIn(node: Element): Element | null {
         for (const child of Array.from(node.children)) {
           const chips = child.querySelectorAll(
-            "button, [role='button'], div[class*='rounded'], label[class*='rounded']"
+            "motion.div,button,[role='button'],motion.div[class*='rounded'],div[class*='rounded'],label[class*='rounded']"
           );
           if (chips.length >= 2) return child;
         }
@@ -107,11 +559,14 @@ async function clickChipInSection(
       }
 
       function labelsMatch(text: string, label: string): boolean {
-        const t = norm(text);
+        const t = norm(text).replace(/\s+/g, " ");
         const l = norm(label);
-        if (t === l) return true;
-        if (l === "სვ.წერტილი" && t.startsWith("სველი წერტილი")) return true;
-        if (t.startsWith("სველი წერტილი") && l === "სველი წერტილი") return true;
+        if (t === l || t.startsWith(l)) return true;
+        if (l.includes("სვ") && l.includes("წერტილი") && t.includes("სვ") && t.includes("წერტილი")) {
+          return true;
+        }
+        if (/^საძინებელი/i.test(l) && /^საძინებელი/i.test(t)) return true;
+        if (/^ოთახ/i.test(l) && /^ოთახ/i.test(t)) return true;
         return false;
       }
 
@@ -331,7 +786,7 @@ type ChipClickTask = { section: string; chip: string };
 const CHIP_STYLE_ROW_LABELS = [
   "ცხელი წყალი",
   "სამშენებლო მასალა",
-  "გათბომა",
+  "გათბობა",
   "პარკირება",
   "კარ-ფანჯარა",
 ] as const;
@@ -460,7 +915,7 @@ function buildChipPrefillTasks(listing: MyhomeListing): ChipClickTask[] {
   const tasks: ChipClickTask[] = [];
 
   for (const label of CHIP_STYLE_ROW_LABELS) {
-    const v = listing.rawData?.[label]?.trim();
+    const v = getRawPreferenceValue(listing, label);
     if (v && v !== "კი" && v !== "არა") {
       tasks.push({ section: label, chip: v });
     }
@@ -519,9 +974,12 @@ async function batchPrefillChips(page: Page, tasks: ChipClickTask[]): Promise<nu
     function labelsMatch(text: string, label: string): boolean {
       const t = norm(text);
       const l = norm(label);
-      if (t === l) return true;
-      if (l === "სვ.წერტილი" && t.startsWith("სველი წერტილი")) return true;
-      if (t === "სვ.წერტილი" && l.startsWith("სველი წერტილი")) return true;
+      if (t === l || t.startsWith(l)) return true;
+      if (l.includes("სვ") && l.includes("წერტილი") && t.includes("სვ") && t.includes("წერტილი")) {
+        return true;
+      }
+      if (/^საძინებელი/i.test(l) && /^საძინებელი/i.test(t)) return true;
+      if (/^ოთახ/i.test(l) && /^ოთახ/i.test(t)) return true;
       return false;
     }
 
@@ -617,7 +1075,7 @@ async function batchPrefillChips(page: Page, tasks: ChipClickTask[]): Promise<nu
       "ბეჯები",
       "ცხელი წყალი",
       "სამშენებლო მასალა",
-      "გათბომა",
+      "გათბობა",
       "პარკირება",
       "კარ-ფანჯარა",
     ];
@@ -783,6 +1241,10 @@ async function prefillRowCountChip(
   const chip = normalizeCountChipValue(rawValue);
   if (!chip) return false;
 
+  if (await prefillCountChipPlaywright(page, sectionLabels, rawValue)) {
+    return true;
+  }
+
   const marked = await page.evaluate(
     ({ sectionLabels, variants }) => {
       function norm(s: string) {
@@ -805,7 +1267,42 @@ async function prefillRowCountChip(
         const joined = (parent.textContent || "").replace(/\s+/g, "");
         const glued = joined.match(prefixRe);
         if (!glued) return false;
-        return clickLeafChips({ textContent: glued[1] } as Element);
+        const digit = glued[1];
+        if (!variants.some((v) => v === digit || v.replace(/\+$/, "") === digit)) {
+          return false;
+        }
+        for (const el of parent.querySelectorAll(
+          "span,motion.div,div,button,p,label,motion.span"
+        )) {
+          if (el.children.length > 0) continue;
+          const t = norm(el.textContent || "");
+          if (t === digit || t === `${digit}+` || variants.includes(t)) {
+            const target = (el.closest("[class*='rounded']") ||
+              el.closest("button,[role=button]") ||
+              el.closest("[class*='cursor-pointer']") ||
+              el) as HTMLElement;
+            document.querySelectorAll("[data-prefill-count-chip]").forEach((n) => {
+              n.removeAttribute("data-prefill-count-chip");
+            });
+            target.setAttribute("data-prefill-count-chip", "1");
+            return true;
+          }
+        }
+        return false;
+      }
+
+      function findCountRowForLabels(): Element | null {
+        for (const el of document.querySelectorAll("label,span,p,motion.div")) {
+          if (!sectionLabels.some((label) => labelsMatch(el.textContent || "", label))) {
+            continue;
+          }
+          let node: Element | null = el;
+          for (let depth = 0; depth < 14 && node; depth++) {
+            if (countDigitLeaves(node) >= 2) return node;
+            node = node.parentElement;
+          }
+        }
+        return null;
       }
 
       function countDigitLeaves(node: Element): number {
@@ -828,12 +1325,10 @@ async function prefillRowCountChip(
         });
       }
 
-      function clickLeafChips(root: Element): boolean {
-        let clicked = false;
+      function markLeafChip(root: Element): boolean {
         for (const el of root.querySelectorAll(
-          "span,div,button,p,label,motion.div,motion.span,motion.p"
+          "span,motion.div,motion.span,motion.p,div,button,p,label,[class*='cursor-pointer']"
         )) {
-          if (clicked) break;
           if (el.children.length > 0) continue;
           if (!matchesVariant(el.textContent || "")) continue;
 
@@ -846,17 +1341,15 @@ async function prefillRowCountChip(
             n.removeAttribute("data-prefill-count-chip");
           });
           target.setAttribute("data-prefill-count-chip", "1");
-          target.click();
-          clicked = true;
+          return true;
         }
-        return clicked;
+        return false;
       }
 
       for (const el of document.querySelectorAll("label,span,p,motion.div")) {
         if (!sectionLabels.some((label) => labelsMatch(el.textContent || "", label))) {
           continue;
         }
-
         const parent = el.parentElement;
         if (sectionLabels.some((l) => /^საძინებელი/i.test(l))) {
           if (tryGluedCount(parent, /^საძინებელი(\d+)$/iu)) return true;
@@ -866,16 +1359,18 @@ async function prefillRowCountChip(
             return true;
           }
         }
+      }
 
-        let node: Element | null = el;
-        for (let depth = 0; depth < 14 && node; depth++) {
-          if (countDigitLeaves(node) >= 2 && clickLeafChips(node)) return true;
-          node = node.parentElement;
+      const countRow = findCountRowForLabels();
+      if (countRow && markLeafChip(countRow)) return true;
+
+      for (const el of document.querySelectorAll("label,span,p,motion.div")) {
+        if (!sectionLabels.some((label) => labelsMatch(el.textContent || "", label))) {
+          continue;
         }
-
         let sib: Element | null = el.nextElementSibling;
         for (let i = 0; i < 6 && sib; i++) {
-          if (countDigitLeaves(sib) >= 2 && clickLeafChips(sib)) return true;
+          if (countDigitLeaves(sib) >= 2 && markLeafChip(sib)) return true;
           sib = sib.nextElementSibling;
         }
       }
@@ -899,12 +1394,17 @@ async function prefillRowCountChip(
     return true;
   }
 
+  const isBedroomSection = sectionLabels.some((l) => /^საძინებელი/i.test(l));
+  const excludeInLocator = isBedroomSection
+    ? /ოთახი|ფართი|სართული/i
+    : /ოთახი|საძინებელი|ფართი|სართული/i;
+
   for (const label of sectionLabels) {
     const labelRe = new RegExp(label.replace(/\./g, "\\."), "iu");
     const row = page
       .locator("label, div, span, p")
       .filter({ hasText: labelRe })
-      .filter({ hasNotText: /ოთახი|საძინებელი|ფართი|სართული/i })
+      .filter({ hasNotText: excludeInLocator })
       .first();
     if (!(await row.isVisible({ timeout: 600 }).catch(() => false))) continue;
 
@@ -942,7 +1442,29 @@ async function prefillMainCountChips(
 
   const bedrooms = getBedroomsValue(listing);
   if (bedrooms) {
-    await prefillRowCountChip(page, CHIP_SECTION_ALIASES["საძინებელი"], bedrooms);
+    const bedroomChip = normalizeCountChipValue(bedrooms);
+    let bedroomClicked = await prefillCountChipPlaywright(
+      page,
+      CHIP_SECTION_ALIASES["საძინებელი"],
+      bedrooms
+    );
+    if (!bedroomClicked) {
+      bedroomClicked = await prefillRowCountChip(
+        page,
+        CHIP_SECTION_ALIASES["საძინებელი"],
+        bedrooms
+      );
+    }
+    if (!bedroomClicked) {
+      await clickChipInSectionLabels(
+        page,
+        CHIP_SECTION_ALIASES["საძინებელი"],
+        bedroomChip
+      );
+    }
+    if (!bedroomClicked) {
+      await batchPrefillChips(page, [{ section: "საძინებელი", chip: bedroomChip }]);
+    }
   }
 
   const bathrooms = getBathroomsValue(listing);
@@ -1225,10 +1747,26 @@ async function closeOpenDropdowns(page: Page): Promise<void> {
 }
 
 /** Click an option in myhome.ge luk-custom-select or ARIA listbox menus. */
-async function clickOpenDropdownOption(page: Page, value: string): Promise<boolean> {
-  const clicked = await page.evaluate((optionText) => {
+async function clickOpenDropdownOption(
+  page: Page,
+  value: string,
+  matchVariants?: string[]
+): Promise<boolean> {
+  const variants = matchVariants?.length ? matchVariants : [value];
+  const clicked = await page.evaluate((targets) => {
     function norm(s: string) {
       return s.replace(/\s*\*\s*$/, "").trim();
+    }
+
+    function matchesTarget(t: string): boolean {
+      return targets.some(
+        (target) =>
+          t === target ||
+          t.includes(target) ||
+          target.includes(t) ||
+          t.replace(/ის$/u, "ი") === target ||
+          target.replace(/ის$/u, "ი") === t
+      );
     }
 
     function isVisible(el: Element): boolean {
@@ -1261,8 +1799,9 @@ async function clickOpenDropdownOption(page: Page, value: string): Promise<boole
       const r = el.getBoundingClientRect();
       if (r.height < 24 || r.width < 40) return;
       const t = el.textContent || "";
-      if (t.length > 400 || t.length < optionText.length) return;
-      if (!t.includes(optionText)) return;
+      const minLen = Math.min(...targets.map((target) => target.length));
+      if (t.length > 400 || t.length < minLen) return;
+      if (!targets.some((target) => t.includes(target))) return;
       const itemCount = el.querySelectorAll("li, [class*='item'], [role='option']").length;
       if (itemCount < 1) return;
       roots.push(el);
@@ -1272,13 +1811,7 @@ async function clickOpenDropdownOption(page: Page, value: string): Promise<boole
       for (const el of root.querySelectorAll("li, div, span, button, a, p")) {
         if (el.children.length > 4) continue;
         const t = norm(el.textContent || "");
-        if (t !== optionText) continue;
-        if (tryClick(el)) return true;
-      }
-      for (const el of root.querySelectorAll("li, div, span, button, a, p")) {
-        if (el.children.length > 4) continue;
-        const t = norm(el.textContent || "");
-        if (!t.includes(optionText) || t.length > 80) continue;
+        if (!matchesTarget(t) || t.length > 80) continue;
         if (tryClick(el)) return true;
       }
       return false;
@@ -1288,7 +1821,7 @@ async function clickOpenDropdownOption(page: Page, value: string): Promise<boole
       if (tryInRoot(root)) return true;
     }
     return false;
-  }, value);
+  }, variants);
 
   if (clicked) return true;
 
@@ -1296,25 +1829,27 @@ async function clickOpenDropdownOption(page: Page, value: string): Promise<boole
     "[role='listbox'] [role='option'], [role='option'], [class*='option'], [class*='menu-item'], [class*='luk-custom-select'] li, [class*='luk-custom-select'] div"
   );
 
-  const exact = optionLoc
-    .filter({ hasText: new RegExp(`^${escapeRegExp(value)}$`, "u") })
-    .filter({ visible: true })
-    .first();
-  if (await exact.isVisible({ timeout: 800 }).catch(() => false)) {
-    await exact.click({ timeout: CHIP_CLICK_TIMEOUT_MS });
-    return true;
-  }
+  for (const variant of variants) {
+    const exact = optionLoc
+      .filter({ hasText: new RegExp(`^${escapeRegExp(variant)}$`, "u") })
+      .filter({ visible: true })
+      .first();
+    if (await exact.isVisible({ timeout: 800 }).catch(() => false)) {
+      await exact.click({ timeout: CHIP_CLICK_TIMEOUT_MS });
+      return true;
+    }
 
-  const partial = optionLoc.filter({ hasText: value }).filter({ visible: true }).first();
-  if (await partial.isVisible({ timeout: 800 }).catch(() => false)) {
-    await partial.click({ timeout: CHIP_CLICK_TIMEOUT_MS });
-    return true;
-  }
+    const partial = optionLoc.filter({ hasText: variant }).filter({ visible: true }).first();
+    if (await partial.isVisible({ timeout: 800 }).catch(() => false)) {
+      await partial.click({ timeout: CHIP_CLICK_TIMEOUT_MS });
+      return true;
+    }
 
-  const byText = page.getByText(value, { exact: true }).filter({ visible: true }).last();
-  if (await byText.isVisible({ timeout: 800 }).catch(() => false)) {
-    await byText.click();
-    return true;
+    const byText = page.getByText(variant, { exact: true }).filter({ visible: true }).last();
+    if (await byText.isVisible({ timeout: 800 }).catch(() => false)) {
+      await byText.click();
+      return true;
+    }
   }
 
   return false;
@@ -1334,7 +1869,8 @@ async function listFieldAlreadySet(
       function findFieldContainer(label: string): Element | null {
         const nodes = document.querySelectorAll("label, span, p, div, h2, h3, h4");
         for (const el of nodes) {
-          if (norm(el.textContent || "") !== label) continue;
+          const t = norm(el.textContent || "").replace(/\s+/g, " ");
+          if (t !== label && !t.startsWith(label)) continue;
           let node: Element | null = el;
           for (let depth = 0; depth < 10 && node; depth++) {
             if (
@@ -1376,145 +1912,11 @@ async function selectListOptionInSection(
   const value = optionText.trim();
   if (!value) return;
   const closeDropdowns = options?.closeDropdowns !== false;
-
   if (closeDropdowns) await closeOpenDropdowns(page);
   if (await listFieldAlreadySet(page, sectionLabel, value)) return;
-
-  try {
-    const marked = await page.evaluate(
-      ({ sectionLabel, placeholder }) => {
-        function norm(s: string) {
-          return s.replace(/\s*\*\s*$/, "").trim();
-        }
-
-        function findFieldContainer(label: string): Element | null {
-        const nodes = document.querySelectorAll("label, span, p, div, h2, h3, h4");
-        for (const el of nodes) {
-          if (norm(el.textContent || "") !== label) continue;
-          let node: Element | null = el;
-          for (let depth = 0; depth < 10 && node; depth++) {
-            if (
-              node.querySelector(
-                ".luk-custom-select, [role='combobox'], select, [aria-haspopup='listbox']"
-              )
-            ) {
-              return node;
-            }
-            node = node.parentElement;
-          }
-        }
-        return null;
-      }
-
-      document.querySelectorAll("[data-prefill-list-trigger]").forEach((el) => {
-        el.removeAttribute("data-prefill-list-trigger");
-      });
-
-      const root = findFieldContainer(sectionLabel);
-      if (!root) return false;
-
-      const trigger =
-        root.querySelector(".luk-custom-select") ||
-        root.querySelector("[role='combobox']") ||
-        root.querySelector("[aria-haspopup='listbox']") ||
-        root.querySelector("select") ||
-        Array.from(root.querySelectorAll("button, div")).find((el) => {
-          if (!placeholder) return false;
-          return norm(el.textContent || "").includes(placeholder);
-        });
-
-      if (!trigger) return false;
-      trigger.setAttribute("data-prefill-list-trigger", "1");
-      return true;
-    },
-    { sectionLabel, placeholder: placeholder || "" }
-  );
-
-  if (marked) {
-    const opened = await page.evaluate(() => {
-      const t = document.querySelector(
-        "[data-prefill-list-trigger='1']"
-      ) as HTMLElement | null;
-      if (!t) return false;
-      t.click();
-      return true;
-    });
-    if (!opened) {
-      await page
-        .locator("[data-prefill-list-trigger='1']")
-        .first()
-        .click({ timeout: CHIP_CLICK_TIMEOUT_MS })
-        .catch(() => {});
-    }
-  } else {
-    const section = page
-      .locator("label, span, p")
-      .filter({
-        hasText: new RegExp(`^${escapeRegExp(sectionLabel)}\\s*\\*?$`, "u"),
-      })
-      .first();
-    const trigger = section
-      .locator("xpath=ancestor::*[.//div[contains(@class,'luk-custom-select')]][1]")
-      .locator(".luk-custom-select")
-      .first();
-    await trigger.click({ timeout: CHIP_CLICK_TIMEOUT_MS }).catch(async () => {
-      await page
-        .locator(".luk-custom-select")
-        .filter({ hasText: placeholder || sectionLabel })
-        .first()
-        .click({ timeout: CHIP_CLICK_TIMEOUT_MS });
-    });
-  }
-
-    await page.evaluate(() => {
-      document.querySelectorAll("[data-prefill-dropdown-open]").forEach((el) => {
-        el.removeAttribute("data-prefill-dropdown-open");
-      });
-
-      function markMenu(menu: Element | null) {
-        if (menu) menu.setAttribute("data-prefill-dropdown-open", "1");
-      }
-
-      const t = document.querySelector("[data-prefill-list-trigger='1']");
-      if (t) {
-        let menu =
-          t.nextElementSibling ||
-          t.parentElement?.querySelector(
-            '[class*="dropdown"], [class*="menu"], [class*="options"], ul'
-          );
-        if (!menu) {
-          const root = t.closest("[class*='luk-custom-select']")?.parentElement;
-          menu =
-            root?.querySelector(
-              '[class*="dropdown"], [class*="menu"], ul, [class*="open"]'
-            ) || null;
-        }
-        markMenu(menu);
-      }
-
-      document.querySelectorAll("[class*='luk-custom-select']").forEach((el) => {
-        const cls = el.className?.toString() || "";
-        if (!cls.includes("open")) return;
-        markMenu(
-          el.querySelector('[class*="dropdown"], [class*="menu"], ul') || el
-        );
-      });
-    });
-
-    await prefillPause(page, DROPDOWN_PAUSE_MS);
-
-    const selected = await clickOpenDropdownOption(page, value);
-    if (!selected) {
-      throw new Error(`Could not select "${value}" for ${sectionLabel}`);
-    }
-  } finally {
-    await page.evaluate(() => {
-      document.querySelectorAll("[data-prefill-list-trigger]").forEach((el) => {
-        el.removeAttribute("data-prefill-list-trigger");
-      });
-    });
-    if (closeDropdowns) await closeOpenDropdowns(page);
-  }
+  const ok = await prefillLukDropdownField(page, sectionLabel, value, placeholder);
+  if (!ok) throw new Error(`Could not select "${value}" for ${sectionLabel}`);
+  if (closeDropdowns) await closeOpenDropdowns(page);
 }
 
 function listingLocation(listing: MyhomeListing) {
@@ -1552,16 +1954,6 @@ const PREFILL_LIST_FIELDS: {
   getValue: (l: MyhomeListing) => string;
   placeholder?: string;
 }[] = [
-  {
-    labels: ["გათბობა"],
-    getValue: (l) => l.rawData?.["გათბობა"] || "",
-  },
-  { labels: ["პარკირება"], getValue: (l) => l.rawData?.["პარკირება"] || "" },
-  { labels: ["ცხელი წყალი"], getValue: (l) => l.rawData?.["ცხელი წყალი"] || "" },
-  {
-    labels: ["სამშენებლო მასალა"],
-    getValue: (l) => l.rawData?.["სამშენებლო მასალა"] || "",
-  },
   { labels: ["მისაღები"], getValue: (l) => l.rawData?.["მისაღები"] || "" },
   { labels: ["სათავსო"], getValue: (l) => l.rawData?.["სათავსო"] || "" },
   {
@@ -1570,92 +1962,7 @@ const PREFILL_LIST_FIELDS: {
   },
   { labels: ["ხედი"], getValue: (l) => l.rawData?.["ხედი"] || "" },
   { labels: ["შესასვლელი"], getValue: (l) => l.rawData?.["შესასვლელი"] || "" },
-  {
-    labels: ["პროექტის ტიპი"],
-    getValue: (l) => getProjectTypeValue(l),
-    placeholder: "აირჩიეთ პროექტის ტიპი",
-  },
 ];
-
-async function prefillProjectTypeDropdown(
-  page: Page,
-  listing: MyhomeListing
-): Promise<void> {
-  const value = getProjectTypeValue(listing);
-  if (!value) return;
-
-  try {
-    await selectListOptionInSection(
-      page,
-      "პროექტის ტიპი",
-      value,
-      "აირჩიეთ პროექტის ტიპი"
-    );
-    return;
-  } catch {
-    await closeOpenDropdowns(page);
-  }
-
-  const picked = await page.evaluate((optionText) => {
-    function norm(s: string) {
-      return (s || "").replace(/\s+/g, " ").trim();
-    }
-    const target = norm(optionText);
-    if (!target) return false;
-
-    function findFieldContainer(label: string): Element | null {
-      for (const el of document.querySelectorAll("label, span, p, div, h2, h3, h4")) {
-        const t = norm(el.textContent || "");
-        if (t !== label && !t.startsWith(label)) continue;
-        let node: Element | null = el;
-        for (let depth = 0; depth < 10 && node; depth++) {
-          if (
-            node.querySelector(
-              ".luk-custom-select, [role='combobox'], [aria-haspopup='listbox']"
-            )
-          ) {
-            return node;
-          }
-          node = node.parentElement;
-        }
-      }
-      return null;
-    }
-
-    const root = findFieldContainer("პროექტის ტიპი");
-    if (!root) return false;
-
-    const trigger =
-      root.querySelector(".luk-custom-select") ||
-      root.querySelector("[role='combobox']") ||
-      root.querySelector("[aria-haspopup='listbox']");
-    if (!trigger) return false;
-    (trigger as HTMLElement).click();
-
-    const options = document.querySelectorAll(
-      "[role='option'], [class*='option'], [class*='menu-item'], li, button, div, span"
-    );
-    for (const el of options) {
-      const t = norm(el.textContent || "");
-      if (!t) continue;
-      if (t === target || t.includes(target) || target.includes(t)) {
-        (el as HTMLElement).click();
-        return true;
-      }
-    }
-    return false;
-  }, value);
-
-  if (!picked) {
-    await page
-      .getByText(value, { exact: false })
-      .filter({ visible: true })
-      .last()
-      .click({ timeout: CHIP_CLICK_TIMEOUT_MS, force: true })
-      .catch(() => {});
-  }
-  await closeOpenDropdowns(page);
-}
 
 function normalizeAreaForInput(value: string): string {
   const m = value.match(/(\d+(?:[.,]\d+)?)/);
@@ -1679,7 +1986,7 @@ async function applyAdditionalParametersPrefill(
   page: Page,
   listing: MyhomeListing
 ): Promise<void> {
-  await expandAllParameterSections(page);
+  await expandCreateFormSections(page);
   await page
     .locator("h2,h3,h4")
     .filter({ hasText: /ავეჯი/i })
@@ -1687,6 +1994,7 @@ async function applyAdditionalParametersPrefill(
     .scrollIntoViewIfNeeded()
     .catch(() => {});
   await batchPrefillChips(page, buildPostExpandChipTasks(listing));
+  await scrollToFormField(page, "საძინებელი");
   await prefillMainCountChips(page, listing);
   if (listingHasFurniture(listing)) {
     await prefillGeneralFurnitureChip(page);
@@ -1703,12 +2011,15 @@ async function applyAdditionalParametersPrefill(
     }
   }
 
-  await prefillProjectTypeDropdown(page, listing);
+  for (const label of CHIP_STYLE_ROW_LABELS) {
+    const value = getRawPreferenceValue(listing, label);
+    if (!value || value === "კი" || value === "არა") continue;
+    await closeOpenDropdowns(page);
+    await prefillPreferenceField(page, label, value);
+  }
 
   await closeOpenDropdowns(page);
   for (const field of PREFILL_LIST_FIELDS) {
-    if (field.labels.some((l) => CHIP_STYLE_SET.has(l))) continue;
-    if (field.labels.includes("პროექტის ტიპი")) continue;
     const value = field.getValue(listing)?.trim();
     if (!value) continue;
     for (const label of field.labels) {
@@ -1721,6 +2032,18 @@ async function applyAdditionalParametersPrefill(
         /* try alias label */
       }
     }
+  }
+
+  const projectType = getProjectTypeValue(listing);
+  if (projectType) {
+    await closeOpenDropdowns(page);
+    await scrollToFormField(page, "პროექტის ტიპი");
+    await prefillLukDropdownField(
+      page,
+      "პროექტის ტიპი",
+      projectType,
+      "აირჩიეთ პროექტის ტიპი"
+    );
   }
   await closeOpenDropdowns(page);
 }
@@ -3213,17 +3536,47 @@ export async function createMyhomePost(
       description: listing.description,
     });
 
-    await prefillRowCountChip(
-      page,
-      CHIP_SECTION_ALIASES["სველი წერტილი"],
-      bathroomsForForm
-    );
-
     await page
-      .getByRole("button", { name: "ყველა პარამეტრი" })
-      .click({ timeout: CHIP_CLICK_TIMEOUT_MS })
-      .catch(() => expandAllParameterSections(page));
+      .waitForFunction(
+        () => {
+          const t = document.body?.innerText || "";
+          return t.includes("ოთახი") || t.includes("საძინებელი");
+        },
+        { timeout: 12000 }
+      )
+      .catch(() => {});
+
+    if (listing.rooms) {
+      await prefillCountChipPlaywright(page, CHIP_SECTION_ALIASES["ოთახი"], listing.rooms);
+    }
+    if (bedroomsForForm) {
+      await scrollToFormField(page, "საძინებელი");
+      await prefillCountChipPlaywright(
+        page,
+        CHIP_SECTION_ALIASES["საძინებელი"],
+        bedroomsForForm
+      );
+    }
+    if (bathroomsForForm) {
+      await prefillCountChipPlaywright(
+        page,
+        CHIP_SECTION_ALIASES["სველი წერტილი"],
+        bathroomsForForm
+      );
+    }
+
+    await expandCreateFormSections(page);
     await prefillPause(page, 80);
+
+    if (bedroomsForForm) {
+      await scrollToFormField(page, "საძინებელი");
+      await prefillRowCountChip(
+        page,
+        CHIP_SECTION_ALIASES["საძინებელი"],
+        bedroomsForForm
+      );
+    }
+
     await prefillMainCountChips(page, listing);
 
     await applyAdditionalParametersPrefill(page, listing);
