@@ -1,4 +1,10 @@
-import { chromium, type Browser, type BrowserContext, type Page } from "playwright";
+import {
+  chromium,
+  type Browser,
+  type BrowserContext,
+  type Locator,
+  type Page,
+} from "playwright";
 import {
   ADDITIONAL_PARAM_LABELS,
   CHIP_ROW_PARAM_LABELS,
@@ -87,6 +93,17 @@ function normFieldLabel(text: string): string {
   return (text || "").replace(/\s*\*\s*$/, "").trim().replace(/\s+/g, " ");
 }
 
+/** Luk select fields that use exact label match (no startsWith). */
+const EXACT_LUK_FIELD_LABELS = new Set([
+  "პროექტის ტიპი",
+  "გათბობა",
+  "მისაღები",
+  "სათავსო",
+  "სათავსოს ტიპი",
+  "ხედი",
+  "შესასვლელი",
+]);
+
 /** Dropdown option variants — prefer listing form (often genitive: თუხარელის). */
 function projectTypeOptionVariants(value: string): string[] {
   const raw = normFieldLabel(dedupeRepeatedLabelValue(value));
@@ -110,14 +127,937 @@ function getRawPreferenceValue(
 }
 
 async function scrollToFormField(page: Page, label: string): Promise<void> {
-  const re = new RegExp(label.replace(/\./g, "\\."), "iu");
-  await page
-    .locator("label, span, p, h2, h3, h4, div")
-    .filter({ hasText: re })
-    .first()
-    .scrollIntoViewIfNeeded()
-    .catch(() => {});
+  const exactHeadings = new Set([
+    "სათავსო",
+    "მისაღები",
+    "აივანი",
+    "ლოჯია",
+    "ვერანდა",
+    "ჭერის სიმაღლე",
+  ]);
+  const locator = exactHeadings.has(label)
+    ? page
+        .locator("h2, h3, h4, label, span, p, div")
+        .filter({ hasText: new RegExp(`^${escapeRegExp(label)}\\s*\\*?$`, "u") })
+    : page
+        .locator("label, span, p, h2, h3, h4, div")
+        .filter({ hasText: new RegExp(label.replace(/\./g, "\\."), "iu") });
+
+  await locator.first().scrollIntoViewIfNeeded().catch(() => {});
   await prefillPause(page, 30);
+}
+
+/** Section heading → dropdown placeholder (…ტიპი) → option value. */
+const NESTED_LUK_TYPE_SECTIONS = [
+  {
+    section: "მისაღები",
+    dropdownHint: "მისაღების ტიპი",
+    valueKeys: ["მისაღები", "მისაღების ტიპი"],
+    areaKey: "მისაღების ფართი",
+  },
+  {
+    section: "სათავსო",
+    dropdownHint: "სათავსოს ტიპი",
+    valueKeys: ["სათავსო", "სათავსოს ტიპი"],
+    areaKey: "სათავსოს ფართი",
+  },
+] as const;
+
+const NESTED_DROPDOWN_PLACEHOLDERS = new Set([
+  "სათავსოს ტიპი",
+  "მისაღების ტიპი",
+  "აირჩიეთ",
+]);
+
+/** e.g. „სტუდიო/25 მ²“ or „საკუჭნაო/8 მ²“ → type + area. */
+function parseNestedTypeAndArea(value: string): { type: string; area: string } {
+  const v = value.trim();
+  if (!v) return { type: "", area: "" };
+
+  const slash = v.match(/^(.+?)\/(\d+(?:[.,]\d+)?)\s*(?:მ²|m²)?\s*$/iu);
+  if (slash) {
+    return {
+      type: slash[1].trim(),
+      area: normalizeAreaForInput(slash[2]),
+    };
+  }
+
+  const spaced = v.match(/^(.+?)\s+(\d+(?:[.,]\d+)?)\s*(?:მ²|m²)\s*$/iu);
+  if (spaced) {
+    return {
+      type: spaced[1].trim(),
+      area: normalizeAreaForInput(spaced[2]),
+    };
+  }
+
+  return { type: v, area: "" };
+}
+
+function getNestedSectionTypeValue(
+  listing: MyhomeListing,
+  valueKeys: readonly string[]
+): string {
+  for (const key of valueKeys) {
+    const v = listing.rawData?.[key]?.trim();
+    if (!v || v === "კი" || v === "არა") continue;
+    const { type } = parseNestedTypeAndArea(v);
+    const pick = type || v;
+    if (NESTED_DROPDOWN_PLACEHOLDERS.has(pick)) continue;
+    return pick;
+  }
+  return "";
+}
+
+/** e.g. „2/12 მ²“ → count before /, area after. */
+function parseBalconyCountAndArea(value: string): { count: string; area: string } {
+  const v = value.trim();
+  if (!v) return { count: "", area: "" };
+
+  const slash = v.match(/^(\d+)\s*\/\s*(\d+(?:[.,]\d+)?)\s*(?:მ²|m²)?\s*$/iu);
+  if (slash) {
+    return {
+      count: slash[1],
+      area: normalizeAreaForInput(slash[2]),
+    };
+  }
+
+  if (/მ²|m²/i.test(v)) {
+    return { count: "", area: normalizeAreaForInput(v) };
+  }
+
+  if (/^\d+$/.test(v)) return { count: v, area: "" };
+  return { count: "", area: "" };
+}
+
+function applyBalconyParsedFields(listing: MyhomeListing): void {
+  const rd = listing.rawData || {};
+  const countDirect = rd["აივნის რაოდენობა"]?.trim();
+  const areaDirect = rd["აივნის ფართი"]?.trim();
+  const fromMain = rd["აივანი"]?.trim() || listing.balconyArea?.trim() || "";
+  const { count, area } = parseBalconyCountAndArea(fromMain);
+
+  if (countDirect) rd["აივნის რაოდენობა"] = countDirect.replace(/[^\d]/g, "") || countDirect;
+  else if (count) rd["აივნის რაოდენობა"] = count;
+
+  if (areaDirect) {
+    rd["აივნის ფართი"] = normalizeAreaForInput(areaDirect);
+    listing.balconyArea = rd["აივნის ფართი"];
+  } else if (area) {
+    rd["აივნის ფართი"] = area;
+    listing.balconyArea = area;
+  }
+}
+
+function getBalconyCountValue(listing: MyhomeListing): string {
+  const direct = listing.rawData?.["აივნის რაოდენობა"]?.trim();
+  if (direct) return direct.replace(/[^\d]/g, "") || direct;
+  const { count } = parseBalconyCountAndArea(
+    listing.rawData?.["აივანი"]?.trim() || listing.balconyArea || ""
+  );
+  return count;
+}
+
+function getBalconyAreaValue(listing: MyhomeListing): string {
+  const direct = listing.rawData?.["აივნის ფართი"]?.trim();
+  if (direct) return normalizeAreaForInput(direct);
+  const { area } = parseBalconyCountAndArea(listing.rawData?.["აივანი"]?.trim() || "");
+  if (area) return area;
+  return listing.balconyArea ? normalizeAreaForInput(listing.balconyArea) : "";
+}
+
+async function prefillBalconyFields(
+  page: Page,
+  listing: MyhomeListing
+): Promise<void> {
+  const count = getBalconyCountValue(listing);
+  const area = getBalconyAreaValue(listing);
+  if (!count && !area) return;
+
+  await scrollToFormField(page, "აივანი");
+  await prefillPause(page, 120);
+
+  if (count) {
+    await fillInputInNestedSection(page, "აივანი", "აივნის რაოდენობა", count);
+    await prefillPause(page, 80);
+  }
+  if (area) {
+    await fillInputInNestedSection(page, "აივანი", "ფართი", area);
+  }
+}
+
+/** e.g. „8 მ²“, „1/12 მ²“ → area (after / when slash present). */
+function parseSectionAreaValue(value: string): string {
+  const v = value.trim();
+  if (!v) return "";
+
+  const slash = v.match(/^(\d+)\s*\/\s*(\d+(?:[.,]\d+)?)\s*(?:მ²|m²)?\s*$/iu);
+  if (slash) return normalizeAreaForInput(slash[2]);
+
+  if (/მ²|m²/i.test(v)) return normalizeAreaForInput(v);
+
+  const digits = v.match(/^(\d+(?:[.,]\d+)?)\s*$/);
+  if (digits) return digits[1].replace(",", ".");
+  return normalizeAreaForInput(v);
+}
+
+function applyLoggiaParsedFields(listing: MyhomeListing): void {
+  const rd = listing.rawData || {};
+  const areaDirect = rd["ლოჯიის ფართი"]?.trim();
+  const fromMain = rd["ლოჯია"]?.trim() || listing.loggiaArea?.trim() || "";
+  const parsed = parseSectionAreaValue(fromMain);
+
+  if (areaDirect) {
+    rd["ლოჯიის ფართი"] = normalizeAreaForInput(areaDirect);
+    listing.loggiaArea = rd["ლოჯიის ფართი"];
+  } else if (parsed) {
+    rd["ლოჯიის ფართი"] = parsed;
+    listing.loggiaArea = parsed;
+  }
+}
+
+function getLoggiaAreaValue(listing: MyhomeListing): string {
+  const direct = listing.rawData?.["ლოჯიის ფართი"]?.trim();
+  if (direct) return normalizeAreaForInput(direct);
+  return parseSectionAreaValue(
+    listing.rawData?.["ლოჯია"]?.trim() || listing.loggiaArea || ""
+  );
+}
+
+async function prefillLoggiaFields(
+  page: Page,
+  listing: MyhomeListing
+): Promise<void> {
+  const area = getLoggiaAreaValue(listing);
+  if (!area) return;
+
+  await scrollToFormField(page, "ლოჯია");
+  await prefillPause(page, 120);
+  await fillInputInNestedSection(page, "ლოჯია", "ფართი", area);
+}
+
+function applyVerandaParsedFields(listing: MyhomeListing): void {
+  const rd = listing.rawData || {};
+  const areaDirect = rd["ვერანდის ფართი"]?.trim();
+  const fromMain = rd["ვერანდა"]?.trim() || listing.verandaArea?.trim() || "";
+  const parsed = parseSectionAreaValue(fromMain);
+
+  if (areaDirect) {
+    rd["ვერანდის ფართი"] = normalizeAreaForInput(areaDirect);
+    listing.verandaArea = rd["ვერანდის ფართი"];
+  } else if (parsed) {
+    rd["ვერანდის ფართი"] = parsed;
+    listing.verandaArea = parsed;
+  }
+}
+
+function getVerandaAreaValue(listing: MyhomeListing): string {
+  const direct = listing.rawData?.["ვერანდის ფართი"]?.trim();
+  if (direct) return normalizeAreaForInput(direct);
+  return parseSectionAreaValue(
+    listing.rawData?.["ვერანდა"]?.trim() || listing.verandaArea || ""
+  );
+}
+
+async function prefillVerandaFields(
+  page: Page,
+  listing: MyhomeListing
+): Promise<void> {
+  const area = getVerandaAreaValue(listing);
+  if (!area) return;
+
+  await scrollToFormField(page, "ვერანდა");
+  await prefillPause(page, 120);
+  await fillInputInNestedSection(page, "ვერანდა", "ფართი", area);
+}
+
+/** e.g. „100“, „100 სმ“, „3.2 მ“ → numeric value for form (keeps cm as-is). */
+function parseCeilingHeightValue(value: string): string {
+  const v = value.trim();
+  if (!v) return "";
+
+  const cm = v.match(/^(\d+(?:[.,]\d+)?)\s*(?:სმ|cm)\b/iu);
+  if (cm) return cm[1].replace(",", ".");
+
+  const meters = v.match(/^(\d+(?:[.,]\d+)?)\s*(?:მ|m)\b/iu);
+  if (meters) return meters[1].replace(",", ".");
+
+  const digits = v.match(/^(\d+(?:[.,]\d+)?)\s*$/);
+  if (digits) return digits[1].replace(",", ".");
+
+  const any = v.match(/(\d+(?:[.,]\d+)?)/);
+  return any ? any[1].replace(",", ".") : "";
+}
+
+function applyCeilingHeightParsedFields(listing: MyhomeListing): void {
+  const rd = listing.rawData || {};
+  const raw = rd["ჭერის სიმაღლე"]?.trim();
+  if (!raw) return;
+  const parsed = parseCeilingHeightValue(raw);
+  if (parsed) rd["ჭერის სიმაღლე"] = parsed;
+}
+
+function getCeilingHeightValue(listing: MyhomeListing): string {
+  const raw = listing.rawData?.["ჭერის სიმაღლე"]?.trim();
+  if (!raw) return "";
+  return parseCeilingHeightValue(raw);
+}
+
+const CEILING_HEIGHT_FIELD_LABEL = "ჭერის სიმაღლე";
+const CEILING_HEIGHT_INPUT_HINT = "ჩაწერეთ ჭერის სიმაღლე";
+
+/** Label above input + placeholder „ჩაწერეთ ჭერის სიმაღლე“ (create form). */
+async function fillCeilingHeightField(page: Page, value: string): Promise<boolean> {
+  const val = value.trim();
+  if (!val) return false;
+
+  const labelRe = /^ჭერის\s*სიმაღლე\s*\*?$/u;
+  const placeholderRe = /ჩაწერეთ\s*ჭერის\s*სიმაღლე/iu;
+
+  async function tryPlaywrightInput(input: Locator): Promise<boolean> {
+    if (!(await input.isVisible({ timeout: 2500 }).catch(() => false))) return false;
+    await input.scrollIntoViewIfNeeded().catch(() => {});
+    await input.click({ timeout: 2000 }).catch(() => {});
+    await input.fill("", { timeout: 2000 }).catch(() => {});
+    await input.fill(val, { timeout: 2000 }).catch(() => {});
+    const current = (await input.inputValue().catch(() => "")).trim();
+    if (current === val || current.replace(",", ".") === val) return true;
+
+    await input.click({ timeout: 2000 }).catch(() => {});
+    await page.keyboard.press("Control+A").catch(() => {});
+    await page.keyboard.type(val, { delay: 25 }).catch(() => {});
+    const afterType = (await input.inputValue().catch(() => "")).trim();
+    return afterType === val || afterType.replace(",", ".") === val;
+  }
+
+  const playwrightTargets = [
+    page.getByPlaceholder(placeholderRe),
+    page.locator('input[placeholder*="ჩაწერეთ"][placeholder*="ჭერის" i]'),
+    page
+      .locator("div, motion.div")
+      .filter({ has: page.locator("span, label, p").filter({ hasText: labelRe }) })
+      .locator("input")
+      .first(),
+    page
+      .locator("div, motion.div")
+      .filter({ has: page.getByText(labelRe, { exact: true }) })
+      .locator("input")
+      .first(),
+  ];
+
+  for (const target of playwrightTargets) {
+    if (await tryPlaywrightInput(target.first())) return true;
+  }
+
+  const filled = await page.evaluate(
+    ({ val, fieldLabel }) => {
+      function norm(s: string) {
+        return (s || "").replace(/\s*\*\s*$/, "").trim().replace(/\s+/g, " ");
+      }
+
+      const inputSetter = Object.getOwnPropertyDescriptor(
+        window.HTMLInputElement.prototype,
+        "value"
+      )?.set;
+      if (!inputSetter) return false;
+
+      function setReactValue(input: HTMLInputElement, next: string): boolean {
+        input.focus();
+        inputSetter!.call(input, next);
+        input.dispatchEvent(
+          new InputEvent("input", {
+            bubbles: true,
+            cancelable: true,
+            inputType: "insertText",
+            data: next,
+          })
+        );
+        input.dispatchEvent(new Event("change", { bubbles: true }));
+        input.blur();
+        return (input.value || "").trim() === next;
+      }
+
+      function inputMatchesCeiling(input: HTMLInputElement): boolean {
+        const ph = norm(input.placeholder || "");
+        return (
+          ph.includes("ჩაწერეთ") &&
+          ph.includes("ჭერის") &&
+          ph.includes("სიმაღლე")
+        );
+      }
+
+      for (const input of document.querySelectorAll("input")) {
+        const type = (input.getAttribute("type") || "text").toLowerCase();
+        if (type === "hidden" || type === "checkbox" || type === "radio") continue;
+        if (!inputMatchesCeiling(input)) continue;
+        if (setReactValue(input, val)) return true;
+      }
+
+      for (const el of document.querySelectorAll("span, label, p")) {
+        const t = norm(el.textContent || "");
+        if (t !== fieldLabel) continue;
+        if (el.children.length > 3) continue;
+
+        let node: Element | null = el.parentElement;
+        for (let depth = 0; depth < 12 && node; depth++) {
+          for (const input of node.querySelectorAll("input")) {
+            const inp = input as HTMLInputElement;
+            const type = (inp.getAttribute("type") || "text").toLowerCase();
+            if (type === "hidden" || type === "checkbox" || type === "radio") continue;
+            if (setReactValue(inp, val)) return true;
+          }
+          node = node.parentElement;
+        }
+      }
+
+      return false;
+    },
+    { val, fieldLabel: CEILING_HEIGHT_FIELD_LABEL }
+  );
+
+  return filled;
+}
+
+async function fillInputByPlaceholder(
+  page: Page,
+  placeholderHint: string,
+  value: string
+): Promise<boolean> {
+  const val = value.trim();
+  if (!val) return false;
+
+  const filled = await page.evaluate(
+    ({ hint, val }) => {
+      function norm(s: string) {
+        return (s || "").replace(/\s+/g, " ").trim();
+      }
+      function hintMatches(text: string) {
+        const t = norm(text);
+        const h = norm(hint);
+        return t === h || t.includes(h) || h.includes(t);
+      }
+
+      const inputSetter = Object.getOwnPropertyDescriptor(
+        window.HTMLInputElement.prototype,
+        "value"
+      )?.set;
+      if (!inputSetter) return false;
+
+      function fillInput(input: HTMLInputElement): boolean {
+        inputSetter!.call(input, val);
+        input.dispatchEvent(new Event("input", { bubbles: true }));
+        input.dispatchEvent(new Event("change", { bubbles: true }));
+        return true;
+      }
+
+      for (const input of document.querySelectorAll("input")) {
+        const type = (input.getAttribute("type") || "text").toLowerCase();
+        if (type === "hidden" || type === "checkbox" || type === "radio") continue;
+        const ph = norm(input.placeholder || input.getAttribute("aria-placeholder") || "");
+        if (ph && hintMatches(ph) && fillInput(input)) return true;
+      }
+
+      for (const lbl of document.querySelectorAll("label")) {
+        const forAttr = lbl.getAttribute("for");
+        const inputFromFor = forAttr
+          ? (document.getElementById(forAttr) as HTMLInputElement | null)
+          : null;
+        const inputInLabel = lbl.querySelector("input") as HTMLInputElement | null;
+        const candidates = [inputFromFor, inputInLabel].filter(Boolean) as HTMLInputElement[];
+
+        for (const span of lbl.querySelectorAll("span")) {
+          if (!hintMatches(span.textContent || "")) continue;
+          for (const input of candidates) {
+            if (fillInput(input)) return true;
+          }
+        }
+
+        if (hintMatches(lbl.textContent || "")) {
+          for (const input of candidates) {
+            if (fillInput(input)) return true;
+          }
+        }
+      }
+
+      for (const el of document.querySelectorAll("span, p, label")) {
+        if (!hintMatches(el.textContent || "")) continue;
+        if ((el.textContent || "").length > 120) continue;
+        let node: Element | null = el.parentElement;
+        for (let depth = 0; depth < 10 && node; depth++) {
+          const input = node.querySelector("input") as HTMLInputElement | null;
+          if (input && fillInput(input)) return true;
+          node = node.parentElement;
+        }
+      }
+
+      return false;
+    },
+    { hint: placeholderHint, val }
+  );
+
+  if (filled) return true;
+
+  const hintRe = new RegExp(escapeRegExp(placeholderHint).replace(/\s+/g, "\\s*"), "iu");
+  const locators = [
+    page.getByPlaceholder(hintRe),
+    page.getByLabel(hintRe),
+    page.locator('input[placeholder*="ჭერის სიმაღლე" i]'),
+    page.locator('input[placeholder*="ჩაწერეთ" i]'),
+  ];
+
+  for (const locator of locators) {
+    const input = locator.first();
+    if (await input.isVisible({ timeout: 1200 }).catch(() => false)) {
+      await input.scrollIntoViewIfNeeded().catch(() => {});
+      await input.fill(val);
+      return true;
+    }
+  }
+
+  return false;
+}
+
+async function prefillCeilingHeightFields(
+  page: Page,
+  listing: MyhomeListing
+): Promise<void> {
+  const height = getCeilingHeightValue(listing);
+  if (!height) return;
+
+  await scrollToFormField(page, CEILING_HEIGHT_FIELD_LABEL);
+  await prefillPause(page, 200);
+
+  if (await fillCeilingHeightField(page, height)) return;
+
+  await fillInputByPlaceholder(page, CEILING_HEIGHT_INPUT_HINT, height);
+  await fillLabeledInput(page, CEILING_HEIGHT_FIELD_LABEL, height);
+}
+
+function getNestedSectionAreaValue(
+  listing: MyhomeListing,
+  areaKey: string,
+  valueKeys: readonly string[]
+): string {
+  const direct = listing.rawData?.[areaKey]?.trim();
+  if (direct) return normalizeAreaForInput(direct);
+
+  for (const key of valueKeys) {
+    const v = listing.rawData?.[key]?.trim();
+    if (!v) continue;
+    const { area } = parseNestedTypeAndArea(v);
+    if (area) return area;
+  }
+  return "";
+}
+
+async function fillInputInNestedSection(
+  page: Page,
+  sectionHeading: string,
+  inputLabel: string,
+  value: string
+): Promise<boolean> {
+  const val = value.trim();
+  if (!val) return false;
+
+  const filled = await page.evaluate(
+    ({ sectionHeading, inputLabel, val }) => {
+      function norm(s: string) {
+        return (s || "").replace(/\s*\*\s*$/, "").trim().replace(/\s+/g, " ");
+      }
+      function headingMatches(t: string) {
+        const n = norm(t);
+        if (sectionHeading === "სათავსო") return n === "სათავსო";
+        if (sectionHeading === "აივანი") return n === "აივანი";
+        if (sectionHeading === "ლოჯია") return n === "ლოჯია";
+        if (sectionHeading === "ვერანდა") return n === "ვერანდა";
+        if (sectionHeading === "ჭერის სიმაღლე") {
+          return (
+            n === "ჭერის სიმაღლე" ||
+            (n.includes("ჭერის") && n.includes("სიმაღლე"))
+          );
+        }
+        return n === sectionHeading;
+      }
+
+      function inputLabelMatches(t: string, target: string) {
+        const n = norm(t);
+        const l = norm(target);
+        return n === l || n.startsWith(l);
+      }
+
+      const inputSetter = Object.getOwnPropertyDescriptor(
+        window.HTMLInputElement.prototype,
+        "value"
+      )?.set;
+      if (!inputSetter) return false;
+
+      function tryFillInRoot(root: Element): boolean {
+        for (const lbl of root.querySelectorAll("label")) {
+          for (const span of lbl.querySelectorAll("span")) {
+            if (!inputLabelMatches(span.textContent || "", inputLabel)) continue;
+            const forAttr = lbl.getAttribute("for");
+            const input = forAttr
+              ? (document.getElementById(forAttr) as HTMLInputElement | null)
+              : (lbl.querySelector("input") as HTMLInputElement | null);
+            if (!input || !inputSetter) continue;
+            inputSetter.call(input, val);
+            input.dispatchEvent(new Event("input", { bubbles: true }));
+            input.dispatchEvent(new Event("change", { bubbles: true }));
+            return true;
+          }
+        }
+        return false;
+      }
+
+      function tryFillSingleInputInRoot(root: Element): boolean {
+        const inputs: HTMLInputElement[] = [];
+        for (const input of root.querySelectorAll("input")) {
+          const type = (input.getAttribute("type") || "text").toLowerCase();
+          if (type === "hidden" || type === "checkbox" || type === "radio") continue;
+          if (input.closest("[class*='luk-custom-select']")) continue;
+          inputs.push(input);
+        }
+        if (inputs.length !== 1 || !inputSetter) return false;
+        inputSetter.call(inputs[0], val);
+        inputs[0].dispatchEvent(new Event("input", { bubbles: true }));
+        inputs[0].dispatchEvent(new Event("change", { bubbles: true }));
+        return true;
+      }
+
+      for (const el of document.querySelectorAll("h2,h3,h4,label,span,p,div,motion.div")) {
+        if (!headingMatches(el.textContent || "")) continue;
+        let node: Element | null = el;
+        for (let depth = 0; depth < 22 && node; depth++) {
+          if (tryFillInRoot(node)) return true;
+          if (
+            sectionHeading === "ჭერის სიმაღლე" &&
+            inputLabel === "ფართი" &&
+            tryFillSingleInputInRoot(node)
+          ) {
+            return true;
+          }
+          node = node.parentElement;
+        }
+      }
+      return false;
+    },
+    { sectionHeading, inputLabel, val }
+  );
+
+  if (filled) return true;
+
+  const headingPattern =
+    sectionHeading === "ჭერის სიმაღლე"
+      ? /^ჭერის\s*სიმაღლე\s*\*?$/u
+      : nestedSectionHeadingPattern(sectionHeading);
+
+  const section = page
+    .locator("motion.div, div")
+    .filter({
+      has: page
+        .locator("label, span, p, h2, h3, h4")
+        .filter({ hasText: headingPattern }),
+    })
+    .filter({
+      has: page
+        .locator("label")
+        .filter({ hasText: new RegExp(`^${escapeRegExp(inputLabel)}`, "iu") }),
+    })
+    .last();
+
+  let input = section.locator("label input, input").first();
+  if (!(await input.isVisible({ timeout: 800 }).catch(() => false))) {
+    const sectionOnly = page
+      .locator("motion.div, div")
+      .filter({
+        has: page
+          .locator("label, span, p, h2, h3, h4")
+          .filter({ hasText: headingPattern }),
+      })
+      .last();
+    input = sectionOnly.locator("input").first();
+  }
+  if (await input.isVisible({ timeout: 1500 }).catch(() => false)) {
+    await input.fill(val);
+    return true;
+  }
+  return false;
+}
+
+async function markLukSelectInSection(
+  page: Page,
+  sectionHeading: string
+): Promise<boolean> {
+  return page.evaluate((heading) => {
+    document
+      .querySelectorAll("[data-prefill-luk-field],[data-prefill-luk-trigger]")
+      .forEach((el) => {
+        el.removeAttribute("data-prefill-luk-field");
+        el.removeAttribute("data-prefill-luk-trigger");
+        if (el.getAttribute("data-prefill-field-label") === heading) {
+          el.removeAttribute("data-prefill-field-label");
+        }
+      });
+
+    function norm(s: string) {
+      return (s || "").replace(/\s*\*\s*$/, "").trim().replace(/\s+/g, " ");
+    }
+    function headingMatches(t: string) {
+      const n = norm(t);
+      if (heading === "სათავსო") return n === "სათავსო";
+      return n === heading;
+    }
+
+    for (const el of document.querySelectorAll("h2,h3,h4,label,span,p,motion.div,div")) {
+      if (!headingMatches(el.textContent || "")) continue;
+      if (
+        el.tagName !== "H2" &&
+        el.tagName !== "H3" &&
+        el.tagName !== "H4" &&
+        el.children.length > 4
+      ) {
+        continue;
+      }
+
+      let node: Element | null = el;
+      for (let depth = 0; depth < 20 && node; depth++) {
+        const selects = node.querySelectorAll(
+          ".luk-custom-select,[class*='luk-custom-select'],[role='combobox']"
+        );
+        if (selects.length > 0) {
+          const sel = selects[0];
+          sel.setAttribute("data-prefill-luk-field", heading);
+          sel.setAttribute("data-prefill-luk-trigger", "1");
+          sel.setAttribute("data-prefill-field-label", heading);
+          return true;
+        }
+        node = node.parentElement;
+      }
+    }
+    return false;
+  }, sectionHeading);
+}
+
+function nestedSectionHeadingPattern(sectionHeading: string): RegExp {
+  return new RegExp(`^${escapeRegExp(sectionHeading)}\\s*\\*?$`, "u");
+}
+
+/** Luk select for სათავსო / მისაღები blocks — placeholder is „…ტიპი“, not the section title. */
+async function locateNestedSectionLukSelect(
+  page: Page,
+  sectionHeading: string,
+  dropdownHint: string
+): Promise<Locator> {
+  const heading = page
+    .locator("h2, h3, h4, label, span, p, div")
+    .filter({ hasText: nestedSectionHeadingPattern(sectionHeading) })
+    .first();
+
+  await heading.scrollIntoViewIfNeeded().catch(() => {});
+
+  const hintRe = new RegExp(escapeRegExp(dropdownHint), "iu");
+  const hintReLoose = new RegExp(dropdownHint.replace(/\s+/g, "\\s*"), "iu");
+
+  const inRow = heading
+    .locator(
+      "xpath=ancestor::*[.//*[contains(@class,'luk-custom-select') or @role='combobox']][1]"
+    )
+    .locator("[class*='luk-custom-select'], [role='combobox']")
+    .filter({ hasText: hintReLoose })
+    .first();
+
+  if (await inRow.count()) return inRow;
+
+  const byHint = page
+    .locator("[class*='luk-custom-select'], [role='combobox']")
+    .filter({ hasText: hintRe })
+    .first();
+
+  if (await byHint.count()) return byHint;
+
+  return heading
+    .locator(
+      "xpath=following::*[contains(@class,'luk-custom-select') or @role='combobox'][1]"
+    )
+    .first();
+}
+
+async function openNestedSectionLukSelect(
+  page: Page,
+  select: Locator
+): Promise<void> {
+  await select.scrollIntoViewIfNeeded().catch(() => {});
+  const openers = [
+    select.locator("[class*='indicator']").first(),
+    select.locator("[class*='control']").first(),
+    select.locator("[class*='value-container']").first(),
+    select,
+  ];
+  for (const opener of openers) {
+    if (await opener.isVisible({ timeout: 500 }).catch(() => false)) {
+      await opener.click({ timeout: CHIP_CLICK_TIMEOUT_MS, force: true });
+      return;
+    }
+  }
+  await select.click({ timeout: CHIP_CLICK_TIMEOUT_MS, force: true });
+}
+
+/** Click option inside the marked luk menu (works for portaled menus — no Y band). */
+async function pickLukMenuVariants(
+  page: Page,
+  sectionLabel: string,
+  variants: string[]
+): Promise<boolean> {
+  await markLukFieldMenu(page);
+
+  const menu = page.locator("[data-prefill-luk-menu='1']");
+  const menuVisible = await menu.isVisible({ timeout: 2000 }).catch(() => false);
+
+  if (menuVisible) {
+    for (const variant of variants) {
+      const options = menu.locator(
+        '[role="option"], [class*="option"], [class*="menu-list"] > div, li'
+      );
+      const count = await options.count().catch(() => 0);
+      for (let i = 0; i < count; i++) {
+        const opt = options.nth(i);
+        const text = ((await opt.textContent().catch(() => "")) || "").trim();
+        if (!optionTextMatchesVariant(text, variant)) continue;
+        await opt.scrollIntoViewIfNeeded().catch(() => {});
+        await opt.dispatchEvent("mousedown");
+        await opt.click({ force: true, timeout: CHIP_CLICK_TIMEOUT_MS });
+        await prefillPause(page, 220);
+        if (await lukFieldShowsValue(page, sectionLabel, variants)) return true;
+        if (await lukSelectSelectionApplied(page, sectionLabel, variants)) return true;
+        await markLukFieldMenu(page);
+      }
+
+      const exact = menu.getByText(variant, { exact: true }).first();
+      if (await exact.isVisible({ timeout: 1000 }).catch(() => false)) {
+        await exact.dispatchEvent("mousedown");
+        await exact.click({ force: true, timeout: CHIP_CLICK_TIMEOUT_MS });
+        await prefillPause(page, 220);
+        if (await lukFieldShowsValue(page, sectionLabel, variants)) return true;
+        if (await lukSelectSelectionApplied(page, sectionLabel, variants)) return true;
+        await markLukFieldMenu(page);
+      }
+
+      if (await clickLukMenuOption(page, variant)) {
+        await prefillPause(page, 220);
+        if (await lukFieldShowsValue(page, sectionLabel, variants)) return true;
+        if (await lukSelectSelectionApplied(page, sectionLabel, variants)) return true;
+        await markLukFieldMenu(page);
+      }
+    }
+  }
+
+  return false;
+}
+
+async function clickLukOptionVariants(
+  page: Page,
+  sectionLabel: string,
+  variants: string[],
+  menuTopY: number,
+  menuBottomY: number
+): Promise<boolean> {
+  if (await pickLukMenuVariants(page, sectionLabel, variants)) return true;
+
+  if (await clickVisibleLukMenuItem(page, variants, menuTopY, menuBottomY)) {
+    return true;
+  }
+
+  for (const variant of variants) {
+    const inMenu = page
+      .locator(
+        "[class*='luk-custom-select__menu'] [class*='option'], [class*='menu-list'] > div, [role='listbox'] [role='option']"
+      )
+      .filter({ hasText: new RegExp(`^${escapeRegExp(variant)}$`, "u") })
+      .filter({ visible: true })
+      .first();
+    if (await inMenu.isVisible({ timeout: 1200 }).catch(() => false)) {
+      await inMenu.dispatchEvent("mousedown");
+      await inMenu.click({ force: true, timeout: CHIP_CLICK_TIMEOUT_MS });
+      await prefillPause(page, 280);
+      if (await lukFieldShowsValue(page, sectionLabel, variants)) return true;
+    }
+
+    const byText = page.getByText(variant, { exact: true }).filter({ visible: true });
+    const count = await byText.count();
+    for (let i = 0; i < count; i++) {
+      const opt = byText.nth(i);
+      const box = await opt.boundingBox().catch(() => null);
+      if (!box || box.height < 6 || box.height > 56) continue;
+      if (box.y < menuTopY - 8 || box.y > menuBottomY) continue;
+      await opt.dispatchEvent("mousedown");
+      await opt.click({ force: true, timeout: CHIP_CLICK_TIMEOUT_MS });
+      await prefillPause(page, 280);
+      if (await lukFieldShowsValue(page, sectionLabel, variants)) return true;
+    }
+  }
+  return false;
+}
+
+async function prefillNestedSectionTypeDropdown(
+  page: Page,
+  sectionHeading: string,
+  dropdownHint: string,
+  rawValue: string
+): Promise<boolean> {
+  const variants = dropdownOptionVariants(rawValue, sectionHeading);
+  if (!variants.length) return false;
+
+  await scrollToFormField(page, sectionHeading);
+  await prefillPause(page, 120);
+
+  if (await lukFieldShowsValue(page, sectionHeading, variants)) return true;
+
+  await closeOpenDropdowns(page);
+
+  const select = await locateNestedSectionLukSelect(
+    page,
+    sectionHeading,
+    dropdownHint
+  );
+
+  if (!(await select.isVisible({ timeout: 2500 }).catch(() => false))) {
+    return (
+      (await prefillLukDropdownField(page, sectionHeading, rawValue)) ||
+      (await prefillLukDropdownField(page, dropdownHint, rawValue))
+    );
+  }
+
+  await select.evaluate(
+    (el, label) => {
+      el.setAttribute("data-prefill-luk-trigger", "1");
+      el.setAttribute("data-prefill-luk-field", label);
+      el.setAttribute("data-prefill-field-label", label);
+    },
+    sectionHeading
+  );
+
+  await openNestedSectionLukSelect(page, select);
+  await waitForLukSelectOptions(page, 1);
+  await prefillPause(page, LUK_DROPDOWN_PAUSE_MS);
+
+  const rootBox = await select.boundingBox().catch(() => null);
+  const menuTopY = rootBox ? rootBox.y + rootBox.height : 0;
+  const menuBottomY = menuTopY + 480;
+
+  if (await pickLukMenuVariants(page, sectionHeading, variants)) return true;
+  if (await clickLukOptionVariants(page, sectionHeading, variants, menuTopY, menuBottomY)) {
+    if (await lukFieldShowsValue(page, sectionHeading, variants)) return true;
+    if (await lukSelectSelectionApplied(page, sectionHeading, variants)) return true;
+  }
+
+  if (
+    (await prefillLukDropdownField(page, sectionHeading, rawValue)) ||
+    (await prefillLukDropdownField(page, dropdownHint, rawValue))
+  ) {
+    return true;
+  }
+
+  await closeOpenDropdowns(page);
+  return false;
 }
 
 async function expandCreateFormSections(page: Page): Promise<void> {
@@ -137,44 +1077,49 @@ async function markLukFieldTrigger(
   page: Page,
   sectionLabel: string
 ): Promise<boolean> {
-  return page.evaluate((label) => {
-    document.querySelectorAll("[data-prefill-luk-trigger]").forEach((el) => {
-      el.removeAttribute("data-prefill-luk-trigger");
-      el.removeAttribute("data-prefill-field-label");
-    });
+  return page.evaluate(
+    ({ label, exactLabels }) => {
+      const exactLabelSet = new Set(exactLabels);
 
-    function norm(s: string) {
-      return (s || "").replace(/\s*\*\s*$/, "").trim().replace(/\s+/g, " ");
-    }
-    function labelMatches(text: string) {
-      const t = norm(text).replace(/\s*\*$/, "");
-      const l = norm(label);
-      if (l === "პროექტის ტიპი" || l === "გათბობა") return t === l;
-      return t === l || t.startsWith(l);
-    }
+      document.querySelectorAll("[data-prefill-luk-trigger]").forEach((el) => {
+        el.removeAttribute("data-prefill-luk-trigger");
+        el.removeAttribute("data-prefill-field-label");
+      });
 
-    for (const el of document.querySelectorAll(
-      "label, span, p, div, motion.div, h2, h3, h4"
-    )) {
-      if (!labelMatches(el.textContent || "")) continue;
-      let node: Element | null = el.parentElement;
-      for (let depth = 0; depth < 16 && node; depth++) {
+      function norm(s: string) {
+        return (s || "").replace(/\s*\*\s*$/, "").trim().replace(/\s+/g, " ");
+      }
+      function labelMatches(text: string) {
+        const t = norm(text).replace(/\s*\*$/, "");
+        const l = norm(label);
+        if (exactLabelSet.has(l)) return t === l;
+        return t === l || t.startsWith(l);
+      }
+
+      for (const el of document.querySelectorAll(
+        "label, span, p, div, motion.div, h2, h3, h4"
+      )) {
+        if (!labelMatches(el.textContent || "")) continue;
+        let node: Element | null = el.parentElement;
+        for (let depth = 0; depth < 16 && node; depth++) {
         const sel =
-          node.querySelector("motion.div[class*='luk-custom-select']") ||
-          node.querySelector("motion.div[class*='custom-select']") ||
           node.querySelector(".luk-custom-select") ||
+          node.querySelector("[class*='luk-custom-select']") ||
+          node.querySelector("[class*='custom-select']") ||
           node.querySelector("[role='combobox']") ||
           node.querySelector("[aria-haspopup='listbox']");
-        if (sel) {
-          sel.setAttribute("data-prefill-luk-trigger", "1");
-          sel.setAttribute("data-prefill-field-label", label);
-          return true;
+          if (sel) {
+            sel.setAttribute("data-prefill-luk-trigger", "1");
+            sel.setAttribute("data-prefill-field-label", label);
+            return true;
+          }
+          node = node.parentElement;
         }
-        node = node.parentElement;
       }
-    }
-    return false;
-  }, sectionLabel);
+      return false;
+    },
+    { label: sectionLabel, exactLabels: [...EXACT_LUK_FIELD_LABELS] }
+  );
 }
 
 async function lukFieldShowsValue(
@@ -351,7 +1296,7 @@ async function prefillLukDropdownField(
   const variants =
     sectionLabel === "პროექტის ტიპი"
       ? projectTypeOptionVariants(value)
-      : [value];
+      : dropdownOptionVariants(value, sectionLabel);
 
   await scrollToFormField(page, sectionLabel);
 
@@ -430,6 +1375,511 @@ async function prefillLukDropdownField(
   }
 
   return false;
+}
+
+function projectTypeSearchPrefix(value: string): string {
+  const v = value.trim();
+  if (v.length <= 6) return v;
+  return v.slice(0, 8);
+}
+
+async function projectTypeSelectionApplied(
+  page: Page,
+  variants: string[]
+): Promise<boolean> {
+  return lukSelectSelectionApplied(page, "პროექტის ტიპი", variants);
+}
+
+function dropdownOptionVariants(value: string, sectionLabel: string): string[] {
+  if (sectionLabel === "პროექტის ტიპი") return projectTypeOptionVariants(value);
+  const raw = normFieldLabel(dedupeRepeatedLabelValue(value));
+  if (!raw) return [];
+
+  const ordered: string[] = [raw];
+  if (/ის$/u.test(raw)) ordered.push(raw.replace(/ის$/u, "ი"));
+  else if (/ი$/u.test(raw) && !/ის$/u.test(raw)) ordered.push(`${raw}ს`);
+
+  if (
+    sectionLabel === "სათავსო" ||
+    sectionLabel === "სათავსოს ტიპი" ||
+    sectionLabel === "მისაღები"
+  ) {
+    if (raw === "კი") ordered.push("დიახ", "არის", "გათული");
+    if (raw === "არა") ordered.push("არ არის", "არა");
+    const digits = raw.match(/^(\d+)$/);
+    if (digits) ordered.push(`${digits[1]} ადგილი`, `${digits[1]} ადგილის`);
+    if (/საკუჭნაო/i.test(raw)) ordered.push("საკუჭნაო");
+    if (/სარდაფ/i.test(raw)) ordered.push("სარდაფი");
+    if (/სხვენ/i.test(raw)) ordered.push("სხვენი");
+    if (/გარე\s*სათავსო/i.test(raw)) ordered.push("გარე სათავსო");
+    if (/საერთო/i.test(raw)) ordered.push("საერთო სათავსო");
+    if (/სტუდიო/i.test(raw)) ordered.push("სტუდიო");
+    if (/გამოყოფილ/i.test(raw)) ordered.push("გამოყოფილი");
+    if (/ერთიან/i.test(raw)) ordered.push("ერთიანი", "ერთ - ოთახიანი");
+  }
+
+  return [...new Set(ordered)];
+}
+
+async function lukSelectSelectionApplied(
+  page: Page,
+  sectionLabel: string,
+  variants: string[]
+): Promise<boolean> {
+  if (await lukFieldShowsValue(page, sectionLabel, variants)) return true;
+  return page.evaluate(
+    ({ sectionLabel, targets }) => {
+      function norm(s: string) {
+        return (s || "").replace(/\s+/g, " ").trim();
+      }
+      const trigger =
+        document.querySelector(`[data-prefill-luk-field="${sectionLabel}"]`) ||
+        document.querySelector(`[data-prefill-field-label="${sectionLabel}"]`);
+      if (!trigger) return false;
+      const valueEl =
+        trigger.querySelector(
+          "[class*='single-value'], [class*='singleValue'], [class*='placeholder']"
+        ) || trigger;
+      const t = norm(valueEl.textContent || "");
+      if (!t || /აირჩიეთ/i.test(t)) return false;
+      return targets.some((target) => {
+        const o = norm(target);
+        return (
+          t.includes(o) ||
+          t.includes(o.replace(/ის$/u, "ი")) ||
+          t.includes(`${o}ს`)
+        );
+      });
+    },
+    { sectionLabel, targets: variants }
+  );
+}
+
+async function markLukSelectRoot(page: Page, sectionLabel: string): Promise<boolean> {
+  return page.evaluate((label) => {
+    document.querySelectorAll("[data-prefill-luk-field]").forEach((el) => {
+      el.removeAttribute("data-prefill-luk-field");
+    });
+    document.querySelectorAll("[data-prefill-field-label]").forEach((el) => {
+      if (el.getAttribute("data-prefill-luk-field")) return;
+      el.removeAttribute("data-prefill-field-label");
+    });
+
+    function norm(s: string) {
+      return (s || "").replace(/\s*\*\s*$/, "").trim().replace(/\s+/g, " ");
+    }
+
+    function pickSelect(select: Element, labelEl: Element): boolean {
+      select.setAttribute("data-prefill-luk-field", label);
+      select.setAttribute("data-prefill-field-label", label);
+      return true;
+    }
+
+    function findSelectNearLabel(labelEl: Element): Element | null {
+      const findIn = (root: Element): Element | null =>
+        root.querySelector(".luk-custom-select") ||
+        root.querySelector("[class*='luk-custom-select']") ||
+        root.querySelector("[role='combobox']");
+
+      let sib: Element | null = labelEl.nextElementSibling;
+      for (let i = 0; i < 6 && sib; i++) {
+        const sel =
+          (sib.classList?.toString().includes("luk-custom-select") ? sib : null) ||
+          findIn(sib);
+        if (sel) return sel;
+        sib = sib.nextElementSibling;
+      }
+
+      const parent = labelEl.parentElement;
+      if (parent) {
+        const kids = Array.from(parent.children);
+        const idx = kids.indexOf(labelEl);
+        for (let j = idx + 1; j < kids.length && j < idx + 5; j++) {
+          const child = kids[j];
+          const sel =
+            (child.classList?.toString().includes("luk-custom-select") ? child : null) ||
+            findIn(child);
+          if (sel) return sel;
+        }
+      }
+
+      const lr = labelEl.getBoundingClientRect();
+      let best: Element | null = null;
+      let bestScore = Infinity;
+      let node: Element | null = labelEl.parentElement;
+      for (let depth = 0; depth < 14 && node; depth++) {
+        for (const sel of node.querySelectorAll(
+          ".luk-custom-select, [class*='luk-custom-select'], [role='combobox']"
+        )) {
+          const sr = sel.getBoundingClientRect();
+          if (sr.width < 40 || sr.height < 10) continue;
+          const dy = Math.abs(sr.top - lr.top);
+          const dx = Math.abs(sr.left - lr.left);
+          if (dy > 120) continue;
+          const score = dy * 3 + dx;
+          if (score < bestScore) {
+            bestScore = score;
+            best = sel;
+          }
+        }
+        node = node.parentElement;
+      }
+      return best;
+    }
+
+    for (const el of document.querySelectorAll("label, span, p")) {
+      const t = norm(el.textContent || "");
+      if (t !== label) continue;
+      if (el.children.length > 2) continue;
+
+      const sel = findSelectNearLabel(el);
+      if (sel && pickSelect(sel, el)) return true;
+    }
+    return false;
+  }, sectionLabel);
+}
+
+async function markProjectTypeSelectRoot(page: Page): Promise<boolean> {
+  return markLukSelectRoot(page, "პროექტის ტიპი");
+}
+
+async function markLukSelectOption(page: Page, variants: string[]): Promise<boolean> {
+  return page.evaluate((targets) => {
+    document.querySelectorAll("[data-prefill-luk-option]").forEach((el) => {
+      el.removeAttribute("data-prefill-luk-option");
+    });
+
+    function norm(s: string) {
+      return (s || "").replace(/\s+/g, " ").trim();
+    }
+    function matches(t: string) {
+      if (!t || t.length > 60) return false;
+      return targets.some((target) => {
+        const o = norm(target);
+        return t === o || t === o.replace(/ის$/u, "ი") || t === `${o}ს`;
+      });
+    }
+
+    const menus = Array.from(
+      document.querySelectorAll(
+        '[role="listbox"], [class*="menu"], [class*="MenuList"], [class*="menu-list"]'
+      )
+    ).filter((el) => {
+      const style = window.getComputedStyle(el);
+      if (style.display === "none" || style.visibility === "hidden") return false;
+      const r = el.getBoundingClientRect();
+      return r.height > 16 && r.width > 40;
+    });
+
+    const candidates: { el: Element; depth: number }[] = [];
+    for (const menu of menus) {
+      for (const el of menu.querySelectorAll(
+        '[role="option"], [class*="option"], div, span, li, p'
+      )) {
+        const t = norm(el.textContent || "");
+        if (!matches(t)) continue;
+        if (el.children.length > 0) {
+          const onlyChildMatch =
+            el.children.length === 1 &&
+            matches(norm(el.children[0].textContent || ""));
+          if (!onlyChildMatch && t.length > norm(variants[0]).length + 8) continue;
+        }
+        let depth = 0;
+        let p: Element | null = el.parentElement;
+        while (p && p !== menu) {
+          depth++;
+          p = p.parentElement;
+        }
+        candidates.push({ el, depth });
+      }
+    }
+
+    candidates.sort((a, b) => b.depth - a.depth);
+    const pick = candidates[0]?.el;
+    if (!pick) return false;
+
+    const clickTarget =
+      pick.closest("[role='option']") ||
+      pick.closest('[class*="option"]') ||
+      pick.closest("li") ||
+      pick;
+    clickTarget.setAttribute("data-prefill-luk-option", "1");
+    return true;
+  }, variants);
+}
+
+async function markProjectTypeOption(page: Page, variants: string[]): Promise<boolean> {
+  return markLukSelectOption(page, variants);
+}
+
+async function clickMarkedLukOption(page: Page): Promise<boolean> {
+  const opt = page.locator("[data-prefill-luk-option='1']").first();
+  if (!(await opt.isVisible({ timeout: 1500 }).catch(() => false))) return false;
+
+  await opt.scrollIntoViewIfNeeded().catch(() => {});
+  await opt.dispatchEvent("mousedown");
+  const box = await opt.boundingBox().catch(() => null);
+  if (box) {
+    await page.mouse.click(box.x + box.width / 2, box.y + box.height / 2);
+  } else {
+    await opt.click({ timeout: CHIP_CLICK_TIMEOUT_MS, force: true });
+  }
+  await opt.dispatchEvent("mouseup");
+  return true;
+}
+
+async function clickMarkedProjectTypeOption(page: Page): Promise<boolean> {
+  return clickMarkedLukOption(page);
+}
+
+async function waitForLukSelectOptions(page: Page, minCount = 1): Promise<void> {
+  await page
+    .waitForFunction(
+      (min) => {
+        function countOptions(root: ParentNode) {
+          let n = 0;
+          for (const el of root.querySelectorAll(
+            '[role="option"], [class*="option"], [class*="menu-list"] > div, [class*="MenuList"] > div'
+          )) {
+            const t = (el.textContent || "").replace(/\s+/g, " ").trim();
+            if (!t || t.length > 60) continue;
+            if (/აირჩიეთ|არ\s*მოიძებნ|not\s*found|no\s*options/i.test(t)) continue;
+            const r = el.getBoundingClientRect();
+            if (r.height > 2 && r.width > 2) n++;
+          }
+          return n;
+        }
+        for (const lb of document.querySelectorAll(
+          '[role="listbox"], [class*="menu"], [class*="MenuList"]'
+        )) {
+          const style = window.getComputedStyle(lb);
+          if (style.display === "none" || style.visibility === "hidden") continue;
+          if (countOptions(lb) >= min) return true;
+        }
+        return countOptions(document.body) >= min;
+      },
+      minCount,
+      { timeout: 10000 }
+    )
+    .catch(() => {});
+}
+
+async function waitForProjectTypeOptions(page: Page, minCount = 1): Promise<void> {
+  return waitForLukSelectOptions(page, minCount);
+}
+
+async function typeProjectTypeFilter(page: Page, text: string): Promise<void> {
+  const candidates = [
+    page.locator("[data-prefill-project-type-root='1'] input"),
+    page.locator("[class*='luk-custom-select'] input").filter({ visible: true }),
+    page.locator("[class*='menu'] input").filter({ visible: true }),
+    page.locator("input:focus"),
+  ];
+
+  for (const input of candidates) {
+    if (!(await input.isVisible({ timeout: 500 }).catch(() => false))) continue;
+    await input.click({ force: true });
+    await input.press("Control+a").catch(() => input.press("Meta+a"));
+    await input.pressSequentially(text, { delay: 50 });
+    return;
+  }
+
+  await page.keyboard.type(text, { delay: 50 });
+}
+
+async function selectProjectTypeOption(page: Page, variant: string): Promise<boolean> {
+  for (const v of projectTypeOptionVariants(variant)) {
+    const picked = await page.evaluate((optionText) => {
+      function norm(s: string) {
+        return (s || "").replace(/\s+/g, " ").trim();
+      }
+      const target = norm(optionText);
+      for (const el of document.querySelectorAll(
+        "[role='option'], [class*='option'], [class*='menu-list'] > div, li"
+      )) {
+        const t = norm(el.textContent || "");
+        if (t !== target && t !== target.replace(/ის$/u, "ი") && t !== `${target}ს`) {
+          continue;
+        }
+        const clickEl =
+          el.closest("[role='option']") ||
+          el.closest('[class*="option"]') ||
+          el;
+        (clickEl as HTMLElement).dispatchEvent(
+          new MouseEvent("mousedown", { bubbles: true })
+        );
+        (clickEl as HTMLElement).click();
+        return true;
+      }
+      return false;
+    }, v);
+
+    if (picked) return true;
+
+    const exact = page
+      .locator("[role='option'], [class*='option'], [class*='menu-list'] > div")
+      .filter({ hasText: new RegExp(`^${escapeRegExp(v)}$`, "u") })
+      .filter({ visible: true })
+      .first();
+    if (await exact.isVisible({ timeout: 1500 }).catch(() => false)) {
+      await exact.dispatchEvent("mousedown");
+      await exact.click({ timeout: CHIP_CLICK_TIMEOUT_MS, force: true });
+      return true;
+    }
+  }
+  return false;
+}
+
+async function openProjectTypeDropdown(page: Page): Promise<boolean> {
+  if (!(await markProjectTypeSelectRoot(page))) return false;
+
+  const selectRoot = page.locator("[data-prefill-project-type-root='1']").first();
+  await selectRoot.scrollIntoViewIfNeeded().catch(() => {});
+
+  const openers = [
+    selectRoot.locator("[class*='indicator']").first(),
+    selectRoot.locator("[class*='control']").first(),
+    selectRoot.locator("[class*='value-container']").first(),
+    selectRoot,
+  ];
+
+  for (const opener of openers) {
+    if (await opener.isVisible({ timeout: 400 }).catch(() => false)) {
+      await opener.click({ timeout: CHIP_CLICK_TIMEOUT_MS, force: true });
+      await prefillPause(page, 350);
+      return true;
+    }
+  }
+  return false;
+}
+
+/** Click visible menu row (full list loads on open — no filter typing). */
+async function clickVisibleLukMenuItem(
+  page: Page,
+  variants: string[],
+  menuTopY: number,
+  menuBottomY?: number
+): Promise<boolean> {
+  if (!variants.length) return false;
+  const maxY = menuBottomY ?? menuTopY + 360;
+  const matches = page.getByText(
+    new RegExp(`^(${variants.map(escapeRegExp).join("|")})$`, "u"),
+    { exact: true }
+  );
+  const count = await matches.count();
+
+  let bestIdx = -1;
+  let bestDist = Infinity;
+
+  for (let i = 0; i < count; i++) {
+    const opt = matches.nth(i);
+    if (!(await opt.isVisible({ timeout: 800 }).catch(() => false))) continue;
+
+    const box = await opt.boundingBox().catch(() => null);
+    if (!box || box.height < 6 || box.height > 56) continue;
+    if (box.y < menuTopY - 4 || box.y > maxY) continue;
+
+    const dist = Math.abs(box.y - menuTopY);
+    if (dist < bestDist) {
+      bestDist = dist;
+      bestIdx = i;
+    }
+  }
+
+  if (bestIdx >= 0) {
+    const opt = matches.nth(bestIdx);
+    await opt.scrollIntoViewIfNeeded().catch(() => {});
+    await opt.dispatchEvent("mousedown");
+    const box = await opt.boundingBox().catch(() => null);
+    if (box) {
+      await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2);
+      await page.mouse.down();
+      await page.mouse.up();
+    } else {
+      await opt.click({ force: true, timeout: CHIP_CLICK_TIMEOUT_MS });
+    }
+    await prefillPause(page, 350);
+    return true;
+  }
+
+  return false;
+}
+
+async function clickVisibleProjectTypeMenuItem(
+  page: Page,
+  variant: string,
+  menuTopY: number
+): Promise<boolean> {
+  return clickVisibleLukMenuItem(page, projectTypeOptionVariants(variant), menuTopY);
+}
+
+/** Luk select (პროექტის ტიპი, მისაღები, სათავსო, …) — open list, click exact option. */
+async function prefillLukSelectByLabel(
+  page: Page,
+  sectionLabel: string,
+  rawValue: string
+): Promise<boolean> {
+  const variants = dropdownOptionVariants(rawValue, sectionLabel);
+  if (!variants.length) return false;
+
+  await scrollToFormField(page, sectionLabel);
+  await prefillPause(page, 80);
+
+  if (await lukSelectSelectionApplied(page, sectionLabel, variants)) return true;
+  if (!(await markLukSelectRoot(page, sectionLabel))) return false;
+
+  const selectRoot = page.locator(`[data-prefill-luk-field="${sectionLabel}"]`).first();
+  await selectRoot.scrollIntoViewIfNeeded().catch(() => {});
+  const rootBox = await selectRoot.boundingBox().catch(() => null);
+  const menuTopY = rootBox ? rootBox.y + rootBox.height : 0;
+  const menuBottomY = rootBox ? menuTopY + 280 : menuTopY + 360;
+
+  await closeOpenDropdowns(page);
+  await prefillPause(page, 60);
+
+  const opener = selectRoot
+    .locator("[class*='indicator'], [class*='control'], [class*='value-container']")
+    .first();
+  await opener.click({ timeout: CHIP_CLICK_TIMEOUT_MS, force: true }).catch(() =>
+    selectRoot.click({ timeout: CHIP_CLICK_TIMEOUT_MS, force: true })
+  );
+
+  await waitForLukSelectOptions(page, 1);
+  await prefillPause(page, 250);
+
+  if (await clickVisibleLukMenuItem(page, variants, menuTopY, menuBottomY)) {
+    if (await lukSelectSelectionApplied(page, sectionLabel, variants)) return true;
+  }
+
+  for (const variant of variants) {
+    if (await markLukSelectOption(page, [variant])) {
+      await clickMarkedLukOption(page);
+      await prefillPause(page, 300);
+      if (await lukSelectSelectionApplied(page, sectionLabel, variants)) return true;
+    }
+  }
+
+  for (const variant of variants) {
+    const menu = page
+      .locator("[class*='luk-custom-select__menu'], [class*='menu-list'], [role='listbox']")
+      .last();
+    const row = menu.getByText(variant, { exact: true }).first();
+    if (await row.isVisible({ timeout: 1000 }).catch(() => false)) {
+      await row.dispatchEvent("mousedown");
+      await row.click({ force: true, timeout: CHIP_CLICK_TIMEOUT_MS });
+      await prefillPause(page, 300);
+      if (await lukSelectSelectionApplied(page, sectionLabel, variants)) return true;
+    }
+  }
+
+  await closeOpenDropdowns(page);
+  return false;
+}
+
+/** პროექტის ტიპი — open list, click exact option (e.g. თუხარელის). */
+async function prefillProjectTypeField(page: Page, rawValue: string): Promise<boolean> {
+  await expandCreateFormSections(page);
+  return prefillLukSelectByLabel(page, "პროექტის ტიპი", rawValue);
 }
 
 /** Chip row or dropdown (გათბობა may be either on the create form). */
@@ -518,19 +1968,14 @@ async function prefillCountChipPlaywright(
   return false;
 }
 
-/** Open პროექტის ტიპი luk-select and pick option (e.g. თუხარელი). */
+/** Open პროექტის ტიპი luk-select and pick option (e.g. თუხარელის). */
 async function selectProjectTypePlaywright(
   page: Page,
   rawValue: string
 ): Promise<boolean> {
   const value = dedupeRepeatedLabelValue(rawValue.trim());
   if (!value) return false;
-  return prefillLukDropdownField(
-    page,
-    "პროექტის ტიპი",
-    value,
-    "აირჩიეთ პროექტის ტიპი"
-  );
+  return prefillProjectTypeField(page, value);
 }
 
 // Click a chip inside a labeled section (სტატუსი, მდგომარეობა). Playwright click updates React state.
@@ -1603,27 +3048,53 @@ async function fillInputByLabelEvaluate(
 ): Promise<void> {
   await page.evaluate(
     ({ labelText, val }) => {
+      function norm(s: string) {
+        return (s || "").replace(/\s*\*\s*$/, "").trim().replace(/\s+/g, " ");
+      }
+
       const inputSetter = Object.getOwnPropertyDescriptor(
         window.HTMLInputElement.prototype,
         "value"
       )?.set;
       if (!inputSetter) return;
-      document.querySelectorAll("label").forEach((lbl) => {
+
+      function fillInput(input: HTMLInputElement): boolean {
+        input.focus();
+        inputSetter!.call(input, val);
+        input.dispatchEvent(
+          new InputEvent("input", {
+            bubbles: true,
+            cancelable: true,
+            inputType: "insertText",
+            data: val,
+          })
+        );
+        input.dispatchEvent(new Event("change", { bubbles: true }));
+        input.blur();
+        return true;
+      }
+
+      for (const lbl of document.querySelectorAll("label")) {
         for (const span of lbl.querySelectorAll("span")) {
-          const t = span.textContent?.trim()?.replace(/\s*\*\s*$/, "").trim();
-          if (t !== labelText) continue;
+          if (norm(span.textContent || "") !== norm(labelText)) continue;
           const forAttr = lbl.getAttribute("for");
           const input = forAttr
-            ? (document.getElementById(forAttr) as HTMLInputElement)
-            : (lbl.querySelector("input") as HTMLInputElement);
-          if (input) {
-            inputSetter.call(input, val);
-            input.dispatchEvent(new Event("input", { bubbles: true }));
-            input.dispatchEvent(new Event("change", { bubbles: true }));
-          }
-          return;
+            ? (document.getElementById(forAttr) as HTMLInputElement | null)
+            : (lbl.querySelector("input") as HTMLInputElement | null);
+          if (input && fillInput(input)) return;
         }
-      });
+      }
+
+      for (const el of document.querySelectorAll("span, label, p")) {
+        if (norm(el.textContent || "") !== norm(labelText)) continue;
+        if (el.children.length > 3) continue;
+        let node: Element | null = el.parentElement;
+        for (let depth = 0; depth < 12 && node; depth++) {
+          const input = node.querySelector("input") as HTMLInputElement | null;
+          if (input && fillInput(input)) return;
+          node = node.parentElement;
+        }
+      }
     },
     { labelText: label, val: value.trim() }
   );
@@ -1914,7 +3385,9 @@ async function selectListOptionInSection(
   const closeDropdowns = options?.closeDropdowns !== false;
   if (closeDropdowns) await closeOpenDropdowns(page);
   if (await listFieldAlreadySet(page, sectionLabel, value)) return;
-  const ok = await prefillLukDropdownField(page, sectionLabel, value, placeholder);
+  const ok =
+    (await prefillLukSelectByLabel(page, sectionLabel, value)) ||
+    (await prefillLukDropdownField(page, sectionLabel, value, placeholder));
   if (!ok) throw new Error(`Could not select "${value}" for ${sectionLabel}`);
   if (closeDropdowns) await closeOpenDropdowns(page);
 }
@@ -1937,16 +3410,6 @@ const PREFILL_NUMERIC_FIELDS: {
     getValue: (l) => getBathroomsValue(l),
   },
   { labels: ["აშენების წელი"], getValue: (l) => l.rawData?.["აშენების წელი"] || "" },
-  { labels: ["ჭერის სიმაღლე"], getValue: (l) => l.rawData?.["ჭერის სიმაღლე"] || "" },
-  {
-    labels: ["აივანი"],
-    getValue: (l) => l.balconyArea || l.rawData?.["აივანი"] || "",
-  },
-  { labels: ["ლოჯია"], getValue: (l) => l.loggiaArea || l.rawData?.["ლოჯია"] || "" },
-  {
-    labels: ["ვერანდა"],
-    getValue: (l) => l.verandaArea || l.rawData?.["ვერანდა"] || "",
-  },
 ];
 
 const PREFILL_LIST_FIELDS: {
@@ -1954,11 +3417,17 @@ const PREFILL_LIST_FIELDS: {
   getValue: (l: MyhomeListing) => string;
   placeholder?: string;
 }[] = [
-  { labels: ["მისაღები"], getValue: (l) => l.rawData?.["მისაღები"] || "" },
-  { labels: ["სათავსო"], getValue: (l) => l.rawData?.["სათავსო"] || "" },
+  {
+    labels: ["მისაღები"],
+    getValue: (l) => getNestedSectionTypeValue(l, ["მისაღები", "მისაღების ტიპი"]),
+  },
+  {
+    labels: ["სათავსო"],
+    getValue: (l) => getNestedSectionTypeValue(l, ["სათავსო", "სათავსოს ტიპი"]),
+  },
   {
     labels: ["სათავსოს ტიპი"],
-    getValue: (l) => l.rawData?.["სათავსოს ტიპი"] || "",
+    getValue: (l) => getNestedSectionTypeValue(l, ["სათავსო", "სათავსოს ტიპი"]),
   },
   { labels: ["ხედი"], getValue: (l) => l.rawData?.["ხედი"] || "" },
   { labels: ["შესასვლელი"], getValue: (l) => l.rawData?.["შესასვლელი"] || "" },
@@ -2011,6 +3480,11 @@ async function applyAdditionalParametersPrefill(
     }
   }
 
+  await prefillBalconyFields(page, listing);
+  await prefillLoggiaFields(page, listing);
+  await prefillVerandaFields(page, listing);
+  await prefillCeilingHeightFields(page, listing);
+
   for (const label of CHIP_STYLE_ROW_LABELS) {
     const value = getRawPreferenceValue(listing, label);
     if (!value || value === "კი" || value === "არა") continue;
@@ -2018,32 +3492,69 @@ async function applyAdditionalParametersPrefill(
     await prefillPreferenceField(page, label, value);
   }
 
+  for (const nested of NESTED_LUK_TYPE_SECTIONS) {
+    const value = getNestedSectionTypeValue(listing, nested.valueKeys);
+    if (!value) continue;
+    await closeOpenDropdowns(page);
+    await prefillNestedSectionTypeDropdown(
+      page,
+      nested.section,
+      nested.dropdownHint,
+      value
+    );
+    if (nested.areaKey) {
+      const sectionArea = getNestedSectionAreaValue(
+        listing,
+        nested.areaKey,
+        nested.valueKeys
+      );
+      if (sectionArea) {
+        await prefillPause(page, 120);
+        await fillInputInNestedSection(page, nested.section, "ფართი", sectionArea);
+      }
+    }
+    await prefillPause(page, 150);
+  }
+
+  const lukSelectPrefillOrder = ["ხედი", "შესასვლელი"] as const;
+
   await closeOpenDropdowns(page);
+  for (const label of lukSelectPrefillOrder) {
+    const value =
+      listing.rawData?.[label]?.trim() ||
+      PREFILL_LIST_FIELDS.find((f) => f.labels.includes(label))?.getValue(listing)?.trim() ||
+      "";
+    if (!value) continue;
+    await closeOpenDropdowns(page);
+    await scrollToFormField(page, label);
+    await prefillLukSelectByLabel(page, label, value);
+  }
+
   for (const field of PREFILL_LIST_FIELDS) {
     const value = field.getValue(listing)?.trim();
     if (!value) continue;
     for (const label of field.labels) {
-      try {
-        await selectListOptionInSection(page, label, value, field.placeholder, {
-          closeDropdowns: false,
-        });
-        break;
-      } catch {
-        /* try alias label */
+      if (label === "პროექტის ტიპი") continue;
+      if (
+        label === "სათავსო" ||
+        label === "სათავსოს ტიპი" ||
+        label === "მისაღები"
+      ) {
+        continue;
       }
+      if (lukSelectPrefillOrder.includes(label as (typeof lukSelectPrefillOrder)[number])) {
+        continue;
+      }
+      await closeOpenDropdowns(page);
+      await prefillLukSelectByLabel(page, label, value);
+      break;
     }
   }
 
   const projectType = getProjectTypeValue(listing);
   if (projectType) {
     await closeOpenDropdowns(page);
-    await scrollToFormField(page, "პროექტის ტიპი");
-    await prefillLukDropdownField(
-      page,
-      "პროექტის ტიპი",
-      projectType,
-      "აირჩიეთ პროექტის ტიპი"
-    );
+    await prefillProjectTypeField(page, projectType);
   }
   await closeOpenDropdowns(page);
 }
@@ -2528,7 +4039,29 @@ export async function parseListing(url: string): Promise<{
             ""
           );
         }
+        if (canon === "აივანი") {
+          const combined = usable.find((v) => /^\d+\s*\/\s*\d/.test(v));
+          if (combined) return combined;
+        }
+        if (canon === "ლოჯია" || canon === "ვერანდა") {
+          const withArea = usable.find((v) => /მ²|m²|\d+\s*\/\s*\d/i.test(v));
+          if (withArea) return withArea;
+        }
+        if (canon === "ჭერის სიმაღლე") {
+          const withHeight = usable.find(
+            (v) => /\d/.test(v) && !isYesNo(v) && !/მ²|m²/i.test(v)
+          );
+          if (withHeight) return withHeight;
+        }
         if (canon === "პროექტის ტიპი" || PREFERENCE_LABELS.has(canon)) {
+          if (canon === "სათავსო" || canon === "მისაღები") {
+            const typeHint =
+              canon === "სათავსო" ? /^სათავსოს\s*ტიპი$/i : /^მისაღების\s*ტიპი$/i;
+            const combined = usable.find(
+              (v) => !isYesNo(v) && /\/\s*\d/.test(v) && !typeHint.test(v)
+            );
+            if (combined) return dedupeRepeated(combined);
+          }
           const pref = usable.find((v) => !isYesNo(v) && v.length > 1);
           return pref ? dedupeRepeated(pref) : "";
         }
@@ -2738,6 +4271,290 @@ export async function parseListing(url: string): Promise<{
           mergeParamValue(params, k, v);
         }
 
+        const collectBalconyFromFlexRows = (root: Element | Document) => {
+          const out: Record<string, string> = {};
+
+          root.querySelectorAll("span,label,p,motion.div,motion.div,motion.div,motion.div,motion.div,div").forEach((el) => {
+            const t = (el.textContent || "").replace(/\s+/g, " ").trim();
+            if (t !== "აივანი") return;
+            if (el.tagName !== "DIV" && el.children.length > 3) return;
+
+            const parent = el.parentElement;
+            if (!parent) return;
+
+            const joined = (parent.textContent || "").replace(/\s+/g, "");
+            const glued = joined.match(/^აივანი(\d+)\/(\d+(?:[.,]\d+)?)\s*(?:მ²|m²)?$/iu);
+            if (glued) {
+              out["აივნის რაოდენობა"] = glued[1];
+              out["აივნის ფართი"] = glued[2].replace(",", ".");
+              out["აივანი"] = `${glued[1]}/${glued[2]}`;
+              return;
+            }
+
+            for (const child of parent.children) {
+              const ct = (child.textContent || "").replace(/\s+/g, " ").trim();
+              if (!ct || ct === t) continue;
+              if (ct.length > 40) continue;
+              const slash = ct.match(/^(\d+)\s*\/\s*(\d+(?:[.,]\d+)?)\s*(?:მ²|m²)?$/iu);
+              if (slash) {
+                out["აივნის რაოდენობა"] = slash[1];
+                out["აივნის ფართი"] = slash[2].replace(",", ".");
+                out["აივანი"] = `${slash[1]}/${slash[2]}`;
+                return;
+              }
+            }
+          });
+
+          return out;
+        };
+
+        const balconyFlex = collectBalconyFromFlexRows(document.body);
+        for (const [k, v] of Object.entries(balconyFlex)) {
+          mergeParamValue(params, k, v);
+        }
+
+        const collectLoggiaFromFlexRows = (root: Element | Document) => {
+          const out: Record<string, string> = {};
+
+          root.querySelectorAll("span,label,p,motion.div,motion.div,motion.div,motion.div,motion.div,motion.div,motion.div,div").forEach((el) => {
+            const t = (el.textContent || "").replace(/\s+/g, " ").trim();
+            if (t !== "ლოჯია") return;
+            if (el.tagName !== "DIV" && el.children.length > 3) return;
+
+            const parent = el.parentElement;
+            if (!parent) return;
+
+            const joined = (parent.textContent || "").replace(/\s+/g, "");
+            const gluedSlash = joined.match(/^ლოჯია(\d+)\/(\d+(?:[.,]\d+)?)\s*(?:მ²|m²)?$/iu);
+            if (gluedSlash) {
+              out["ლოჯიის ფართი"] = gluedSlash[2].replace(",", ".");
+              out["ლოჯია"] = `${gluedSlash[1]}/${gluedSlash[2]}`;
+              return;
+            }
+
+            const gluedArea = joined.match(/^ლოჯია(\d+(?:[.,]\d+)?)\s*(?:მ²|m²)?$/iu);
+            if (gluedArea) {
+              out["ლოჯიის ფართი"] = gluedArea[1].replace(",", ".");
+              out["ლოჯია"] = gluedArea[1];
+              return;
+            }
+
+            for (const child of parent.children) {
+              const ct = (child.textContent || "").replace(/\s+/g, " ").trim();
+              if (!ct || ct === t) continue;
+              if (ct.length > 40) continue;
+              const slash = ct.match(/^(\d+)\s*\/\s*(\d+(?:[.,]\d+)?)\s*(?:მ²|m²)?$/iu);
+              if (slash) {
+                out["ლოჯიის ფართი"] = slash[2].replace(",", ".");
+                out["ლოჯია"] = `${slash[1]}/${slash[2]}`;
+                return;
+              }
+              const areaOnly = ct.match(/^(\d+(?:[.,]\d+)?)\s*(?:მ²|m²)?$/iu);
+              if (areaOnly) {
+                out["ლოჯიის ფართი"] = areaOnly[1].replace(",", ".");
+                out["ლოჯია"] = areaOnly[1];
+                return;
+              }
+            }
+          });
+
+          return out;
+        };
+
+        const loggiaFlex = collectLoggiaFromFlexRows(document.body);
+        for (const [k, v] of Object.entries(loggiaFlex)) {
+          mergeParamValue(params, k, v);
+        }
+
+        const collectVerandaFromFlexRows = (root: Element | Document) => {
+          const out: Record<string, string> = {};
+
+          root.querySelectorAll("span,label,p,motion.div,motion.div,motion.div,motion.div,motion.div,motion.div,motion.div,motion.div,motion.div,div").forEach((el) => {
+            const t = (el.textContent || "").replace(/\s+/g, " ").trim();
+            if (t !== "ვერანდა") return;
+            if (el.tagName !== "DIV" && el.children.length > 3) return;
+
+            const parent = el.parentElement;
+            if (!parent) return;
+
+            const joined = (parent.textContent || "").replace(/\s+/g, "");
+            const gluedSlash = joined.match(/^ვერანდა(\d+)\/(\d+(?:[.,]\d+)?)\s*(?:მ²|m²)?$/iu);
+            if (gluedSlash) {
+              out["ვერანდის ფართი"] = gluedSlash[2].replace(",", ".");
+              out["ვერანდა"] = `${gluedSlash[1]}/${gluedSlash[2]}`;
+              return;
+            }
+
+            const gluedArea = joined.match(/^ვერანდა(\d+(?:[.,]\d+)?)\s*(?:მ²|m²)?$/iu);
+            if (gluedArea) {
+              out["ვერანდის ფართი"] = gluedArea[1].replace(",", ".");
+              out["ვერანდა"] = gluedArea[1];
+              return;
+            }
+
+            for (const child of parent.children) {
+              const ct = (child.textContent || "").replace(/\s+/g, " ").trim();
+              if (!ct || ct === t) continue;
+              if (ct.length > 40) continue;
+              const slash = ct.match(/^(\d+)\s*\/\s*(\d+(?:[.,]\d+)?)\s*(?:მ²|m²)?$/iu);
+              if (slash) {
+                out["ვერანდის ფართი"] = slash[2].replace(",", ".");
+                out["ვერანდა"] = `${slash[1]}/${slash[2]}`;
+                return;
+              }
+              const areaOnly = ct.match(/^(\d+(?:[.,]\d+)?)\s*(?:მ²|m²)?$/iu);
+              if (areaOnly) {
+                out["ვერანდის ფართი"] = areaOnly[1].replace(",", ".");
+                out["ვერანდა"] = areaOnly[1];
+                return;
+              }
+            }
+          });
+
+          return out;
+        };
+
+        const verandaFlex = collectVerandaFromFlexRows(document.body);
+        for (const [k, v] of Object.entries(verandaFlex)) {
+          mergeParamValue(params, k, v);
+        }
+
+        const collectCeilingHeightFromFlexRows = (root: Element | Document) => {
+          const out: Record<string, string> = {};
+
+          root.querySelectorAll("span,label,p,motion.div,motion.div,motion.div,motion.div,motion.div,motion.div,motion.div,motion.div,motion.div,motion.div,motion.div,div").forEach((el) => {
+            const t = (el.textContent || "").replace(/\s+/g, " ").trim();
+            if (t !== "ჭერის სიმაღლე") return;
+            if (el.tagName !== "DIV" && el.children.length > 3) return;
+
+            const parent = el.parentElement;
+            if (!parent) return;
+
+            const joined = (parent.textContent || "").replace(/\s+/g, "");
+            const glued = joined.match(
+              /^ჭერისსიმაღლე(\d+(?:[.,]\d+)?)\s*(?:სმ|cm|მ|m)?$/iu
+            );
+            if (glued) {
+              out["ჭერის სიმაღლე"] = glued[1].replace(",", ".");
+              return;
+            }
+
+            for (const child of parent.children) {
+              const ct = (child.textContent || "").replace(/\s+/g, " ").trim();
+              if (!ct || ct === t) continue;
+              if (ct.length > 40) continue;
+              const height = ct.match(/^(\d+(?:[.,]\d+)?)\s*(?:სმ|cm|მ|m)?$/iu);
+              if (height) {
+                out["ჭერის სიმაღლე"] = height[1].replace(",", ".");
+                return;
+              }
+            }
+          });
+
+          return out;
+        };
+
+        const ceilingFlex = collectCeilingHeightFromFlexRows(document.body);
+        for (const [k, v] of Object.entries(ceilingFlex)) {
+          mergeParamValue(params, k, v);
+        }
+
+        const collectGarageFromFlexRows = (root: Element | Document) => {
+          const out: Record<string, string> = {};
+
+          root.querySelectorAll("span,label,p,motion.div,motion.div,motion.div,div").forEach((el) => {
+            const t = (el.textContent || "").replace(/\s+/g, " ").trim();
+            if (t !== "სათავსო") return;
+            if (el.tagName !== "DIV" && el.children.length > 3) return;
+
+            const parent = el.parentElement;
+            if (!parent) return;
+
+            const joined = (parent.textContent || "").replace(/\s+/g, "");
+            const glued = joined.match(/^სათავსო(?!სტიპი)(.+)$/iu);
+            if (glued) {
+              const chunk = glued[1];
+              const slash = chunk.match(/^(.+?)\/(\d+(?:[.,]\d+)?)\s*(?:მ²|m²)?$/iu);
+              if (slash) {
+                out["სათავსო"] = dedupeRepeated(slash[1]);
+                out["სათავსოს ფართი"] = slash[2].replace(",", ".");
+              } else if (chunk && !isYesNo(chunk)) {
+                out["სათავსო"] = dedupeRepeated(chunk);
+              }
+              return;
+            }
+
+            for (const child of parent.children) {
+              const ct = (child.textContent || "").replace(/\s+/g, " ").trim();
+              if (!ct || ct === t || isYesNo(ct)) continue;
+              if (ct.length > 60) continue;
+              const slash = ct.match(/^(.+?)\/(\d+(?:[.,]\d+)?)\s*(?:მ²|m²)?$/iu);
+              if (slash) {
+                out["სათავსო"] = dedupeRepeated(slash[1]);
+                out["სათავსოს ფართი"] = slash[2].replace(",", ".");
+              } else {
+                out["სათავსო"] = dedupeRepeated(ct);
+              }
+              return;
+            }
+          });
+
+          return out;
+        };
+
+        const garageFlex = collectGarageFromFlexRows(document.body);
+        for (const [k, v] of Object.entries(garageFlex)) {
+          mergeParamValue(params, k, v);
+        }
+
+        const collectLobbyFromFlexRows = (root: Element | Document) => {
+          const out: Record<string, string> = {};
+
+          root.querySelectorAll("span,label,p,motion.div,motion.div,motion.div,motion.div,div").forEach((el) => {
+            const t = (el.textContent || "").replace(/\s+/g, " ").trim();
+            if (t !== "მისაღები") return;
+            if (el.tagName !== "DIV" && el.children.length > 3) return;
+
+            const parent = el.parentElement;
+            if (!parent) return;
+
+            const joined = (parent.textContent || "").replace(/\s+/g, "");
+            const glued = joined.match(/^მისაღების(?!ტიპი)(.+)$/iu);
+            if (glued) {
+              const chunk = glued[1];
+              const slash = chunk.match(/^(.+?)\/(\d+(?:[.,]\d+)?)\s*(?:მ²|m²)?$/iu);
+              if (slash) {
+                out["მისაღები"] = dedupeRepeated(slash[1]);
+                out["მისაღების ფართი"] = slash[2].replace(",", ".");
+              } else if (chunk && !isYesNo(chunk)) {
+                out["მისაღები"] = dedupeRepeated(chunk);
+              }
+              return;
+            }
+
+            for (const child of parent.children) {
+              const ct = (child.textContent || "").replace(/\s+/g, " ").trim();
+              if (!ct || ct === t || isYesNo(ct)) continue;
+              if (ct.length > 60) continue;
+              const slash = ct.match(/^(.+?)\/(\d+(?:[.,]\d+)?)\s*(?:მ²|m²)?$/iu);
+              if (slash) {
+                out["მისაღები"] = dedupeRepeated(slash[1]);
+                out["მისაღების ფართი"] = slash[2].replace(",", ".");
+              } else {
+                out["მისაღები"] = dedupeRepeated(ct);
+              }
+              return;
+            }
+          });
+
+          return out;
+        };
+
+        const lobbyFlex = collectLobbyFromFlexRows(document.body);
+        for (const [k, v] of Object.entries(lobbyFlex)) {
+          mergeParamValue(params, k, v);
+        }
+
         const furnitureRoot = (() => {
           for (const title of ["ავეჯი და ტექნიკა", "ავეჯი"]) {
             const root = findSectionRoot(title);
@@ -2771,6 +4588,62 @@ export async function parseListing(url: string): Promise<{
         if (furnitureLabelOnPage("ავეჯი")) {
           params["ავეჯი"] = params["ავეჯი"] || "კი";
         }
+
+        function splitNestedTypeAndAreaFields(
+          out: Record<string, string>,
+          typeKey: string,
+          areaKey: string
+        ) {
+          const raw = out[typeKey];
+          if (!raw) return;
+          const slash = raw.match(/^(.+?)\/(\d+(?:[.,]\d+)?)\s*(?:მ²|m²)?\s*$/iu);
+          if (!slash) return;
+          out[typeKey] = slash[1].trim();
+          out[areaKey] = slash[2].replace(",", ".");
+        }
+        splitNestedTypeAndAreaFields(params, "მისაღები", "მისაღების ფართი");
+        splitNestedTypeAndAreaFields(params, "სათავსო", "სათავსოს ფართი");
+
+        function splitBalconyCountAndAreaFields(out: Record<string, string>) {
+          const raw = out["აივანი"];
+          if (!raw) return;
+          const slash = raw.match(/^(\d+)\s*\/\s*(\d+(?:[.,]\d+)?)\s*(?:მ²|m²)?\s*$/iu);
+          if (!slash) return;
+          out["აივნის რაოდენობა"] = slash[1];
+          out["აივნის ფართი"] = slash[2].replace(",", ".");
+        }
+        splitBalconyCountAndAreaFields(params);
+
+        function splitLoggiaAreaFields(out: Record<string, string>) {
+          const raw = out["ლოჯია"];
+          if (!raw) return;
+          const slash = raw.match(/^(\d+)\s*\/\s*(\d+(?:[.,]\d+)?)\s*(?:მ²|m²)?\s*$/iu);
+          if (slash) {
+            out["ლოჯიის ფართი"] = slash[2].replace(",", ".");
+            return;
+          }
+          if (/მ²|m²/i.test(raw) || /^\d+(?:[.,]\d+)?\s*$/.test(raw.trim())) {
+            const m = raw.match(/(\d+(?:[.,]\d+)?)/);
+            if (m) out["ლოჯიის ფართი"] = m[1].replace(",", ".");
+          }
+        }
+        splitLoggiaAreaFields(params);
+
+        function splitVerandaAreaFields(out: Record<string, string>) {
+          const raw = out["ვერანდა"];
+          if (!raw) return;
+          const slash = raw.match(/^(\d+)\s*\/\s*(\d+(?:[.,]\d+)?)\s*(?:მ²|m²)?\s*$/iu);
+          if (slash) {
+            out["ვერანდის ფართი"] = slash[2].replace(",", ".");
+            return;
+          }
+          if (/მ²|m²/i.test(raw) || /^\d+(?:[.,]\d+)?\s*$/.test(raw.trim())) {
+            const m = raw.match(/(\d+(?:[.,]\d+)?)/);
+            if (m) out["ვერანდის ფართი"] = m[1].replace(",", ".");
+          }
+        }
+        splitVerandaAreaFields(params);
+
         return params;
       };
 
@@ -3159,10 +5032,10 @@ export async function parseListing(url: string): Promise<{
         }
       });
       if (!pricePerSqm) {
-        const numericPrice = parseFloat(price.replace(/[,.\s]/g, ""));
-        const numericArea = parseFloat(area.replace(/[^\d.]/g, ""));
-        if (numericPrice > 0 && numericArea > 0) {
-          pricePerSqm = Math.round(numericPrice / numericArea).toString();
+      const numericPrice = parseFloat(price.replace(/[,.\s]/g, ""));
+      const numericArea = parseFloat(area.replace(/[^\d.]/g, ""));
+      if (numericPrice > 0 && numericArea > 0) {
+        pricePerSqm = Math.round(numericPrice / numericArea).toString();
         }
       }
 
@@ -3200,6 +5073,10 @@ export async function parseListing(url: string): Promise<{
       ensureFurnitureRawData(data.rawData);
     }
     if (data) {
+      applyBalconyParsedFields(data);
+      applyLoggiaParsedFields(data);
+      applyVerandaParsedFields(data);
+      applyCeilingHeightParsedFields(data);
       if (data.projectType) {
         data.projectType = dedupeRepeatedLabelValue(data.projectType);
       }
@@ -3264,14 +5141,14 @@ export async function createMyhomePost(
       await postSession.browser.close().catch(() => null);
     }
     browser = await chromium.launch({
-      headless: false,
-      args: ["--no-sandbox", "--disable-setuid-sandbox"],
-    });
+    headless: false,
+    args: ["--no-sandbox", "--disable-setuid-sandbox"],
+  });
     context = await browser.newContext({
-      userAgent:
-        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
-      locale: "ka-GE",
-    });
+    userAgent:
+      "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+    locale: "ka-GE",
+  });
     await context.route("**/*", (route) => {
       const type = route.request().resourceType();
       if (type === "image" || type === "media" || type === "font") {
