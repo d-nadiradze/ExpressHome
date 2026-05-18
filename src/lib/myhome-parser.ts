@@ -1,4 +1,5 @@
 import { chromium, type Browser, type Page } from "playwright";
+import { resolveImagesForPlaywright } from "@/lib/listing-images";
 
 export interface MyhomeListing {
   title: string;
@@ -387,14 +388,67 @@ export async function parseListing(url: string): Promise<{
   }
 }
 
-// Open a visible browser, login, navigate to create form, and pre-fill all fields.
-// The browser stays open for the user to review and submit manually.
+// Navigate to the photo gallery step and upload images via the hidden file input.
+export async function uploadListingImages(
+  page: Page,
+  imagePaths: string[]
+): Promise<void> {
+  if (imagePaths.length === 0) return;
+
+  const fileInput = page.locator(
+    '.document-uploader input[type="file"][accept*=".webp"]'
+  );
+
+  // Try sidebar step for photos / description
+  try {
+    const photoStep = page
+      .locator("button, a, li, [role='button']")
+      .filter({ hasText: /ფოტო|აღწერა/ })
+      .first();
+    if (await photoStep.isVisible({ timeout: 3000 })) {
+      await photoStep.click();
+      await page.waitForTimeout(1000);
+    }
+  } catch {
+    /* step may already be visible */
+  }
+
+  // Fallback: click Next until file input appears
+  for (let i = 0; i < 6; i++) {
+    if (await fileInput.isVisible({ timeout: 1500 }).catch(() => false)) break;
+    const nextBtn = page
+      .locator("button")
+      .filter({ hasText: /^შემდეგი$/ })
+      .first();
+    if (await nextBtn.isVisible({ timeout: 1000 }).catch(() => false)) {
+      await nextBtn.click();
+      await page.waitForTimeout(800);
+    } else {
+      break;
+    }
+  }
+
+  await fileInput.waitFor({ state: "attached", timeout: 15000 });
+  await fileInput.setInputFiles(imagePaths.slice(0, 16));
+
+  // Wait for upload previews (thumbnails or img inside uploader)
+  await page
+    .locator(".document-uploader img, .document-uploader [class*='preview']")
+    .first()
+    .waitFor({ state: "visible", timeout: 60000 })
+    .catch(() => page.waitForTimeout(5000));
+}
+
+// Login, navigate to create form, pre-fill fields, and upload photos.
+// Visible browser stays open locally; headless mode closes after success (MYHOME_PREFILL_HEADLESS=true).
 export async function createMyhomePost(
   credentials: MyhomeCredentials,
-  listing: MyhomeListing
+  listing: MyhomeListing,
+  options: { listingId: string; userId: string }
 ): Promise<{ success: boolean; postUrl?: string; error?: string }> {
+  const headless = process.env.MYHOME_PREFILL_HEADLESS === "true";
   const browser = await chromium.launch({
-    headless: false,
+    headless,
     args: ["--no-sandbox", "--disable-setuid-sandbox"],
   });
   const context = await browser.newContext({
@@ -617,16 +671,37 @@ export async function createMyhomePost(
       } catch { /* project type dropdown failed */ }
     }
 
-    // Browser stays open for user review
-    return {
-      success: true,
-      postUrl: page.url(),
-    };
+    // Upload images to photo gallery
+    if (listing.images.length > 0) {
+      const { paths, cleanup } = await resolveImagesForPlaywright(
+        listing.images,
+        options.listingId,
+        options.userId
+      );
+      try {
+        if (paths.length > 0) {
+          await uploadListingImages(page, paths);
+        }
+      } finally {
+        await cleanup();
+      }
+    }
+
+    const postUrl = page.url();
+
+    if (headless) {
+      await browser.close();
+    }
+
+    return { success: true, postUrl };
   } catch (error) {
+    if (headless) {
+      await browser.close().catch(() => undefined);
+    }
     return {
       success: false,
       error: error instanceof Error ? error.message : "Failed to create post",
     };
   }
-  // No finally block -- browser stays open intentionally
+  // Non-headless: browser stays open for user review (no finally close)
 }

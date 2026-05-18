@@ -29,6 +29,9 @@ mysql-data/
 # Debug/test scripts
 scripts/
 
+# Uploaded listing images
+data/uploads/
+
 # Misc
 *.log
 npm-debug.log*
