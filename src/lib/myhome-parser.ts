@@ -1,4 +1,4 @@
-import {
+﻿import {
   chromium,
   type Browser,
   type BrowserContext,
@@ -116,6 +116,115 @@ function projectTypeOptionVariants(value: string): string[] {
   return [...new Set(ordered)];
 }
 
+/** Split listing address into street name + number (drop district / metro suffix). */
+function parseAddressPartsString(raw: string): { street: string; streetNumber: string } {
+  const text = raw.replace(/\s+/g, " ").trim();
+  if (!text) return { street: "", streetNumber: "" };
+
+  const withNumber = [
+    /^(.+?)\s+მ\.\s*ქ\.\s*(\d+[ა-ჰa-z]?)(?:\s+.+)?$/iu,
+    /^(.+?)\s+მ\.\s*ქუჩა\s*(\d+[ა-ჰa-z]?)(?:\s+.+)?$/iu,
+    /^(.+?)\s+გამზ\.?\s*(\d+[ა-ჰa-z]?)(?:\s+.+)?$/iu,
+    /^(.+?)\s+ქ\.\s*(\d+[ა-ჰa-z]?)(?:\s+.+)?$/iu,
+    /^(.+?)\s+ქუჩა\s*№?\s*(\d+[ა-ჰa-z]?)(?:\s+.+)?$/iu,
+  ];
+  for (const re of withNumber) {
+    const m = text.match(re);
+    if (m) {
+      return {
+        street: `${m[1].trim()} ${text.includes("ქუჩა") && re.source.includes("ქუჩა") ? "ქუჩა" : "ქ"}`,
+        streetNumber: m[2].trim(),
+      };
+    }
+  }
+
+  const streetOnly = text.match(/^(.+?)\s+(ქ\.?|ქუჩა|გამზ\.?)$/iu);
+  if (streetOnly) return { street: text, streetNumber: "" };
+
+  return { street: text, streetNumber: "" };
+}
+
+/** Street field: name only (… ქ / ქუჩა), never building number or metro label. */
+function streetNameOnly(raw: string): string {
+  const text = raw.replace(/\s+/g, " ").trim();
+  if (!text) return "";
+
+  const { street } = parseAddressPartsString(text);
+  let name = street || text;
+
+  name = name
+    .replace(/\s+\d+[ა-ჰa-z]?\s*$/iu, "")
+    .replace(/\s+№\s*\d+[ა-ჰa-z]?\s*$/iu, "")
+    .trim();
+
+  const suffix = name.match(/^(.+?)\s+(ქ\.?|ქუჩა|გამზ\.?)$/iu);
+  if (suffix) {
+    const tail = suffix[2].replace(/\.$/, "");
+    return `${suffix[1].trim()} ${tail === "ქ" ? "ქ" : tail}`;
+  }
+
+  if (/\s+ქუჩა\s*$/iu.test(name)) return name.replace(/\s+ქუჩა\s*$/iu, " ქ");
+  if (/\s+ქ\.?\s*$/iu.test(name)) return name.replace(/\s+ქ\.?\s*$/iu, " ქ");
+  return name;
+}
+
+function resolveStreetForPrefill(
+  street: string,
+  streetNumber: string
+): { street: string; streetNumber: string } {
+  const combined = street.trim();
+  if (!combined) {
+    return { street: "", streetNumber: streetNumber.trim() };
+  }
+
+  const parsed = parseAddressPartsString(combined);
+  const num = streetNumber.trim() || parsed.streetNumber;
+  const name = streetNameOnly(parsed.street || combined);
+
+  return { street: name, streetNumber: num.trim() };
+}
+
+/** Compare street names: ქუჩა ≈ ქ. ≈ ქ; ignore dots/spacing in abbreviations (ს.კედიას ≈ ს. კედიას). */
+function normalizeStreetKey(raw: string): string {
+  return raw
+    .toLowerCase()
+    .replace(/\./g, "")
+    .replace(/\s+/g, "")
+    .replace(/ქუჩა$/u, "ქ")
+    .replace(/ქ$/u, "ქ");
+}
+
+function streetMatchScore(want: string, option: string): number {
+  const a = normalizeStreetKey(want);
+  const b = normalizeStreetKey(option);
+  if (!a || !b) return 0;
+  if (a === b) return 1000;
+  if (b.startsWith(a) || a.startsWith(b)) return 900;
+  if (b.includes(a) || a.includes(b)) return Math.min(a.length, b.length) * 8;
+  let prefix = 0;
+  const max = Math.min(a.length, b.length);
+  while (prefix < max && a[prefix] === b[prefix]) prefix++;
+  return prefix * 15;
+}
+
+function streetAutocompleteQueries(street: string): string[] {
+  const s = street.replace(/\s+/g, " ").trim();
+  if (!s) return [];
+
+  const queries: string[] = [s];
+  const withoutSuffix = s.replace(/\s+(ქ\.?|ქუჩა)\s*$/iu, "").trim();
+  const spacedAbbr = withoutSuffix.replace(/\.(\S)/gu, ". $1").replace(/\s+/g, " ").trim();
+  const tightAbbr = withoutSuffix.replace(/\.\s+/g, ".").trim();
+  const noDots = withoutSuffix.replace(/\./g, " ").replace(/\s+/g, " ").trim();
+
+  for (const base of [withoutSuffix, spacedAbbr, tightAbbr, noDots]) {
+    if (!base) continue;
+    queries.push(base, `${base} ქ`, `${base} ქ.`, `${base} ქუჩა`);
+  }
+
+  return [...new Set(queries.filter((q) => q.length > 0))];
+}
+
 /** Parsed rawData may use გათბობა; tolerate old typo key გათბომა. */
 function getRawPreferenceValue(
   listing: MyhomeListing,
@@ -135,7 +244,10 @@ async function scrollToFormField(page: Page, label: string): Promise<void> {
     "აივანი",
     "ლოჯია",
     "ვერანდა",
+    "ეზო",
     "ჭერის სიმაღლე",
+    "სტატუსი",
+    "მდგომარეობა",
   ]);
   const locator = exactHeadings.has(label)
     ? page
@@ -210,12 +322,16 @@ function getNestedSectionTypeValue(
   return "";
 }
 
-/** e.g. „2/12 მ²“ → count before /, area after. */
+/** Balcony count/area only when slash value includes m² (not bare 1/48 from rooms/area). */
+const BALCONY_COUNT_AREA_RE =
+  /^(\d+)\s*\/\s*(\d+(?:[.,]\d+)?)\s*(?:მ²|m²)\s*$/iu;
+
+/** e.g. „2/12 მ²“ → count before /, area after (requires m² for slash form). */
 function parseBalconyCountAndArea(value: string): { count: string; area: string } {
   const v = value.trim();
   if (!v) return { count: "", area: "" };
 
-  const slash = v.match(/^(\d+)\s*\/\s*(\d+(?:[.,]\d+)?)\s*(?:მ²|m²)?\s*$/iu);
+  const slash = v.match(BALCONY_COUNT_AREA_RE);
   if (slash) {
     return {
       count: slash[1],
@@ -227,50 +343,128 @@ function parseBalconyCountAndArea(value: string): { count: string; area: string 
     return { count: "", area: normalizeAreaForInput(v) };
   }
 
-  if (/^\d+$/.test(v)) return { count: v, area: "" };
   return { count: "", area: "" };
 }
 
-function applyBalconyParsedFields(listing: MyhomeListing): void {
+function listingHasExplicitBalconyCount(listing: MyhomeListing): boolean {
   const rd = listing.rawData || {};
+  const main = rd["აივანი"]?.trim() || "";
+  const fromArea = listing.balconyArea?.trim() || "";
+  if (BALCONY_COUNT_AREA_RE.test(main) || BALCONY_COUNT_AREA_RE.test(fromArea)) {
+    return true;
+  }
+  const direct = rd["აივნის რაოდენობა"]?.trim();
+  if (!direct || !/\d/.test(direct)) return false;
+  return Boolean(rd["აივნის ფართი"]?.trim());
+}
+
+function listingHasExplicitBalconyArea(listing: MyhomeListing): boolean {
+  const rd = listing.rawData || {};
+  const direct = rd["აივნის ფართი"]?.trim();
+  if (direct) return true;
+  const main = rd["აივანი"]?.trim() || "";
+  if (main && (/მ²|m²/i.test(main) || BALCONY_COUNT_AREA_RE.test(main))) return true;
+  const fromArea = listing.balconyArea?.trim() || "";
+  if (!fromArea) return false;
+  return /მ²|m²/i.test(fromArea) || BALCONY_COUNT_AREA_RE.test(fromArea);
+}
+
+function listingHasAnyBalconyData(listing: MyhomeListing): boolean {
+  return listingHasExplicitBalconyCount(listing) || listingHasExplicitBalconyArea(listing);
+}
+
+function applyBalconyParsedFields(listing: MyhomeListing): void {
+  const rd = listing.rawData || (listing.rawData = {});
+  const fromMain = rd["აივანი"]?.trim() || "";
+  const fromBalconyArea = listing.balconyArea?.trim() || "";
+  const combined = fromMain || fromBalconyArea;
+  const { count, area } = parseBalconyCountAndArea(combined);
+
+  const hasBalconySlash = BALCONY_COUNT_AREA_RE.test(combined);
   const countDirect = rd["აივნის რაოდენობა"]?.trim();
+  if (countDirect && (hasBalconySlash || rd["აივნის ფართი"]?.trim())) {
+    rd["აივნის რაოდენობა"] = countDirect.replace(/[^\d]/g, "") || countDirect;
+  } else if (count && hasBalconySlash) {
+    rd["აივნის რაოდენობა"] = count;
+  } else {
+    delete rd["აივნის რაოდენობა"];
+  }
+
   const areaDirect = rd["აივნის ფართი"]?.trim();
-  const fromMain = rd["აივანი"]?.trim() || listing.balconyArea?.trim() || "";
-  const { count, area } = parseBalconyCountAndArea(fromMain);
-
-  if (countDirect) rd["აივნის რაოდენობა"] = countDirect.replace(/[^\d]/g, "") || countDirect;
-  else if (count) rd["აივნის რაოდენობა"] = count;
-
-  if (areaDirect) {
+  if (areaDirect && (hasBalconySlash || /მ²|m²/i.test(areaDirect))) {
     rd["აივნის ფართი"] = normalizeAreaForInput(areaDirect);
     listing.balconyArea = rd["აივნის ფართი"];
   } else if (area) {
     rd["აივნის ფართი"] = area;
     listing.balconyArea = area;
+  } else {
+    delete rd["აივნის ფართი"];
+    if (!listingHasExplicitBalconyArea(listing)) listing.balconyArea = "";
   }
 }
 
 function getBalconyCountValue(listing: MyhomeListing): string {
+  if (!listingHasExplicitBalconyCount(listing)) return "";
   const direct = listing.rawData?.["აივნის რაოდენობა"]?.trim();
   if (direct) return direct.replace(/[^\d]/g, "") || direct;
-  const { count } = parseBalconyCountAndArea(
-    listing.rawData?.["აივანი"]?.trim() || listing.balconyArea || ""
-  );
+  const main =
+    listing.rawData?.["აივანი"]?.trim() || listing.balconyArea?.trim() || "";
+  const { count } = parseBalconyCountAndArea(main);
   return count;
 }
 
 function getBalconyAreaValue(listing: MyhomeListing): string {
+  if (!listingHasExplicitBalconyArea(listing)) return "";
   const direct = listing.rawData?.["აივნის ფართი"]?.trim();
   if (direct) return normalizeAreaForInput(direct);
-  const { area } = parseBalconyCountAndArea(listing.rawData?.["აივანი"]?.trim() || "");
-  if (area) return area;
-  return listing.balconyArea ? normalizeAreaForInput(listing.balconyArea) : "";
+  const main = listing.rawData?.["აივანი"]?.trim() || listing.balconyArea?.trim() || "";
+  const { area } = parseBalconyCountAndArea(main);
+  return area;
+}
+
+async function clearBalconyCountInput(page: Page): Promise<void> {
+  await page.evaluate(() => {
+    const inputSetter = Object.getOwnPropertyDescriptor(
+      window.HTMLInputElement.prototype,
+      "value"
+    )?.set;
+    if (!inputSetter) return;
+
+    function norm(s: string) {
+      return (s || "").replace(/\s*\*\s*$/, "").trim().replace(/\s+/g, " ");
+    }
+
+    for (const el of document.querySelectorAll("label, span, p, h2, h3, h4, div")) {
+      if (norm(el.textContent || "") !== "აივანი") continue;
+      let node: Element | null = el;
+      for (let depth = 0; depth < 22 && node; depth++) {
+        for (const lbl of node.querySelectorAll("label")) {
+          for (const span of lbl.querySelectorAll("span")) {
+            const t = norm(span.textContent || "");
+            if (!/^აივნის\s*რაოდენობა/i.test(t)) continue;
+            const input = (lbl.getAttribute("for")
+              ? document.getElementById(lbl.getAttribute("for")!)
+              : lbl.querySelector("input")) as HTMLInputElement | null;
+            if (!input) continue;
+            inputSetter.call(input, "");
+            input.dispatchEvent(new Event("input", { bubbles: true }));
+            input.dispatchEvent(new Event("change", { bubbles: true }));
+            return;
+          }
+        }
+        node = node.parentElement;
+      }
+    }
+  });
 }
 
 async function prefillBalconyFields(
   page: Page,
   listing: MyhomeListing
 ): Promise<void> {
+  applyBalconyParsedFields(listing);
+  if (!listingHasAnyBalconyData(listing)) return;
+
   const count = getBalconyCountValue(listing);
   const area = getBalconyAreaValue(listing);
   if (!count && !area) return;
@@ -281,6 +475,8 @@ async function prefillBalconyFields(
   if (count) {
     await fillInputInNestedSection(page, "აივანი", "აივნის რაოდენობა", count);
     await prefillPause(page, 80);
+  } else {
+    await clearBalconyCountInput(page);
   }
   if (area) {
     await fillInputInNestedSection(page, "აივანი", "ფართი", area);
@@ -370,6 +566,35 @@ async function prefillVerandaFields(
   await scrollToFormField(page, "ვერანდა");
   await prefillPause(page, 120);
   await fillInputInNestedSection(page, "ვერანდა", "ფართი", area);
+}
+
+const YARD_AREA_KEY = "ეზოს ფართი";
+const YARD_SECTION_KEY = "ეზო";
+
+function applyYardAreaParsedFields(listing: MyhomeListing): void {
+  const rd = listing.rawData || {};
+  const direct = rd[YARD_AREA_KEY]?.trim();
+  if (!direct) return;
+  const parsed = parseSectionAreaValue(direct);
+  if (parsed) rd[YARD_AREA_KEY] = parsed;
+}
+
+function getYardAreaValue(listing: MyhomeListing): string {
+  const direct = listing.rawData?.[YARD_AREA_KEY]?.trim();
+  if (!direct) return "";
+  return normalizeAreaForInput(parseSectionAreaValue(direct) || direct);
+}
+
+async function prefillYardAreaFields(
+  page: Page,
+  listing: MyhomeListing
+): Promise<void> {
+  const area = getYardAreaValue(listing);
+  if (!area) return;
+
+  await scrollToFormField(page, YARD_SECTION_KEY);
+  await prefillPause(page, 120);
+  await fillInputInNestedSection(page, YARD_SECTION_KEY, "ფართი", area);
 }
 
 /** e.g. „100“, „100 სმ“, „3.2 მ“ → numeric value for form (keeps cm as-is). */
@@ -1929,6 +2154,28 @@ async function prefillPreferenceField(
 /**
  * Playwright click on count chips (ოთახი, საძინებელი) — reliable React state vs evaluate .click().
  */
+async function locatorInAmenityCountSection(
+  page: Page,
+  locator: ReturnType<Page["locator"]>
+): Promise<boolean> {
+  return locator.evaluate((el) => {
+    function norm(s: string) {
+      return (s || "").replace(/\s*\*\s*$/, "").trim().replace(/\s+/g, " ");
+    }
+    let node: Element | null = el;
+    for (let depth = 0; depth < 22 && node; depth++) {
+      for (const label of node.querySelectorAll("label, span, p, h2, h3, h4")) {
+        const t = norm(label.textContent || "");
+        if (t.length > 55) continue;
+        if (t === "აივანი" || t === "ლოჯია" || t === "ვერანდა") return true;
+        if (/^აივნის\s*რაოდენობა/i.test(t)) return true;
+      }
+      node = node.parentElement;
+    }
+    return false;
+  });
+}
+
 async function prefillCountChipPlaywright(
   page: Page,
   sectionLabels: string[],
@@ -1948,6 +2195,7 @@ async function prefillCountChipPlaywright(
     for (let i = 0; i < n; i++) {
       const labelEl = labelLocators.nth(i);
       if (!(await labelEl.isVisible({ timeout: 500 }).catch(() => false))) continue;
+      if (await locatorInAmenityCountSection(page, labelEl)) continue;
 
       let scope = labelEl;
       for (let depth = 0; depth < 10; depth++) {
@@ -1956,6 +2204,7 @@ async function prefillCountChipPlaywright(
         for (let c = 0; c < chipCount; c++) {
           const chipEl = chips.nth(c);
           if (!(await chipEl.isVisible({ timeout: 300 }).catch(() => false))) continue;
+          if (await locatorInAmenityCountSection(page, chipEl)) continue;
           await chipEl.click({ timeout: CHIP_CLICK_TIMEOUT_MS, force: true });
           await prefillPause(page, 40);
           return true;
@@ -2021,6 +2270,8 @@ async function clickChipInSection(
         const t = norm(text);
         const o = norm(option);
         if (t === o) return true;
+        if (t.startsWith(o) || o.startsWith(t)) return true;
+        if (t.includes(o) && t.length <= o.length + 16) return true;
         const tm = t.match(/^(\d+)\+?$/);
         const om = o.match(/^(\d+)\+?$/);
         if (tm && om && tm[1] === om[1]) return true;
@@ -2238,7 +2489,20 @@ const CHIP_STYLE_ROW_LABELS = [
   "კარ-ფანჯარა",
 ] as const;
 
-function buildEarlyFormChipTasks(listing: MyhomeListing): ChipClickTask[] {
+function getBuildingStatusValue(listing: MyhomeListing): string {
+  return dedupeRepeatedLabelValue(
+    listing.buildingStatus || listing.rawData?.["სტატუსი"] || ""
+  );
+}
+
+function getConditionValue(listing: MyhomeListing): string {
+  return dedupeRepeatedLabelValue(
+    listing.condition || listing.rawData?.["მდგომარეობა"] || ""
+  );
+}
+
+/** Property + deal only — status/condition chips depend on property type being set first. */
+function buildEarlyPropertyChipTasks(listing: MyhomeListing): ChipClickTask[] {
   const tasks: ChipClickTask[] = [];
   if (listing.propertyType) {
     tasks.push({ section: "უძრავი ქონების ტიპი", chip: listing.propertyType });
@@ -2246,12 +2510,95 @@ function buildEarlyFormChipTasks(listing: MyhomeListing): ChipClickTask[] {
   if (listing.dealType) {
     tasks.push({ section: "გარიგების ტიპი", chip: listing.dealType });
   }
-  const buildingStatus =
-    listing.buildingStatus || listing.rawData?.["სტატუსი"] || "";
-  const condition = listing.condition || listing.rawData?.["მდგომარეობა"] || "";
-  if (buildingStatus) tasks.push({ section: "სტატუსი", chip: buildingStatus });
-  if (condition) tasks.push({ section: "მდგომარეობა", chip: condition });
   return tasks;
+}
+
+function buildEarlyFormChipTasks(listing: MyhomeListing): ChipClickTask[] {
+  return buildEarlyPropertyChipTasks(listing);
+}
+
+function preferenceChipMatches(chipText: string, target: string): boolean {
+  const t = chipText.replace(/\s+/g, " ").trim();
+  const c = target.replace(/\s+/g, " ").trim();
+  if (!t || !c) return false;
+  if (t === c) return true;
+  if (t.startsWith(c) || c.startsWith(t)) return true;
+  if (t.includes(c) && t.length <= c.length + 16) return true;
+  return false;
+}
+
+async function prefillSectionChipPlaywright(
+  page: Page,
+  sectionLabel: string,
+  chipValue: string
+): Promise<boolean> {
+  const value = dedupeRepeatedLabelValue(chipValue.trim());
+  if (!value) return false;
+
+  const sectionRe = new RegExp(`^${escapeRegExp(sectionLabel)}(?:\\s*\\*)?$`, "iu");
+  const labelEls = page.locator("label, span, p, h2, h3, h4, div, motion.div").filter({
+    hasText: sectionRe,
+  });
+  const labelCount = await labelEls.count();
+
+  for (let i = 0; i < labelCount; i++) {
+    const labelEl = labelEls.nth(i);
+    if (!(await labelEl.isVisible({ timeout: 800 }).catch(() => false))) continue;
+
+    let scope = labelEl;
+    for (let depth = 0; depth < 12; depth++) {
+      const chips = scope.locator(
+        "motion.div, button, [role=button], label[class*='rounded'], div[class*='rounded'], div[class*='cursor-pointer']"
+      );
+      const chipCount = await chips.count();
+      for (let c = 0; c < chipCount; c++) {
+        const chipEl = chips.nth(c);
+        const text = ((await chipEl.innerText().catch(() => "")) || "")
+          .replace(/\s+/g, " ")
+          .trim();
+        if (!preferenceChipMatches(text, value)) continue;
+        if (!(await chipEl.isVisible({ timeout: 400 }).catch(() => false))) continue;
+        await chipEl.scrollIntoViewIfNeeded().catch(() => {});
+        await chipEl.click({ timeout: CHIP_CLICK_TIMEOUT_MS, force: true });
+        await prefillPause(page, 100);
+        return true;
+      }
+      const parent = scope.locator("xpath=..");
+      if ((await parent.count()) === 0) break;
+      scope = parent;
+    }
+  }
+  return false;
+}
+
+async function prefillBuildingStatusAndCondition(
+  page: Page,
+  listing: MyhomeListing
+): Promise<void> {
+  const buildingStatus = getBuildingStatusValue(listing);
+  const condition = getConditionValue(listing);
+
+  if (buildingStatus) {
+    await scrollToFormField(page, "სტატუსი");
+    await prefillPause(page, 250);
+    if (
+      !(await prefillSectionChipPlaywright(page, "სტატუსი", buildingStatus)) &&
+      !(await prefillPreferenceField(page, "სტატუსი", buildingStatus))
+    ) {
+      await batchPrefillChips(page, [{ section: "სტატუსი", chip: buildingStatus }]);
+    }
+  }
+
+  if (condition) {
+    await scrollToFormField(page, "მდგომარეობა");
+    await prefillPause(page, 250);
+    if (
+      !(await prefillSectionChipPlaywright(page, "მდგომარეობა", condition)) &&
+      !(await prefillPreferenceField(page, "მდგომარეობა", condition))
+    ) {
+      await batchPrefillChips(page, [{ section: "მდგომარეობა", chip: condition }]);
+    }
+  }
 }
 
 const CHIP_SECTION_ALIASES: Record<string, string[]> = {
@@ -2411,6 +2758,7 @@ async function batchPrefillChips(page: Page, tasks: ChipClickTask[]): Promise<nu
       const t = norm(text);
       const c = norm(chip);
       if (t === c) return true;
+      if (t.startsWith(c) || c.startsWith(t)) return true;
       if (t.includes(c) && t.length <= c.length + 40) return true;
       const tm = t.match(/^(\d+)\+?$/);
       const cm = c.match(/^(\d+)\+?$/);
@@ -2698,14 +3046,29 @@ async function prefillRowCountChip(
         return (s || "").replace(/\s*\*\s*$/, "").trim().replace(/\s+/g, " ");
       }
 
+      function isInsideNestedAmenitySection(el: Element): boolean {
+        let node: Element | null = el;
+        for (let depth = 0; depth < 18 && node; depth++) {
+          for (const h of node.querySelectorAll("h2, h3, h4, label, span")) {
+            const t = norm(h.textContent || "");
+            if (t === "აივანი" || t === "ლოჯია" || t === "ვერანდა") return true;
+            if (/^აივნის\s*რაოდენობა/i.test(t)) return true;
+          }
+          node = node.parentElement;
+        }
+        return false;
+      }
+
       function labelsMatch(text: string, label: string): boolean {
         const t = norm(text);
         const l = norm(label);
         if (!t || t.length > 45) return false;
+        if (/აივნის\s*რაოდენობა/i.test(t)) return false;
         if (t === l) return true;
         if (t.includes("სვ") && t.includes("წერტილი")) return true;
         if (l.includes("სვ") && l.includes("წერტილი") && t.includes("სვ")) return true;
         if (/^საძინებელი/i.test(l) && /^საძინებელი/i.test(t)) return true;
+        if (/^ოთახ/i.test(l) && /^ოთახ/i.test(t)) return true;
         return false;
       }
 
@@ -2740,6 +3103,7 @@ async function prefillRowCountChip(
 
       function findCountRowForLabels(): Element | null {
         for (const el of document.querySelectorAll("label,span,p,motion.div")) {
+          if (isInsideNestedAmenitySection(el)) continue;
           if (!sectionLabels.some((label) => labelsMatch(el.textContent || "", label))) {
             continue;
           }
@@ -2773,11 +3137,13 @@ async function prefillRowCountChip(
       }
 
       function markLeafChip(root: Element): boolean {
+        if (isInsideNestedAmenitySection(root)) return false;
         for (const el of root.querySelectorAll(
           "span,motion.div,motion.span,motion.p,div,button,p,label,[class*='cursor-pointer']"
         )) {
           if (el.children.length > 0) continue;
           if (!matchesVariant(el.textContent || "")) continue;
+          if (isInsideNestedAmenitySection(el)) continue;
 
           const target = (el.closest("[class*='rounded']") ||
             el.closest("button,[role=button]") ||
@@ -2794,6 +3160,7 @@ async function prefillRowCountChip(
       }
 
       for (const el of document.querySelectorAll("label,span,p,motion.div")) {
+        if (isInsideNestedAmenitySection(el)) continue;
         if (!sectionLabels.some((label) => labelsMatch(el.textContent || "", label))) {
           continue;
         }
@@ -2812,6 +3179,7 @@ async function prefillRowCountChip(
       if (countRow && markLeafChip(countRow)) return true;
 
       for (const el of document.querySelectorAll("label,span,p,motion.div")) {
+        if (isInsideNestedAmenitySection(el)) continue;
         if (!sectionLabels.some((label) => labelsMatch(el.textContent || "", label))) {
           continue;
         }
@@ -2843,8 +3211,8 @@ async function prefillRowCountChip(
 
   const isBedroomSection = sectionLabels.some((l) => /^საძინებელი/i.test(l));
   const excludeInLocator = isBedroomSection
-    ? /ოთახი|ფართი|სართული/i
-    : /ოთახი|საძინებელი|ფართი|სართული/i;
+    ? /ოთახი|ფართი|სართული|აივანი|აივნის/i
+    : /ოთახი|საძინებელი|ფართი|სართული|აივანი|აივნის/i;
 
   for (const label of sectionLabels) {
     const labelRe = new RegExp(label.replace(/\./g, "\\."), "iu");
@@ -3107,42 +3475,333 @@ async function fillLabeledInput(page: Page, label: string, value: string): Promi
   await fillInputByLabelEvaluate(page, label, value.trim());
 }
 
-async function selectAutocompleteOption(page: Page, value: string): Promise<void> {
-  if (!value?.trim()) return;
+async function selectAutocompleteOption(
+  page: Page,
+  value: string,
+  options?: { pickFirst?: boolean }
+): Promise<boolean> {
+  if (!value?.trim()) return false;
   const text = value.trim();
   await prefillPause(page, 80);
 
-  const picked = await page.evaluate((optionText) => {
-    function norm(s: string) {
-      return s.replace(/\s+/g, " ").trim();
+  const listbox = page.locator('[role="listbox"]:visible').first();
+  if (await listbox.isVisible({ timeout: 1500 }).catch(() => false)) {
+    const optionTexts = await listbox.locator('[role="option"]').allTextContents();
+    let bestIdx = -1;
+    let bestScore = 0;
+    for (let i = 0; i < optionTexts.length; i++) {
+      const opt = (optionTexts[i] || "").replace(/\s+/g, " ").trim();
+      if (!opt) continue;
+      const sc = streetMatchScore(text, opt);
+      if (sc > bestScore) {
+        bestScore = sc;
+        bestIdx = i;
+      }
     }
-    const target = norm(optionText);
-    for (const el of document.querySelectorAll(
-      "[role='option'], [class*='option'], li, [class*='menu-item']"
-    )) {
-      const t = norm(el.textContent || "");
-      if (t !== target && !t.includes(target)) continue;
-      (el as HTMLElement).click();
+    const minScore = 40;
+    if (bestIdx >= 0 && bestScore >= minScore) {
+      await listbox
+        .locator('[role="option"]')
+        .nth(bestIdx)
+        .click({ timeout: CHIP_CLICK_TIMEOUT_MS });
       return true;
     }
-    return false;
-  }, text);
+    if (options?.pickFirst) {
+      const first = listbox.locator('[role="option"]').first();
+      if (await first.isVisible({ timeout: 800 }).catch(() => false)) {
+        await first.click({ timeout: CHIP_CLICK_TIMEOUT_MS });
+        return true;
+      }
+    }
+  }
 
-  if (picked) return;
+  const picked = await page.evaluate(
+    ({ optionText, pickFirst }) => {
+      function norm(s: string) {
+        return s.replace(/\s+/g, " ").trim();
+      }
+      function normalizeKey(raw: string) {
+        return raw
+          .toLowerCase()
+          .replace(/\./g, "")
+          .replace(/\s+/g, "")
+          .replace(/ქუჩა$/u, "ქ")
+          .replace(/ქ$/u, "ქ");
+      }
+      function score(want: string, opt: string) {
+        const a = normalizeKey(want);
+        const b = normalizeKey(opt);
+        if (!a || !b) return 0;
+        if (a === b) return 1000;
+        if (b.startsWith(a) || a.startsWith(b)) return 900;
+        if (b.includes(a) || a.includes(b)) return Math.min(a.length, b.length) * 8;
+        let prefix = 0;
+        const max = Math.min(a.length, b.length);
+        while (prefix < max && a[prefix] === b[prefix]) prefix++;
+        return prefix * 15;
+      }
 
-  const options = page.locator(
-    "[role='option'], [class*='option'], li, [class*='menu-item']"
+      const target = norm(optionText);
+      const optionsEls = [
+        ...document.querySelectorAll(
+          "[role='listbox'] [role='option'], [role='option'], [class*='option'], li, [class*='menu-item']"
+        ),
+      ];
+
+      let best: HTMLElement | null = null;
+      let bestScore = 0;
+      for (const el of optionsEls) {
+        const t = norm(el.textContent || "");
+        if (!t || t.length > 80) continue;
+        const sc = Math.max(
+          score(optionText, t),
+          t === target || t.includes(target) || target.includes(t) ? 500 : 0
+        );
+        if (sc > bestScore) {
+          bestScore = sc;
+          best = el as HTMLElement;
+        }
+      }
+      if (best && bestScore >= 40) {
+        best.click();
+        return true;
+      }
+      if (pickFirst && optionsEls[0]) {
+        (optionsEls[0] as HTMLElement).click();
+        return true;
+      }
+      return false;
+    },
+    { optionText: text, pickFirst: !!options?.pickFirst }
   );
-  const exact = options
-    .filter({ hasText: new RegExp(`^${escapeRegExp(text)}$`, "u") })
+
+  if (picked) return true;
+
+  const optionLoc = page.locator(
+    "[role='listbox']:visible [role='option'], [role='option'], [class*='option'], li, [class*='menu-item']"
+  );
+  const exact = optionLoc
+    .filter({ hasText: new RegExp(`^${escapeRegExp(text)}`, "u") })
     .first();
-  if (await exact.isVisible({ timeout: 800 }).catch(() => false)) {
+  if (await exact.isVisible({ timeout: 1200 }).catch(() => false)) {
     await exact.click({ timeout: CHIP_CLICK_TIMEOUT_MS });
+    return true;
+  }
+  const partial = optionLoc.filter({ hasText: text }).first();
+  if (await partial.isVisible({ timeout: 1200 }).catch(() => false)) {
+    await partial.click({ timeout: CHIP_CLICK_TIMEOUT_MS });
+    return true;
+  }
+  if (options?.pickFirst) {
+    const any = optionLoc.first();
+    if (await any.isVisible({ timeout: 600 }).catch(() => false)) {
+      await any.click({ timeout: CHIP_CLICK_TIMEOUT_MS });
+      return true;
+    }
+  }
+  return false;
+}
+
+/** Pick the closest street from the open autocomplete list (ქუჩა ≈ ქ.). */
+async function selectBestStreetAutocompleteOption(
+  page: Page,
+  street: string
+): Promise<boolean> {
+  const want = street.trim();
+  if (!want) return false;
+
+  const listbox = page.locator('[role="listbox"]:visible').first();
+  if (!(await listbox.isVisible({ timeout: 2500 }).catch(() => false))) return false;
+
+  const optionTexts = await listbox.locator('[role="option"]').allTextContents();
+  if (optionTexts.length === 0) return false;
+
+  let bestIdx = 0;
+  let bestScore = -1;
+  for (let i = 0; i < optionTexts.length; i++) {
+    const opt = (optionTexts[i] || "").replace(/\s+/g, " ").trim();
+    if (!opt) continue;
+    const sc = streetMatchScore(want, opt);
+    if (sc > bestScore) {
+      bestScore = sc;
+      bestIdx = i;
+    }
+  }
+
+  const minScore = optionTexts.length === 1 ? 1 : 40;
+  if (bestScore < minScore) return false;
+
+  await listbox
+    .locator('[role="option"]')
+    .nth(bestIdx)
+    .click({ timeout: CHIP_CLICK_TIMEOUT_MS });
+  await prefillPause(page, 200);
+  return true;
+}
+
+async function isAutocompleteFieldValid(page: Page, label: string): Promise<boolean> {
+  return page.evaluate((labelText) => {
+    function norm(s: string) {
+      return (s || "").replace(/\s*\*\s*$/, "").trim().replace(/\s+/g, " ");
+    }
+
+    let input: HTMLInputElement | null = null;
+    for (const lbl of document.querySelectorAll("label")) {
+      for (const span of lbl.querySelectorAll("span")) {
+        if (norm(span.textContent || "") !== norm(labelText)) continue;
+        const forAttr = lbl.getAttribute("for");
+        input = forAttr
+          ? (document.getElementById(forAttr) as HTMLInputElement | null)
+          : (lbl.querySelector("input") as HTMLInputElement | null);
+        if (input) break;
+      }
+      if (input) break;
+    }
+
+    if (!input) return false;
+    if (input.getAttribute("aria-invalid") === "true") return false;
+
+    let node: Element | null = input.parentElement;
+    for (let depth = 0; depth < 8 && node; depth++) {
+      const txt = (node.textContent || "").replace(/\s+/g, " ");
+      if (/სავალდებულო\s*ველი/i.test(txt) && txt.length < 120) return false;
+      node = node.parentElement;
+    }
+
+    return (input.value || "").trim().length > 0;
+  }, label);
+}
+
+async function locatorForLabeledInput(page: Page, label: string): Promise<Locator | null> {
+  const labelRe = new RegExp(`^${escapeRegExp(label)}(?:\\s*\\*)?$`, "iu");
+  const candidates = [
+    page
+      .locator("label")
+      .filter({ has: page.locator("span").filter({ hasText: labelRe }) })
+      .locator("input")
+      .first(),
+    page
+      .locator("div, motion.div")
+      .filter({ has: page.getByText(labelRe, { exact: true }) })
+      .locator("input")
+      .first(),
+    page
+      .locator("label, span, p")
+      .filter({ hasText: labelRe })
+      .locator("xpath=ancestor::*[.//input][1]//input")
+      .first(),
+  ];
+
+  for (const loc of candidates) {
+    if (await loc.isVisible({ timeout: 600 }).catch(() => false)) return loc;
+  }
+  return null;
+}
+
+/** Pick a listbox option so React stores a valid autocomplete value (not free text). */
+async function commitAutocompleteInput(
+  page: Page,
+  input: Locator,
+  value: string,
+  options?: { pickFirst?: boolean }
+): Promise<boolean> {
+  const val = value.trim();
+  if (!val) return false;
+
+  await input.click({ timeout: CHIP_CLICK_TIMEOUT_MS }).catch(() => {});
+  await prefillPause(page, 150);
+
+  let picked =
+    (await selectAutocompleteOption(page, val, options)) ||
+    (await selectAutocompleteOption(page, val, { pickFirst: true }));
+
+  if (!picked) {
+    await page.keyboard.press("ArrowDown").catch(() => {});
+    await prefillPause(page, 80);
+    await page.keyboard.press("Enter").catch(() => {});
+    await prefillPause(page, 120);
+    picked = true;
+  }
+
+  await input.click({ timeout: CHIP_CLICK_TIMEOUT_MS }).catch(() => {});
+  await prefillPause(page, 120);
+  await page.keyboard.press("Tab").catch(() => {});
+  await prefillPause(page, 100);
+  await closeOpenDropdowns(page);
+  return picked;
+}
+
+async function fillLocationAutocompleteField(
+  page: Page,
+  label: string,
+  value: string
+): Promise<void> {
+  const val = value.trim();
+  if (!val) return;
+
+  const input = await locatorForLabeledInput(page, label);
+  if (!input) {
+    await fillLabeledInput(page, label, val);
+    await selectAutocompleteOption(page, val);
     return;
   }
-  const partial = options.filter({ hasText: text }).first();
-  if (await partial.isVisible({ timeout: 800 }).catch(() => false)) {
-    await partial.click({ timeout: CHIP_CLICK_TIMEOUT_MS });
+
+  await input.scrollIntoViewIfNeeded().catch(() => {});
+  await input.click({ timeout: CHIP_CLICK_TIMEOUT_MS });
+  await input.fill("");
+  await page.keyboard.press("Control+A").catch(() => {});
+  await page.keyboard.type(val, { delay: 25 }).catch(() => {});
+  await prefillPause(page, 600);
+  await commitAutocompleteInput(page, input, val, { pickFirst: true });
+}
+
+async function commitStreetAutocompleteInput(
+  page: Page,
+  input: Locator,
+  street: string,
+  query: string
+): Promise<void> {
+  const picked =
+    (await selectBestStreetAutocompleteOption(page, street)) ||
+    (await selectBestStreetAutocompleteOption(page, query)) ||
+    (await selectAutocompleteOption(page, query, { pickFirst: false })) ||
+    (await selectAutocompleteOption(page, query, { pickFirst: true }));
+
+  if (!picked) {
+    await page.keyboard.press("ArrowDown").catch(() => {});
+    await prefillPause(page, 100);
+    await page.keyboard.press("Enter").catch(() => {});
+    await prefillPause(page, 120);
+  }
+
+  await input.click({ timeout: CHIP_CLICK_TIMEOUT_MS }).catch(() => {});
+  await prefillPause(page, 120);
+  await page.keyboard.press("Tab").catch(() => {});
+  await prefillPause(page, 100);
+  await closeOpenDropdowns(page);
+}
+
+async function fillStreetAutocompleteField(page: Page, street: string): Promise<void> {
+  const queries = streetAutocompleteQueries(street);
+  if (queries.length === 0) return;
+
+  const input = await locatorForLabeledInput(page, "ქუჩა");
+  if (!input) {
+    await fillLocationAutocompleteField(page, "ქუჩა", queries[0]);
+    return;
+  }
+
+  for (const query of queries) {
+    await input.scrollIntoViewIfNeeded().catch(() => {});
+    await input.click({ timeout: CHIP_CLICK_TIMEOUT_MS });
+    await input.fill("");
+    await page.keyboard.press("Control+A").catch(() => {});
+    await page.keyboard.type(query, { delay: 30 }).catch(() => {});
+    await prefillPause(page, 900);
+
+    await commitStreetAutocompleteInput(page, input, street, query);
+
+    if (await isAutocompleteFieldValid(page, "ქუჩა")) return;
   }
 }
 
@@ -3151,8 +3810,12 @@ async function fillLocationFields(
   listing: Pick<MyhomeListing, "city" | "street" | "streetNumber" | "cadastralCode">
 ): Promise<void> {
   const city = listing.city?.trim() || "";
-  const street = listing.street?.trim() || "";
-  const streetNumber = listing.streetNumber?.trim() || "";
+  const resolved = resolveStreetForPrefill(
+    listing.street || "",
+    listing.streetNumber || ""
+  );
+  const street = resolved.street;
+  const streetNumber = resolved.streetNumber;
   const cadastralCode = listing.cadastralCode?.trim() || "";
 
   await page.evaluate(() => {
@@ -3165,13 +3828,11 @@ async function fillLocationFields(
     }
   });
   if (city) {
-    await fillLabeledInput(page, "მდებარეობა", city);
-    await selectAutocompleteOption(page, city);
+    await fillLocationAutocompleteField(page, "მდებარეობა", city);
   }
 
   if (street) {
-    await fillLabeledInput(page, "ქუჩა", street);
-    await selectAutocompleteOption(page, street);
+    await fillStreetAutocompleteField(page, street);
   }
 
   if (streetNumber) {
@@ -3395,10 +4056,14 @@ async function selectListOptionInSection(
 }
 
 function listingLocation(listing: MyhomeListing) {
+  const resolved = resolveStreetForPrefill(
+    listing.street || listing.rawData?.["ქუჩა"] || "",
+    listing.streetNumber || listing.rawData?.["ქუჩის ნომერი"] || ""
+  );
   return {
     city: listing.city || listing.rawData?.["მდებარეობა"] || "",
-    street: listing.street || listing.rawData?.["ქუჩა"] || "",
-    streetNumber: listing.streetNumber || listing.rawData?.["ქუჩის ნომერი"] || "",
+    street: resolved.street,
+    streetNumber: resolved.streetNumber,
     cadastralCode: listing.cadastralCode || listing.rawData?.["საკადასტრო კოდი"] || "",
   };
 }
@@ -3458,6 +4123,7 @@ async function applyAdditionalParametersPrefill(
   listing: MyhomeListing
 ): Promise<void> {
   await expandCreateFormSections(page);
+  await prefillBuildingStatusAndCondition(page, listing);
   await page
     .locator("h2,h3,h4")
     .filter({ hasText: /ავეჯი/i })
@@ -3485,6 +4151,7 @@ async function applyAdditionalParametersPrefill(
   await prefillBalconyFields(page, listing);
   await prefillLoggiaFields(page, listing);
   await prefillVerandaFields(page, listing);
+  await prefillYardAreaFields(page, listing);
   await prefillCeilingHeightFields(page, listing);
 
   for (const label of CHIP_STYLE_ROW_LABELS) {
@@ -4049,6 +4716,10 @@ export async function parseListing(url: string): Promise<{
           const withArea = usable.find((v) => /მ²|m²|\d+\s*\/\s*\d/i.test(v));
           if (withArea) return withArea;
         }
+        if (canon === "ეზოს ფართი" || canon === "ეზო") {
+          const withArea = usable.find((v) => /მ²|m²|\d/.test(v));
+          if (withArea) return withArea;
+        }
         if (canon === "ჭერის სიმაღლე") {
           const withHeight = usable.find(
             (v) => /\d/.test(v) && !isYesNo(v) && !/მ²|m²/i.test(v)
@@ -4273,6 +4944,61 @@ export async function parseListing(url: string): Promise<{
           mergeParamValue(params, k, v);
         }
 
+        const collectGluedPreferenceFromFlexRows = (
+          root: Element | Document,
+          label: string,
+          canon: string
+        ) => {
+          const out: Record<string, string> = {};
+
+          root.querySelectorAll("span,label,p,motion.div,motion.div,motion.div,motion.div,motion.div,motion.div,div").forEach((el) => {
+            const t = (el.textContent || "").replace(/\s+/g, " ").trim();
+            if (t !== label) return;
+            if (el.children.length > 3) return;
+
+            const parent = el.parentElement;
+            if (!parent) return;
+
+            const joined = (parent.textContent || "").replace(/\s+/g, "");
+            let glued: RegExpMatchArray | null = null;
+            if (label === "სტატუსი") glued = joined.match(/^სტატუსი(.+)$/iu);
+            else if (label === "მდგომარეობა") glued = joined.match(/^მდგომარეობა(.+)$/iu);
+            if (glued) {
+              const val = dedupeRepeated(glued[1]);
+              if (val && !isYesNo(val)) out[canon] = val;
+              return;
+            }
+
+            for (const child of parent.children) {
+              const ct = (child.textContent || "").replace(/\s+/g, " ").trim();
+              if (!ct || ct === t || isYesNo(ct)) continue;
+              if (ct.length > 80) continue;
+              out[canon] = dedupeRepeated(ct);
+              return;
+            }
+          });
+
+          return out;
+        };
+
+        const statusFlex = collectGluedPreferenceFromFlexRows(
+          document.body,
+          "სტატუსი",
+          "სტატუსი"
+        );
+        for (const [k, v] of Object.entries(statusFlex)) {
+          mergeParamValue(params, k, v);
+        }
+
+        const conditionFlex = collectGluedPreferenceFromFlexRows(
+          document.body,
+          "მდგომარეობა",
+          "მდგომარეობა"
+        );
+        for (const [k, v] of Object.entries(conditionFlex)) {
+          mergeParamValue(params, k, v);
+        }
+
         const collectBalconyFromFlexRows = (root: Element | Document) => {
           const out: Record<string, string> = {};
 
@@ -4285,11 +5011,13 @@ export async function parseListing(url: string): Promise<{
             if (!parent) return;
 
             const joined = (parent.textContent || "").replace(/\s+/g, "");
-            const glued = joined.match(/^აივანი(\d+)\/(\d+(?:[.,]\d+)?)\s*(?:მ²|m²)?$/iu);
+            const glued = joined.match(
+              /^აივანი(\d+)\/(\d+(?:[.,]\d+)?)\s*(?:მ²|m²)$/iu
+            );
             if (glued) {
               out["აივნის რაოდენობა"] = glued[1];
               out["აივნის ფართი"] = glued[2].replace(",", ".");
-              out["აივანი"] = `${glued[1]}/${glued[2]}`;
+              out["აივანი"] = `${glued[1]}/${glued[2]} მ²`;
               return;
             }
 
@@ -4297,11 +5025,13 @@ export async function parseListing(url: string): Promise<{
               const ct = (child.textContent || "").replace(/\s+/g, " ").trim();
               if (!ct || ct === t) continue;
               if (ct.length > 40) continue;
-              const slash = ct.match(/^(\d+)\s*\/\s*(\d+(?:[.,]\d+)?)\s*(?:მ²|m²)?$/iu);
+              const slash = ct.match(
+                /^(\d+)\s*\/\s*(\d+(?:[.,]\d+)?)\s*(?:მ²|m²)$/iu
+              );
               if (slash) {
                 out["აივნის რაოდენობა"] = slash[1];
                 out["აივნის ფართი"] = slash[2].replace(",", ".");
-                out["აივანი"] = `${slash[1]}/${slash[2]}`;
+                out["აივანი"] = `${slash[1]}/${slash[2]} მ²`;
                 return;
               }
             }
@@ -4418,6 +5148,44 @@ export async function parseListing(url: string): Promise<{
 
         const verandaFlex = collectVerandaFromFlexRows(document.body);
         for (const [k, v] of Object.entries(verandaFlex)) {
+          mergeParamValue(params, k, v);
+        }
+
+        const collectYardAreaFromFlexRows = (root: Element | Document) => {
+          const out: Record<string, string> = {};
+
+          root.querySelectorAll("span,label,p,motion.div,div").forEach((el) => {
+            const t = (el.textContent || "").replace(/\s+/g, " ").trim();
+            if (t !== "ეზოს ფართი") return;
+            if (el.tagName !== "DIV" && el.children.length > 3) return;
+
+            const parent = el.parentElement;
+            if (!parent) return;
+
+            const joined = (parent.textContent || "").replace(/\s+/g, "");
+            const glued = joined.match(/^ეზოსფართი(\d+(?:[.,]\d+)?)\s*(?:მ²|m²)?$/iu);
+            if (glued) {
+              out["ეზოს ფართი"] = glued[1].replace(",", ".");
+              return;
+            }
+
+            for (const child of parent.children) {
+              const ct = (child.textContent || "").replace(/\s+/g, " ").trim();
+              if (!ct || ct === t) continue;
+              if (ct.length > 40) continue;
+              const areaOnly = ct.match(/^(\d+(?:[.,]\d+)?)\s*(?:მ²|m²)?$/iu);
+              if (areaOnly) {
+                out["ეზოს ფართი"] = areaOnly[1].replace(",", ".");
+                return;
+              }
+            }
+          });
+
+          return out;
+        };
+
+        const yardFlex = collectYardAreaFromFlexRows(document.body);
+        for (const [k, v] of Object.entries(yardFlex)) {
           mergeParamValue(params, k, v);
         }
 
@@ -4609,12 +5377,22 @@ export async function parseListing(url: string): Promise<{
         function splitBalconyCountAndAreaFields(out: Record<string, string>) {
           const raw = out["აივანი"];
           if (!raw) return;
-          const slash = raw.match(/^(\d+)\s*\/\s*(\d+(?:[.,]\d+)?)\s*(?:მ²|m²)?\s*$/iu);
+          const slash = raw.match(
+            /^(\d+)\s*\/\s*(\d+(?:[.,]\d+)?)\s*(?:მ²|m²)\s*$/iu
+          );
           if (!slash) return;
           out["აივნის რაოდენობა"] = slash[1];
           out["აივნის ფართი"] = slash[2].replace(",", ".");
         }
         splitBalconyCountAndAreaFields(params);
+
+        if (
+          !params["აივანი"]?.match(/^(\d+)\s*\/\s*(\d+(?:[.,]\d+)?)\s*(?:მ²|m²)\s*$/iu) &&
+          !/მ²|m²/i.test(params["აივანი"] || "")
+        ) {
+          delete params["აივნის რაოდენობა"];
+          delete params["აივნის ფართი"];
+        }
 
         function splitLoggiaAreaFields(out: Record<string, string>) {
           const raw = out["ლოჯია"];
@@ -4645,6 +5423,16 @@ export async function parseListing(url: string): Promise<{
           }
         }
         splitVerandaAreaFields(params);
+
+        function splitYardAreaFields(out: Record<string, string>) {
+          const raw = out["ეზოს ფართი"];
+          if (!raw) return;
+          if (/მ²|m²/i.test(raw) || /^\d+(?:[.,]\d+)?\s*$/.test(raw.trim())) {
+            const m = raw.match(/(\d+(?:[.,]\d+)?)/);
+            if (m) out["ეზოს ფართი"] = m[1].replace(",", ".");
+          }
+        }
+        splitYardAreaFields(params);
 
         return params;
       };
@@ -4765,12 +5553,50 @@ export async function parseListing(url: string): Promise<{
       const ADDRESS_NOISE =
         /[₾$]|მ²|იპოთეკა|სესხი|ფასი|გადაფორმება|იყიდება|ქირავდება|გირავდება|ოთახიანი|მოითხოვე|დღეს\s+\d/i;
 
+      function isMetroOrStationLine(text: string): boolean {
+        const s = text.replace(/\s+/g, " ").trim();
+        if (!s) return true;
+        if (/მეტრო|metro|სადგურ/i.test(s)) return true;
+        if (!/ქ\.?|ქუჩა|გამზ/i.test(s)) return true;
+        return false;
+      }
+
       function isStreetLine(text: string): boolean {
         const s = text.replace(/\s+/g, " ").trim();
         if (s.length < 3 || s.length > 70) return false;
         if (ADDRESS_NOISE.test(s)) return false;
+        if (isMetroOrStationLine(s)) return false;
         if (/ფართი|საძინებელი|სართული|ოთახი/.test(s) && /\d/.test(s)) return false;
-        return /(\s+ქ\.?|\s+ქუჩა|\s+გამზ\.?)(\s+\d|$)/iu.test(s) || /\s+ქ\.?$/iu.test(s);
+        return (
+          /(\s+ქ\.?|\s+ქუჩა|\s+გამზ\.?)(\s+\d|$)/iu.test(s) ||
+          /\s+(ქ\.?|ქუჩა|გამზ\.?)$/iu.test(s)
+        );
+      }
+
+      function normalizeStreetNameOnly(raw: string): string {
+        const text = raw.replace(/\s+/g, " ").trim();
+        if (!text) return "";
+        const parts = parseAddressParts(text);
+        let name = parts.street || text;
+        name = name
+          .replace(/\s+\d+[ა-ჰa-z]?\s*$/iu, "")
+          .replace(/\s+№\s*\d+[ა-ჰa-z]?\s*$/iu, "")
+          .trim();
+        const suffix = name.match(/^(.+?)\s+(ქ\.?|ქუჩა|გამზ\.?)$/iu);
+        if (suffix) {
+          const tail = suffix[2].replace(/\.$/, "");
+          return `${suffix[1].trim()} ${tail === "ქ" ? "ქ" : tail}`;
+        }
+        return name;
+      }
+
+      function isLocationPinRow(row: Element): boolean {
+        if (row.querySelector('svg[width="16"][height="17"]')) return false;
+        if (row.querySelector('svg[viewBox="0 0 16 17"]')) return false;
+        return !!(
+          row.querySelector('svg[width="13"][height="15"]') ||
+          row.querySelector('svg[viewBox="0 0 13 15"]')
+        );
       }
 
       function isStreetNumber(value: string): boolean {
@@ -4781,11 +5607,11 @@ export async function parseListing(url: string): Promise<{
       function parseAddressParts(raw: string) {
         const text = raw.replace(/\s+/g, " ").trim();
         const withNumber = [
-          /^(.+?)\s+მ\.\s*ქ\.\s*(\d+[ა-ჰa-z]?)$/iu,
-          /^(.+?)\s+მ\.\s*ქუჩა\s*(\d+[ა-ჰa-z]?)$/iu,
-          /^(.+?)\s+გამზ\.?\s*(\d+[ა-ჰa-z]?)$/iu,
-          /^(.+?)\s+ქ\.\s*(\d+[ა-ჰa-z]?)$/iu,
-          /^(.+?)\s+ქუჩა\s*№?\s*(\d+[ა-ჰa-z]?)$/iu,
+          /^(.+?)\s+მ\.\s*ქ\.\s*(\d+[ა-ჰa-z]?)(?:\s+.+)?$/iu,
+          /^(.+?)\s+მ\.\s*ქუჩა\s*(\d+[ა-ჰa-z]?)(?:\s+.+)?$/iu,
+          /^(.+?)\s+გამზ\.?\s*(\d+[ა-ჰa-z]?)(?:\s+.+)?$/iu,
+          /^(.+?)\s+ქ\.\s*(\d+[ა-ჰa-z]?)(?:\s+.+)?$/iu,
+          /^(.+?)\s+ქუჩა\s*№?\s*(\d+[ა-ჰa-z]?)(?:\s+.+)?$/iu,
         ];
         for (const re of withNumber) {
           const m = text.match(re);
@@ -4808,41 +5634,43 @@ export async function parseListing(url: string): Promise<{
 
       function extractStreetNearTitle(): string {
         const h1 = document.querySelector("h1");
-        if (!h1) return "";
+        const scanRoot = h1?.parentElement?.parentElement || h1?.parentElement;
 
-        const scanRoots: Element[] = [h1.parentElement, h1.parentElement?.parentElement].filter(
-          (el): el is Element => !!el
-        );
-
-        for (const root of scanRoots) {
-          for (const el of root.querySelectorAll("a, span, p, div")) {
-            if (el.children.length > 3) continue;
-            const t = el.textContent?.trim() || "";
-            if (isStreetLine(t)) return t;
-          }
-        }
-        return "";
-      }
-
-      function collectAddressCandidates(): string[] {
-        const candidates: string[] = [];
-        const push = (t: string) => {
-          const s = t.replace(/\s+/g, " ").trim();
-          if (!isStreetLine(s)) return;
-          if (candidates.includes(s)) return;
-          candidates.push(s);
+        const tryText = (raw: string) => {
+          const t = raw.replace(/\s+/g, " ").trim();
+          if (!isStreetLine(t)) return "";
+          return normalizeStreetNameOnly(t);
         };
 
-        const nearTitle = extractStreetNearTitle();
-        if (nearTitle) push(nearTitle);
+        for (const svg of document.querySelectorAll(
+          'svg[width="13"][height="15"], svg[viewBox="0 0 13 15"]'
+        )) {
+          const row = svg.closest(
+            "[class*='gap-2'], [class*='items-center'], motion.div, div, a, p, span"
+          );
+          if (!row || !isLocationPinRow(row)) continue;
 
-        document.querySelectorAll("a, span, p").forEach((el) => {
-          if (el.children.length > 2) return;
-          const t = el.textContent?.trim() || "";
-          push(t);
-        });
+          for (const el of row.querySelectorAll("span, a, p")) {
+            if (el.children.length > 0) continue;
+            const name = tryText(el.textContent || "");
+            if (name) return name;
+          }
+        }
 
-        return candidates;
+        if (scanRoot) {
+          for (const row of scanRoot.querySelectorAll(
+            "[class*='gap-2'][class*='mt-2'], [class*='items-center'][class*='gap-2']"
+          )) {
+            if (!isLocationPinRow(row)) continue;
+            for (const el of row.querySelectorAll("span, a, p")) {
+              if (el.children.length > 0) continue;
+              const name = tryText(el.textContent || "");
+              if (name) return name;
+            }
+          }
+        }
+
+        return "";
       }
 
       let address = "";
@@ -4851,25 +5679,9 @@ export async function parseListing(url: string): Promise<{
       let streetNumber = "";
 
       street = extractStreetNearTitle();
+      if (street) address = street;
 
-      if (!street) {
-        for (const cand of collectAddressCandidates()) {
-          const parts = parseAddressParts(cand);
-          if (parts.street) {
-            address = cand;
-            street = parts.street;
-            streetNumber = parts.streetNumber;
-            break;
-          }
-        }
-      } else {
-        address = street;
-        const parts = parseAddressParts(street);
-        street = parts.street || street;
-        streetNumber = parts.streetNumber;
-      }
-
-      const cities = [
+      const KNOWN_CITIES = [
         "თბილისი",
         "ბათუმი",
         "ქუთაისი",
@@ -4884,13 +5696,194 @@ export async function parseListing(url: string): Promise<{
         "ბაკურიანი",
         "მცხეთა",
         "სიღნაღი",
+        "ბორჯომი",
+        "ზესტაფონი",
+        "თერჯოლა",
+        "სენაკი",
+        "გაგრა",
+        "გუდაური",
+        "ბოლნისი",
+        "ახალციხე",
+        "ონი",
+        "ჭიათურა",
       ];
-      const pageText = document.body.textContent || "";
-      for (const c of cities) {
-        if (pageText.includes(c)) {
-          city = c;
-          break;
+
+      function readSchemaAddress(node: Record<string, unknown>): { region: string; locality: string } {
+        const out = { region: "", locality: "" };
+        const addr = node.address;
+        if (addr && typeof addr === "object" && !Array.isArray(addr)) {
+          const a = addr as Record<string, string>;
+          if (a.addressRegion) out.region = a.addressRegion.trim();
+          if (a.addressLocality) out.locality = a.addressLocality.trim();
         }
+        return out;
+      }
+
+      function parseSchemaOrgLocation(): { region: string; locality: string } {
+        const out = { region: "", locality: "" };
+        const listingId = (location.pathname.match(/\/pr\/(\d+)/) || [])[1] || "";
+
+        for (const script of document.querySelectorAll('script[type="application/ld+json"]')) {
+          let data: unknown;
+          try {
+            data = JSON.parse(script.textContent || "");
+          } catch {
+            continue;
+          }
+          const nodes = Array.isArray(data) ? data : [data];
+          for (const node of nodes) {
+            if (!node || typeof node !== "object") continue;
+            const obj = node as Record<string, unknown>;
+            const typeVal = obj["@type"];
+            const types = Array.isArray(typeVal)
+              ? typeVal.map(String)
+              : typeVal
+                ? [String(typeVal)]
+                : [];
+            const isListing = types.some(
+              (t) => t.includes("RealEstateListing") || t.includes("Product")
+            );
+            if (!isListing) continue;
+            const id = String(obj["@id"] || obj.url || "");
+            if (listingId && id && !id.includes(listingId)) continue;
+            const addr = readSchemaAddress(obj);
+            if (addr.region || addr.locality) return addr;
+          }
+        }
+
+        const visit = (node: unknown) => {
+          if (!node || typeof node !== "object") return;
+          if (Array.isArray(node)) {
+            node.forEach(visit);
+            return;
+          }
+          const addr = readSchemaAddress(node as Record<string, unknown>);
+          if (addr.region) out.region = addr.region;
+          if (addr.locality) out.locality = addr.locality;
+          for (const v of Object.values(node as Record<string, unknown>)) visit(v);
+        };
+
+        document.querySelectorAll('script[type="application/ld+json"]').forEach((script) => {
+          try {
+            visit(JSON.parse(script.textContent || ""));
+          } catch {
+            /* ignore malformed JSON-LD */
+          }
+        });
+        return out;
+      }
+
+      function buildCityFromSchema(region: string, locality: string): string {
+        const r = region.replace(/\s+/g, " ").trim();
+        const l = locality.replace(/\s+/g, " ").trim();
+        if (!r && !l) return "";
+
+        const rIsCity = KNOWN_CITIES.includes(r);
+        const lIsCity = KNOWN_CITIES.includes(l);
+
+        if (lIsCity && r && r !== l) {
+          return rIsCity ? `${r}, ${l}` : `${l}, ${r}`;
+        }
+        if (rIsCity) return l && l !== r ? `${r}, ${l}` : r;
+        if (lIsCity) return l;
+        if (r && l) return r === l ? r : `${r}, ${l}`;
+        return r || l;
+      }
+
+      function extractCityFromH1(): string {
+        const title = (document.querySelector("h1")?.textContent || "").replace(/\s+/g, " ").trim();
+        if (!title) return "";
+
+        for (const c of KNOWN_CITIES) {
+          if (title.includes(c)) return c;
+          const stem = c.endsWith("ი") ? c.slice(0, -1) : c;
+          if (title.includes(`${stem}ში`) || title.includes(`${stem}ზე`)) return c;
+        }
+        return "";
+      }
+
+      function extractCityFromTitleArea(): string {
+        const h1 = document.querySelector("h1");
+        if (!h1) return "";
+
+        const locParts: string[] = [];
+        const root = h1.parentElement?.parentElement;
+        if (!root) return "";
+
+        root
+          .querySelectorAll(
+            "[class*='gap-2'][class*='mt-2'] a, [class*='items-center'][class*='gap-2'] a, [class*='gap-2'][class*='mt-2'] span"
+          )
+          .forEach((el) => {
+            if (el.children.length > 0) return;
+            const t = (el.textContent || "").replace(/\s+/g, " ").trim();
+            if (!t || t.length > 50) return;
+            if (/ქ\.|ქუჩა|მეტრო|metro/i.test(t)) return;
+            if (isStreetLine(t)) return;
+            if (!locParts.includes(t)) locParts.push(t);
+          });
+
+        for (const p of locParts) {
+          if (KNOWN_CITIES.includes(p)) {
+            const next = locParts[locParts.indexOf(p) + 1];
+            if (next && !KNOWN_CITIES.includes(next)) return `${p}, ${next}`;
+            return p;
+          }
+        }
+
+        if (locParts.length >= 2) return `${locParts[0]}, ${locParts[1]}`;
+        return locParts[0] || "";
+      }
+
+      function extractCityFromListingHeader(): string {
+        const h1 = document.querySelector("h1");
+        if (!h1) return "";
+
+        let node: Element | null = h1.parentElement;
+        const chunks: string[] = [];
+        for (let depth = 0; depth < 6 && node; depth++) {
+          chunks.push(node.textContent || "");
+          node = node.parentElement;
+        }
+        const scoped = chunks.join(" ");
+        let best = "";
+        let bestIdx = scoped.length;
+        for (const c of KNOWN_CITIES) {
+          const idx = scoped.indexOf(c);
+          if (idx >= 0 && idx < bestIdx) {
+            bestIdx = idx;
+            best = c;
+          }
+        }
+        return best;
+      }
+
+      const schemaLoc = parseSchemaOrgLocation();
+      const schemaCity = buildCityFromSchema(schemaLoc.region, schemaLoc.locality);
+      const h1City = extractCityFromH1();
+      const titleAreaCity = extractCityFromTitleArea();
+      const headerCity = extractCityFromListingHeader();
+
+      if (h1City && schemaCity) {
+        const schemaPrimary = schemaCity.split(",")[0]?.trim() || "";
+        if (schemaPrimary && schemaPrimary !== h1City) {
+          const district = schemaCity.includes(",")
+            ? schemaCity
+                .split(",")
+                .slice(1)
+                .join(",")
+                .trim()
+            : schemaLoc.locality &&
+                schemaLoc.locality !== h1City &&
+                !KNOWN_CITIES.includes(schemaLoc.locality)
+              ? schemaLoc.locality
+              : "";
+          city = district ? `${h1City}, ${district}` : h1City;
+        } else {
+          city = schemaCity;
+        }
+      } else {
+        city = schemaCity || titleAreaCity || h1City || headerCity;
       }
 
       // --- Specs: area, rooms, bedrooms, floor ---
@@ -4915,6 +5908,7 @@ export async function parseListing(url: string): Promise<{
         "სვ.წერტილები",
         "სველი წერტილი",
         "სველი წერტილები",
+        "ეზოს ფართი",
       ];
       document.querySelectorAll("div").forEach((container) => {
         const children = Array.from(container.children);
@@ -4948,6 +5942,10 @@ export async function parseListing(url: string): Promise<{
             ) {
               bathrooms = sibling.replace(/[^\d]/g, "") || sibling;
             }
+            if (label === "ეზოს ფართი" && sibling.includes("მ²") && !rawData["ეზოს ფართი"]) {
+              const ym = sibling.match(/(\d+(?:[.,]\d+)?)/);
+              if (ym) rawData["ეზოს ფართი"] = ym[1].replace(",", ".");
+            }
           }
         }
       });
@@ -4962,8 +5960,12 @@ export async function parseListing(url: string): Promise<{
       let cadastralCode = "";
 
       const structuredFromAdditional: Record<string, (v: string) => void> = {
-        "სტატუსი": (v) => { if (!buildingStatus) buildingStatus = v; },
-        "მდგომარეობა": (v) => { if (!condition) condition = v; },
+        "სტატუსი": (v) => {
+          if (!buildingStatus) buildingStatus = dedupeRepeated(v);
+        },
+        "მდგომარეობა": (v) => {
+          if (!condition) condition = dedupeRepeated(v);
+        },
         "პროექტის ტიპი": (v) => {
           if (!projectType) projectType = dedupeRepeated(v);
         },
@@ -4979,13 +5981,12 @@ export async function parseListing(url: string): Promise<{
         "ლოჯია": (v) => { if (!loggiaArea) loggiaArea = v; },
         "საკადასტრო კოდი": (v) => { if (!cadastralCode) cadastralCode = v; },
         "მდებარეობა": (v) => {
-          if (!city) city = v.split(",")[0].trim();
+          const loc = v.replace(/\s+/g, " ").trim();
+          if (loc) city = loc;
         },
         "ქუჩა": (v) => {
           if (!street && isStreetLine(v)) {
-            const parts = parseAddressParts(v);
-            street = parts.street || v.trim();
-            if (!streetNumber && parts.streetNumber) streetNumber = parts.streetNumber;
+            street = normalizeStreetNameOnly(v);
           }
         },
         "ქუჩის ნომერი": (v) => {
@@ -5078,7 +6079,36 @@ export async function parseListing(url: string): Promise<{
       applyBalconyParsedFields(data);
       applyLoggiaParsedFields(data);
       applyVerandaParsedFields(data);
+      applyYardAreaParsedFields(data);
       applyCeilingHeightParsedFields(data);
+      const resolvedStreet = resolveStreetForPrefill(
+        data.street || data.rawData?.["ქუჩა"] || "",
+        data.streetNumber || data.rawData?.["ქუჩის ნომერი"] || ""
+      );
+      if (resolvedStreet.street) {
+        data.street = resolvedStreet.street;
+        if (data.rawData) data.rawData["ქუჩა"] = resolvedStreet.street;
+      }
+      data.streetNumber = resolvedStreet.streetNumber;
+      if (data.rawData && resolvedStreet.streetNumber) {
+        data.rawData["ქუჩის ნომერი"] = resolvedStreet.streetNumber;
+      }
+      if (data.buildingStatus) {
+        data.buildingStatus = dedupeRepeatedLabelValue(data.buildingStatus);
+      }
+      if (data.condition) {
+        data.condition = dedupeRepeatedLabelValue(data.condition);
+      }
+      const rawStatus = data.rawData?.["სტატუსი"];
+      if (rawStatus) {
+        data.rawData["სტატუსი"] = dedupeRepeatedLabelValue(rawStatus);
+        if (!data.buildingStatus) data.buildingStatus = data.rawData["სტატუსი"];
+      }
+      const rawCondition = data.rawData?.["მდგომარეობა"];
+      if (rawCondition) {
+        data.rawData["მდგომარეობა"] = dedupeRepeatedLabelValue(rawCondition);
+        if (!data.condition) data.condition = data.rawData["მდგომარეობა"];
+      }
       if (data.projectType) {
         data.projectType = dedupeRepeatedLabelValue(data.projectType);
       }
@@ -5221,6 +6251,7 @@ export async function createMyhomePost(
     if (listing.rawData) {
       ensureFurnitureRawData(listing.rawData);
     }
+    applyBalconyParsedFields(listing);
 
     if (!reuseSession) {
       await ensurePostSessionLogin(page, credentials);
@@ -5256,11 +6287,28 @@ export async function createMyhomePost(
           }
         }
 
+        function isInsideNestedAmenitySection(el: Element): boolean {
+          function norm(s: string) {
+            return (s || "").replace(/\s*\*\s*$/, "").trim().replace(/\s+/g, " ");
+          }
+          let node: Element | null = el;
+          for (let depth = 0; depth < 18 && node; depth++) {
+            for (const h of node.querySelectorAll("h2, h3, h4, label, span")) {
+              const t = norm(h.textContent || "");
+              if (t === "აივანი" || t === "ლოჯია" || t === "ვერანდა") return true;
+              if (/^აივნის\s*რაოდენობა/i.test(t)) return true;
+            }
+            node = node.parentElement;
+          }
+          return false;
+        }
+
         function fillInputByLabel(labelText: string, value: string) {
           if (!value) return;
           let filled = false;
           document.querySelectorAll("label").forEach((label) => {
             if (filled) return;
+            if (labelText === "ფართი" && isInsideNestedAmenitySection(label)) return;
             const forAttr = label.getAttribute("for");
             // Check ALL spans inside the label, not just the first
             const spans = label.querySelectorAll("span");
@@ -5313,14 +6361,29 @@ export async function createMyhomePost(
             return (s || "").replace(/\s*\*\s*$/, "").trim().replace(/\s+/g, " ");
           }
 
+          function isInsideNestedAmenitySection(el: Element): boolean {
+            let node: Element | null = el;
+            for (let depth = 0; depth < 18 && node; depth++) {
+              for (const h of node.querySelectorAll("h2, h3, h4, label, span")) {
+                const t = norm(h.textContent || "");
+                if (t === "აივანი" || t === "ლოჯია" || t === "ვერანდა") return true;
+                if (/^აივნის\s*რაოდენობა/i.test(t)) return true;
+              }
+              node = node.parentElement;
+            }
+            return false;
+          }
+
           function rowLabelMatches(text: string): boolean {
             const t = norm(text);
             if (!t || t.length > 45) return false;
+            if (/აივნის\s*რაოდენობა/i.test(t)) return false;
             for (const label of rowLabels) {
               const l = norm(label);
               if (t === l) return true;
               if (t.includes("სვ") && t.includes("წერტილი")) return true;
               if (/^საძინებელი/i.test(l) && /^საძინებელი/i.test(t)) return true;
+              if (/^ოთახ/i.test(l) && /^ოთახ/i.test(t)) return true;
             }
             return false;
           }
@@ -5357,6 +6420,7 @@ export async function createMyhomePost(
 
           let row: Element | null = null;
           for (const el of document.querySelectorAll("label,span,p,motion.div,div")) {
+            if (isInsideNestedAmenitySection(el)) continue;
             if (!rowLabelMatches(el.textContent || "")) continue;
             const parent = el.parentElement;
             if (rowLabels.some((l) => /^საძინებელი/i.test(l))) {
@@ -5445,7 +6509,9 @@ export async function createMyhomePost(
       description: "",
     };
 
-    await batchPrefillChips(page, buildEarlyFormChipTasks(listing));
+    await batchPrefillChips(page, buildEarlyPropertyChipTasks(listing));
+    await prefillPause(page, 500);
+    await prefillBuildingStatusAndCondition(page, listing);
 
     await fillLocationFields(page, listingLocation(listing));
 
