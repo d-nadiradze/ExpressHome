@@ -4,6 +4,7 @@ import { useState } from "react";
 import { useRouter } from "next/navigation";
 import toast from "react-hot-toast";
 import Link from "next/link";
+import ListingImageGallery from "@/components/ListingImageGallery";
 
 interface Listing {
   id: string;
@@ -80,7 +81,6 @@ const conditions = ["ახალი გარემონტებული", "
 export default function ListingDetail({ listing: initial }: { listing: Listing }) {
   const router = useRouter();
   const [listing, setListing] = useState<Listing>(initial);
-  const [imgIndex, setImgIndex] = useState(0);
   const [editing, setEditing] = useState(false);
   const [editData, setEditData] = useState<EditableFields | null>(null);
   const [saving, setSaving] = useState(false);
@@ -162,18 +162,6 @@ export default function ListingDetail({ listing: initial }: { listing: Listing }
       toast.success("Listing deleted");
       router.push("/dashboard");
     } catch { toast.error("Something went wrong"); }
-  }
-
-  function handleRemoveImage(index: number) {
-    if (!listing.images) return;
-    const newImages = listing.images.filter((_, i) => i !== index);
-    setListing({ ...listing, images: newImages });
-    if (imgIndex >= newImages.length) setImgIndex(Math.max(0, newImages.length - 1));
-    fetch("/api/myhome/parse", {
-      method: "PUT",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ id: listing.id, images: newImages }),
-    }).catch(() => null);
   }
 
   const images = listing.images || [];
@@ -262,46 +250,11 @@ export default function ListingDetail({ listing: initial }: { listing: Listing }
         </div>
       </div>
 
-      {/* Image gallery */}
-      {images.length > 0 && (
-        <div className="card p-0 overflow-hidden">
-          <div className="relative aspect-video bg-gray-100">
-            <img src={images[imgIndex]} alt={listing.title || ""} className="w-full h-full object-cover" />
-            {images.length > 1 && (
-              <>
-                <button
-                  onClick={() => setImgIndex((i) => Math.max(0, i - 1))}
-                  className="absolute left-3 top-1/2 -translate-y-1/2 bg-black/40 hover:bg-black/60 text-white rounded-full w-9 h-9 flex items-center justify-center"
-                >&#8249;</button>
-                <button
-                  onClick={() => setImgIndex((i) => Math.min(images.length - 1, i + 1))}
-                  className="absolute right-3 top-1/2 -translate-y-1/2 bg-black/40 hover:bg-black/60 text-white rounded-full w-9 h-9 flex items-center justify-center"
-                >&#8250;</button>
-                <div className="absolute bottom-3 right-3 bg-black/40 text-white text-xs px-2 py-1 rounded">
-                  {imgIndex + 1} / {images.length}
-                </div>
-              </>
-            )}
-          </div>
-          <div className="flex gap-2 p-3 overflow-x-auto">
-            {images.map((img, i) => (
-              <div key={i} className="relative shrink-0 group">
-                <button
-                  onClick={() => setImgIndex(i)}
-                  className={`w-16 h-12 rounded overflow-hidden border-2 transition-colors ${i === imgIndex ? "border-blue-500" : "border-transparent"}`}
-                >
-                  <img src={img} alt="" className="w-full h-full object-cover" />
-                </button>
-                <button
-                  onClick={() => handleRemoveImage(i)}
-                  className="absolute -top-1.5 -right-1.5 w-5 h-5 bg-red-500 hover:bg-red-600 text-white rounded-full text-xs flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity"
-                  title="Remove image"
-                >&times;</button>
-              </div>
-            ))}
-          </div>
-        </div>
-      )}
+      <ListingImageGallery
+        listingId={listing.id}
+        images={images}
+        onImagesChange={(newImages) => setListing({ ...listing, images: newImages })}
+      />
 
       {editing && editData ? (
         <>
