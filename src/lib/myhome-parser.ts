@@ -1,4 +1,4 @@
-﻿import {
+import {
   chromium,
   type Browser,
   type BrowserContext,
@@ -322,16 +322,12 @@ function getNestedSectionTypeValue(
   return "";
 }
 
-/** Balcony count/area only when slash value includes m² (not bare 1/48 from rooms/area). */
-const BALCONY_COUNT_AREA_RE =
-  /^(\d+)\s*\/\s*(\d+(?:[.,]\d+)?)\s*(?:მ²|m²)\s*$/iu;
-
-/** e.g. „2/12 მ²“ → count before /, area after (requires m² for slash form). */
+/** e.g. „2/12 მ²“ → count before /, area after. */
 function parseBalconyCountAndArea(value: string): { count: string; area: string } {
   const v = value.trim();
   if (!v) return { count: "", area: "" };
 
-  const slash = v.match(BALCONY_COUNT_AREA_RE);
+  const slash = v.match(/^(\d+)\s*\/\s*(\d+(?:[.,]\d+)?)\s*(?:მ²|m²)?\s*$/iu);
   if (slash) {
     return {
       count: slash[1],
@@ -343,128 +339,99 @@ function parseBalconyCountAndArea(value: string): { count: string; area: string 
     return { count: "", area: normalizeAreaForInput(v) };
   }
 
+  if (/^\d+$/.test(v)) return { count: v, area: "" };
   return { count: "", area: "" };
 }
 
-function listingHasExplicitBalconyCount(listing: MyhomeListing): boolean {
-  const rd = listing.rawData || {};
-  const main = rd["აივანი"]?.trim() || "";
-  const fromArea = listing.balconyArea?.trim() || "";
-  if (BALCONY_COUNT_AREA_RE.test(main) || BALCONY_COUNT_AREA_RE.test(fromArea)) {
-    return true;
-  }
-  const direct = rd["აივნის რაოდენობა"]?.trim();
-  if (!direct || !/\d/.test(direct)) return false;
-  return Boolean(rd["აივნის ფართი"]?.trim());
-}
-
-function listingHasExplicitBalconyArea(listing: MyhomeListing): boolean {
-  const rd = listing.rawData || {};
-  const direct = rd["აივნის ფართი"]?.trim();
-  if (direct) return true;
-  const main = rd["აივანი"]?.trim() || "";
-  if (main && (/მ²|m²/i.test(main) || BALCONY_COUNT_AREA_RE.test(main))) return true;
-  const fromArea = listing.balconyArea?.trim() || "";
-  if (!fromArea) return false;
-  return /მ²|m²/i.test(fromArea) || BALCONY_COUNT_AREA_RE.test(fromArea);
-}
-
-function listingHasAnyBalconyData(listing: MyhomeListing): boolean {
-  return listingHasExplicitBalconyCount(listing) || listingHasExplicitBalconyArea(listing);
-}
-
 function applyBalconyParsedFields(listing: MyhomeListing): void {
-  const rd = listing.rawData || (listing.rawData = {});
-  const fromMain = rd["აივანი"]?.trim() || "";
-  const fromBalconyArea = listing.balconyArea?.trim() || "";
-  const combined = fromMain || fromBalconyArea;
-  const { count, area } = parseBalconyCountAndArea(combined);
-
-  const hasBalconySlash = BALCONY_COUNT_AREA_RE.test(combined);
+  const rd = listing.rawData || {};
   const countDirect = rd["აივნის რაოდენობა"]?.trim();
-  if (countDirect && (hasBalconySlash || rd["აივნის ფართი"]?.trim())) {
-    rd["აივნის რაოდენობა"] = countDirect.replace(/[^\d]/g, "") || countDirect;
-  } else if (count && hasBalconySlash) {
-    rd["აივნის რაოდენობა"] = count;
-  } else {
-    delete rd["აივნის რაოდენობა"];
-  }
-
   const areaDirect = rd["აივნის ფართი"]?.trim();
-  if (areaDirect && (hasBalconySlash || /მ²|m²/i.test(areaDirect))) {
+  const fromMain = rd["აივანი"]?.trim() || listing.balconyArea?.trim() || "";
+  const { count, area } = parseBalconyCountAndArea(fromMain);
+
+  if (countDirect) rd["აივნის რაოდენობა"] = countDirect.replace(/[^\d]/g, "") || countDirect;
+  else if (count) rd["აივნის რაოდენობა"] = count;
+
+  if (areaDirect) {
     rd["აივნის ფართი"] = normalizeAreaForInput(areaDirect);
     listing.balconyArea = rd["აივნის ფართი"];
   } else if (area) {
     rd["აივნის ფართი"] = area;
     listing.balconyArea = area;
-  } else {
-    delete rd["აივნის ფართი"];
-    if (!listingHasExplicitBalconyArea(listing)) listing.balconyArea = "";
   }
 }
 
 function getBalconyCountValue(listing: MyhomeListing): string {
-  if (!listingHasExplicitBalconyCount(listing)) return "";
   const direct = listing.rawData?.["აივნის რაოდენობა"]?.trim();
   if (direct) return direct.replace(/[^\d]/g, "") || direct;
-  const main =
-    listing.rawData?.["აივანი"]?.trim() || listing.balconyArea?.trim() || "";
-  const { count } = parseBalconyCountAndArea(main);
+  const { count } = parseBalconyCountAndArea(
+    listing.rawData?.["აივანი"]?.trim() || listing.balconyArea || ""
+  );
   return count;
 }
 
 function getBalconyAreaValue(listing: MyhomeListing): string {
-  if (!listingHasExplicitBalconyArea(listing)) return "";
   const direct = listing.rawData?.["აივნის ფართი"]?.trim();
   if (direct) return normalizeAreaForInput(direct);
-  const main = listing.rawData?.["აივანი"]?.trim() || listing.balconyArea?.trim() || "";
-  const { area } = parseBalconyCountAndArea(main);
-  return area;
+  const { area } = parseBalconyCountAndArea(listing.rawData?.["აივანი"]?.trim() || "");
+  if (area) return area;
+  return listing.balconyArea ? normalizeAreaForInput(listing.balconyArea) : "";
 }
 
-async function clearBalconyCountInput(page: Page): Promise<void> {
-  await page.evaluate(() => {
-    const inputSetter = Object.getOwnPropertyDescriptor(
-      window.HTMLInputElement.prototype,
-      "value"
-    )?.set;
-    if (!inputSetter) return;
+/** „2/5“ → floor 2, total 5; single „3“ → both 3 (myhome often omits total floors). */
+function parseFloorSpec(value: string): { floor: string; totalFloors: string } {
+  const v = value.trim();
+  if (!v) return { floor: "", totalFloors: "" };
 
-    function norm(s: string) {
-      return (s || "").replace(/\s*\*\s*$/, "").trim().replace(/\s+/g, " ");
-    }
+  const slash = v.match(/^(\d+)\s*\/\s*(\d+)$/);
+  if (slash) return { floor: slash[1], totalFloors: slash[2] };
 
-    for (const el of document.querySelectorAll("label, span, p, h2, h3, h4, div")) {
-      if (norm(el.textContent || "") !== "აივანი") continue;
-      let node: Element | null = el;
-      for (let depth = 0; depth < 22 && node; depth++) {
-        for (const lbl of node.querySelectorAll("label")) {
-          for (const span of lbl.querySelectorAll("span")) {
-            const t = norm(span.textContent || "");
-            if (!/^აივნის\s*რაოდენობა/i.test(t)) continue;
-            const input = (lbl.getAttribute("for")
-              ? document.getElementById(lbl.getAttribute("for")!)
-              : lbl.querySelector("input")) as HTMLInputElement | null;
-            if (!input) continue;
-            inputSetter.call(input, "");
-            input.dispatchEvent(new Event("input", { bubbles: true }));
-            input.dispatchEvent(new Event("change", { bubbles: true }));
-            return;
-          }
-        }
-        node = node.parentElement;
-      }
+  const digits = v.replace(/[^\d]/g, "");
+  if (/^\d+$/.test(digits)) return { floor: digits, totalFloors: digits };
+
+  return { floor: "", totalFloors: "" };
+}
+
+function applyFloorParsedFields(listing: MyhomeListing): void {
+  const raw = listing.rawData?.["სართული"]?.trim();
+  if (raw) {
+    const parsed = parseFloorSpec(raw);
+    if (parsed.floor && !listing.floor?.trim()) listing.floor = parsed.floor;
+    if (parsed.totalFloors && !listing.totalFloors?.trim()) {
+      listing.totalFloors = parsed.totalFloors;
     }
-  });
+  }
+
+  if (listing.floor?.trim() && !listing.totalFloors?.trim()) {
+    listing.totalFloors = listing.floor.trim();
+  }
+
+  if (listing.floor?.trim() && listing.rawData) {
+    listing.rawData["სართული"] = listing.rawData["სართული"] || listing.floor.trim();
+  }
+}
+
+function getTotalFloorsValue(listing: MyhomeListing): string {
+  applyFloorParsedFields(listing);
+  return listing.totalFloors?.trim() || listing.floor?.trim() || "";
+}
+
+async function prefillFloorFields(
+  page: Page,
+  listing: MyhomeListing
+): Promise<void> {
+  applyFloorParsedFields(listing);
+  const floor = listing.floor?.trim();
+  const totalFloors = getTotalFloorsValue(listing);
+  if (floor) await fillLabeledInput(page, "სართული", floor);
+  if (totalFloors) await fillLabeledInput(page, "სართულები სულ", totalFloors);
 }
 
 async function prefillBalconyFields(
   page: Page,
   listing: MyhomeListing
 ): Promise<void> {
-  applyBalconyParsedFields(listing);
-  if (!listingHasAnyBalconyData(listing)) return;
-
   const count = getBalconyCountValue(listing);
   const area = getBalconyAreaValue(listing);
   if (!count && !area) return;
@@ -475,8 +442,6 @@ async function prefillBalconyFields(
   if (count) {
     await fillInputInNestedSection(page, "აივანი", "აივნის რაოდენობა", count);
     await prefillPause(page, 80);
-  } else {
-    await clearBalconyCountInput(page);
   }
   if (area) {
     await fillInputInNestedSection(page, "აივანი", "ფართი", area);
@@ -2154,28 +2119,6 @@ async function prefillPreferenceField(
 /**
  * Playwright click on count chips (ოთახი, საძინებელი) — reliable React state vs evaluate .click().
  */
-async function locatorInAmenityCountSection(
-  page: Page,
-  locator: ReturnType<Page["locator"]>
-): Promise<boolean> {
-  return locator.evaluate((el) => {
-    function norm(s: string) {
-      return (s || "").replace(/\s*\*\s*$/, "").trim().replace(/\s+/g, " ");
-    }
-    let node: Element | null = el;
-    for (let depth = 0; depth < 22 && node; depth++) {
-      for (const label of node.querySelectorAll("label, span, p, h2, h3, h4")) {
-        const t = norm(label.textContent || "");
-        if (t.length > 55) continue;
-        if (t === "აივანი" || t === "ლოჯია" || t === "ვერანდა") return true;
-        if (/^აივნის\s*რაოდენობა/i.test(t)) return true;
-      }
-      node = node.parentElement;
-    }
-    return false;
-  });
-}
-
 async function prefillCountChipPlaywright(
   page: Page,
   sectionLabels: string[],
@@ -2195,7 +2138,6 @@ async function prefillCountChipPlaywright(
     for (let i = 0; i < n; i++) {
       const labelEl = labelLocators.nth(i);
       if (!(await labelEl.isVisible({ timeout: 500 }).catch(() => false))) continue;
-      if (await locatorInAmenityCountSection(page, labelEl)) continue;
 
       let scope = labelEl;
       for (let depth = 0; depth < 10; depth++) {
@@ -2204,7 +2146,6 @@ async function prefillCountChipPlaywright(
         for (let c = 0; c < chipCount; c++) {
           const chipEl = chips.nth(c);
           if (!(await chipEl.isVisible({ timeout: 300 }).catch(() => false))) continue;
-          if (await locatorInAmenityCountSection(page, chipEl)) continue;
           await chipEl.click({ timeout: CHIP_CLICK_TIMEOUT_MS, force: true });
           await prefillPause(page, 40);
           return true;
@@ -3046,29 +2987,14 @@ async function prefillRowCountChip(
         return (s || "").replace(/\s*\*\s*$/, "").trim().replace(/\s+/g, " ");
       }
 
-      function isInsideNestedAmenitySection(el: Element): boolean {
-        let node: Element | null = el;
-        for (let depth = 0; depth < 18 && node; depth++) {
-          for (const h of node.querySelectorAll("h2, h3, h4, label, span")) {
-            const t = norm(h.textContent || "");
-            if (t === "აივანი" || t === "ლოჯია" || t === "ვერანდა") return true;
-            if (/^აივნის\s*რაოდენობა/i.test(t)) return true;
-          }
-          node = node.parentElement;
-        }
-        return false;
-      }
-
       function labelsMatch(text: string, label: string): boolean {
         const t = norm(text);
         const l = norm(label);
         if (!t || t.length > 45) return false;
-        if (/აივნის\s*რაოდენობა/i.test(t)) return false;
         if (t === l) return true;
         if (t.includes("სვ") && t.includes("წერტილი")) return true;
         if (l.includes("სვ") && l.includes("წერტილი") && t.includes("სვ")) return true;
         if (/^საძინებელი/i.test(l) && /^საძინებელი/i.test(t)) return true;
-        if (/^ოთახ/i.test(l) && /^ოთახ/i.test(t)) return true;
         return false;
       }
 
@@ -3103,7 +3029,6 @@ async function prefillRowCountChip(
 
       function findCountRowForLabels(): Element | null {
         for (const el of document.querySelectorAll("label,span,p,motion.div")) {
-          if (isInsideNestedAmenitySection(el)) continue;
           if (!sectionLabels.some((label) => labelsMatch(el.textContent || "", label))) {
             continue;
           }
@@ -3137,13 +3062,11 @@ async function prefillRowCountChip(
       }
 
       function markLeafChip(root: Element): boolean {
-        if (isInsideNestedAmenitySection(root)) return false;
         for (const el of root.querySelectorAll(
           "span,motion.div,motion.span,motion.p,div,button,p,label,[class*='cursor-pointer']"
         )) {
           if (el.children.length > 0) continue;
           if (!matchesVariant(el.textContent || "")) continue;
-          if (isInsideNestedAmenitySection(el)) continue;
 
           const target = (el.closest("[class*='rounded']") ||
             el.closest("button,[role=button]") ||
@@ -3160,7 +3083,6 @@ async function prefillRowCountChip(
       }
 
       for (const el of document.querySelectorAll("label,span,p,motion.div")) {
-        if (isInsideNestedAmenitySection(el)) continue;
         if (!sectionLabels.some((label) => labelsMatch(el.textContent || "", label))) {
           continue;
         }
@@ -3179,7 +3101,6 @@ async function prefillRowCountChip(
       if (countRow && markLeafChip(countRow)) return true;
 
       for (const el of document.querySelectorAll("label,span,p,motion.div")) {
-        if (isInsideNestedAmenitySection(el)) continue;
         if (!sectionLabels.some((label) => labelsMatch(el.textContent || "", label))) {
           continue;
         }
@@ -3211,8 +3132,8 @@ async function prefillRowCountChip(
 
   const isBedroomSection = sectionLabels.some((l) => /^საძინებელი/i.test(l));
   const excludeInLocator = isBedroomSection
-    ? /ოთახი|ფართი|სართული|აივანი|აივნის/i
-    : /ოთახი|საძინებელი|ფართი|სართული|აივანი|აივნის/i;
+    ? /ოთახი|ფართი|სართული/i
+    : /ოთახი|საძინებელი|ფართი|სართული/i;
 
   for (const label of sectionLabels) {
     const labelRe = new RegExp(label.replace(/\./g, "\\."), "iu");
@@ -4148,6 +4069,8 @@ async function applyAdditionalParametersPrefill(
     }
   }
 
+  await prefillFloorFields(page, listing);
+
   await prefillBalconyFields(page, listing);
   await prefillLoggiaFields(page, listing);
   await prefillVerandaFields(page, listing);
@@ -4855,6 +4778,57 @@ export async function parseListing(url: string): Promise<{
         return out;
       };
 
+      const collectFloorFromFlexRows = (root: Element | Document) => {
+        const out: { floor: string; totalFloors: string; raw: string } = {
+          floor: "",
+          totalFloors: "",
+          raw: "",
+        };
+
+        function setParts(f: string, tf: string) {
+          if (!f) return;
+          out.floor = f;
+          out.totalFloors = tf || f;
+          out.raw = tf && tf !== f ? `${f}/${tf}` : f;
+        }
+
+        root.querySelectorAll("span,label,p,motion.div,div").forEach((el) => {
+          const t = (el.textContent || "").replace(/\s+/g, " ").trim();
+          if (t !== "სართული") return;
+          if (el.children.length > 2) return;
+
+          const parent = el.parentElement;
+          if (!parent) return;
+
+          const joined = (parent.textContent || "").replace(/\s+/g, "");
+          const slash = joined.match(/^სართული(\d+)\/(\d+)$/iu);
+          if (slash) {
+            setParts(slash[1], slash[2]);
+            return;
+          }
+
+          const single = joined.match(/^სართული(\d+)$/iu);
+          if (single) {
+            setParts(single[1], single[1]);
+            return;
+          }
+
+          const children = Array.from(parent.children);
+          const idx = children.indexOf(el);
+          if (idx >= 0 && children[idx + 1]) {
+            const val = (children[idx + 1].textContent || "").trim();
+            const fm = val.match(/^(\d+)\s*\/\s*(\d+)$/);
+            if (fm) {
+              setParts(fm[1], fm[2]);
+              return;
+            }
+            if (/^\d+$/.test(val)) setParts(val, val);
+          }
+        });
+
+        return out;
+      };
+
       const collectProjectTypeFromFlexRows = (root: Element | Document) => {
         const out: Record<string, string> = {};
         const canon = "პროექტის ტიპი";
@@ -4939,6 +4913,11 @@ export async function parseListing(url: string): Promise<{
           mergeParamValue(params, k, v);
         }
 
+        const floorFlexParams = collectFloorFromFlexRows(document.body);
+        if (floorFlexParams.raw) {
+          mergeParamValue(params, "სართული", floorFlexParams.raw);
+        }
+
         const projectTypeFlex = collectProjectTypeFromFlexRows(document.body);
         for (const [k, v] of Object.entries(projectTypeFlex)) {
           mergeParamValue(params, k, v);
@@ -5011,13 +4990,11 @@ export async function parseListing(url: string): Promise<{
             if (!parent) return;
 
             const joined = (parent.textContent || "").replace(/\s+/g, "");
-            const glued = joined.match(
-              /^აივანი(\d+)\/(\d+(?:[.,]\d+)?)\s*(?:მ²|m²)$/iu
-            );
+            const glued = joined.match(/^აივანი(\d+)\/(\d+(?:[.,]\d+)?)\s*(?:მ²|m²)?$/iu);
             if (glued) {
               out["აივნის რაოდენობა"] = glued[1];
               out["აივნის ფართი"] = glued[2].replace(",", ".");
-              out["აივანი"] = `${glued[1]}/${glued[2]} მ²`;
+              out["აივანი"] = `${glued[1]}/${glued[2]}`;
               return;
             }
 
@@ -5025,13 +5002,11 @@ export async function parseListing(url: string): Promise<{
               const ct = (child.textContent || "").replace(/\s+/g, " ").trim();
               if (!ct || ct === t) continue;
               if (ct.length > 40) continue;
-              const slash = ct.match(
-                /^(\d+)\s*\/\s*(\d+(?:[.,]\d+)?)\s*(?:მ²|m²)$/iu
-              );
+              const slash = ct.match(/^(\d+)\s*\/\s*(\d+(?:[.,]\d+)?)\s*(?:მ²|m²)?$/iu);
               if (slash) {
                 out["აივნის რაოდენობა"] = slash[1];
                 out["აივნის ფართი"] = slash[2].replace(",", ".");
-                out["აივანი"] = `${slash[1]}/${slash[2]} მ²`;
+                out["აივანი"] = `${slash[1]}/${slash[2]}`;
                 return;
               }
             }
@@ -5377,22 +5352,12 @@ export async function parseListing(url: string): Promise<{
         function splitBalconyCountAndAreaFields(out: Record<string, string>) {
           const raw = out["აივანი"];
           if (!raw) return;
-          const slash = raw.match(
-            /^(\d+)\s*\/\s*(\d+(?:[.,]\d+)?)\s*(?:მ²|m²)\s*$/iu
-          );
+          const slash = raw.match(/^(\d+)\s*\/\s*(\d+(?:[.,]\d+)?)\s*(?:მ²|m²)?\s*$/iu);
           if (!slash) return;
           out["აივნის რაოდენობა"] = slash[1];
           out["აივნის ფართი"] = slash[2].replace(",", ".");
         }
         splitBalconyCountAndAreaFields(params);
-
-        if (
-          !params["აივანი"]?.match(/^(\d+)\s*\/\s*(\d+(?:[.,]\d+)?)\s*(?:მ²|m²)\s*$/iu) &&
-          !/მ²|m²/i.test(params["აივანი"] || "")
-        ) {
-          delete params["აივნის რაოდენობა"];
-          delete params["აივნის ფართი"];
-        }
 
         function splitLoggiaAreaFields(out: Record<string, string>) {
           const raw = out["ლოჯია"];
@@ -5930,7 +5895,13 @@ export async function parseListing(url: string): Promise<{
             }
             if (label === "სართული") {
               const fm = sibling.match(/(\d+)\s*\/\s*(\d+)/);
-              if (fm && !floor) { floor = fm[1]; totalFloors = fm[2]; }
+              if (fm && !floor) {
+                floor = fm[1];
+                totalFloors = fm[2];
+              } else if (/^\d+$/.test(sibling) && !floor) {
+                floor = sibling;
+                totalFloors = sibling;
+              }
             }
             if (
               (label === "სვ.წერტილი" ||
@@ -5949,6 +5920,13 @@ export async function parseListing(url: string): Promise<{
           }
         }
       });
+
+      const topFloorFlex = collectFloorFromFlexRows(document.body);
+      if (topFloorFlex.floor && !floor) floor = topFloorFlex.floor;
+      if (topFloorFlex.totalFloors && !totalFloors) {
+        totalFloors = topFloorFlex.totalFloors;
+      }
+      if (topFloorFlex.raw) rawData["სართული"] = topFloorFlex.raw;
 
       // --- Additional parameters section ---
       let buildingStatus = "";
@@ -5971,6 +5949,19 @@ export async function parseListing(url: string): Promise<{
         },
         "საძინებელი": (v) => {
           if (!bedrooms) bedrooms = v.replace(/[^\d]/g, "") || v;
+        },
+        "სართული": (v) => {
+          const fm = v.match(/(\d+)\s*\/\s*(\d+)/);
+          if (fm) {
+            if (!floor) floor = fm[1];
+            if (!totalFloors) totalFloors = fm[2];
+            return;
+          }
+          const digits = v.replace(/[^\d]/g, "");
+          if (digits && !floor) {
+            floor = digits;
+            totalFloors = digits;
+          }
         },
         "სვ.წერტილი": (v) => { if (!bathrooms) bathrooms = v.replace(/[^\d]/g, "") || v; },
         "სვ.წერტილები": (v) => { if (!bathrooms) bathrooms = v.replace(/[^\d]/g, "") || v; },
@@ -6081,6 +6072,7 @@ export async function parseListing(url: string): Promise<{
       applyVerandaParsedFields(data);
       applyYardAreaParsedFields(data);
       applyCeilingHeightParsedFields(data);
+      applyFloorParsedFields(data);
       const resolvedStreet = resolveStreetForPrefill(
         data.street || data.rawData?.["ქუჩა"] || "",
         data.streetNumber || data.rawData?.["ქუჩის ნომერი"] || ""
@@ -6251,7 +6243,7 @@ export async function createMyhomePost(
     if (listing.rawData) {
       ensureFurnitureRawData(listing.rawData);
     }
-    applyBalconyParsedFields(listing);
+    applyFloorParsedFields(listing);
 
     if (!reuseSession) {
       await ensurePostSessionLogin(page, credentials);
@@ -6287,28 +6279,11 @@ export async function createMyhomePost(
           }
         }
 
-        function isInsideNestedAmenitySection(el: Element): boolean {
-          function norm(s: string) {
-            return (s || "").replace(/\s*\*\s*$/, "").trim().replace(/\s+/g, " ");
-          }
-          let node: Element | null = el;
-          for (let depth = 0; depth < 18 && node; depth++) {
-            for (const h of node.querySelectorAll("h2, h3, h4, label, span")) {
-              const t = norm(h.textContent || "");
-              if (t === "აივანი" || t === "ლოჯია" || t === "ვერანდა") return true;
-              if (/^აივნის\s*რაოდენობა/i.test(t)) return true;
-            }
-            node = node.parentElement;
-          }
-          return false;
-        }
-
         function fillInputByLabel(labelText: string, value: string) {
           if (!value) return;
           let filled = false;
           document.querySelectorAll("label").forEach((label) => {
             if (filled) return;
-            if (labelText === "ფართი" && isInsideNestedAmenitySection(label)) return;
             const forAttr = label.getAttribute("for");
             // Check ALL spans inside the label, not just the first
             const spans = label.querySelectorAll("span");
@@ -6361,29 +6336,14 @@ export async function createMyhomePost(
             return (s || "").replace(/\s*\*\s*$/, "").trim().replace(/\s+/g, " ");
           }
 
-          function isInsideNestedAmenitySection(el: Element): boolean {
-            let node: Element | null = el;
-            for (let depth = 0; depth < 18 && node; depth++) {
-              for (const h of node.querySelectorAll("h2, h3, h4, label, span")) {
-                const t = norm(h.textContent || "");
-                if (t === "აივანი" || t === "ლოჯია" || t === "ვერანდა") return true;
-                if (/^აივნის\s*რაოდენობა/i.test(t)) return true;
-              }
-              node = node.parentElement;
-            }
-            return false;
-          }
-
           function rowLabelMatches(text: string): boolean {
             const t = norm(text);
             if (!t || t.length > 45) return false;
-            if (/აივნის\s*რაოდენობა/i.test(t)) return false;
             for (const label of rowLabels) {
               const l = norm(label);
               if (t === l) return true;
               if (t.includes("სვ") && t.includes("წერტილი")) return true;
               if (/^საძინებელი/i.test(l) && /^საძინებელი/i.test(t)) return true;
-              if (/^ოთახ/i.test(l) && /^ოთახ/i.test(t)) return true;
             }
             return false;
           }
@@ -6420,7 +6380,6 @@ export async function createMyhomePost(
 
           let row: Element | null = null;
           for (const el of document.querySelectorAll("label,span,p,motion.div,div")) {
-            if (isInsideNestedAmenitySection(el)) continue;
             if (!rowLabelMatches(el.textContent || "")) continue;
             const parent = el.parentElement;
             if (rowLabels.some((l) => /^საძინებელი/i.test(l))) {
@@ -6520,6 +6479,7 @@ export async function createMyhomePost(
 
     const bedroomsForForm = getBedroomsValue(listing);
     const bathroomsForForm = getBathroomsValue(listing);
+    const totalFloorsForForm = getTotalFloorsValue(listing);
 
     await fillForm({
       ...empty,
@@ -6531,7 +6491,7 @@ export async function createMyhomePost(
       bedrooms: bedroomsForForm,
       bathrooms: bathroomsForForm,
       floor: listing.floor,
-      totalFloors: listing.totalFloors,
+      totalFloors: totalFloorsForForm,
       description: listing.description,
     });
 
