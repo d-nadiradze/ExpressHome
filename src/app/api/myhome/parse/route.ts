@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { db } from "@/lib/db";
-import { parseListing } from "@/lib/myhome-parser";
 import { isValidMyhomeUrl } from "@/lib/utils";
+import { enqueueParseJob } from "@/lib/parse-queue";
 
 export async function POST(request: NextRequest) {
   const userId = request.headers.get("x-user-id");
@@ -21,52 +21,20 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    // Parse the listing
-    const result = await parseListing(url);
-
-    if (!result.success || !result.data) {
-      return NextResponse.json(
-        { error: result.error || "Failed to parse listing" },
-        { status: 422 }
-      );
-    }
-
-    const d = result.data; // price in USD from listing page currency toggle
     const listing = await db.parsedListing.create({
       data: {
         userId,
         sourceUrl: url,
-        title: d.title,
-        propertyType: d.propertyType,
-        dealType: d.dealType,
-        buildingStatus: d.buildingStatus,
-        condition: d.condition,
-        city: d.city,
-        address: d.address,
-        street: d.street,
-        streetNumber: d.streetNumber,
-        cadastralCode: d.cadastralCode,
-        price: d.price,
-        pricePerSqm: d.pricePerSqm,
-        currency: d.currency,
-        area: d.area,
-        rooms: d.rooms,
-        bedrooms: d.bedrooms,
-        floor: d.floor,
-        totalFloors: d.totalFloors,
-        projectType: d.projectType,
-        bathrooms: d.bathrooms,
-        balconyArea: d.balconyArea,
-        verandaArea: d.verandaArea,
-        loggiaArea: d.loggiaArea,
-        description: d.description,
-        images: d.images,
-        rawData: d.rawData,
-        postStatus: "PENDING",
+        postStatus: "PARSING",
       },
     });
 
-    return NextResponse.json({ success: true, listing });
+    enqueueParseJob({ listingId: listing.id, url, userId });
+
+    return NextResponse.json(
+      { success: true, listingId: listing.id },
+      { status: 202 }
+    );
   } catch (error) {
     console.error("Parse error:", error);
     return NextResponse.json({ error: "Internal server error" }, { status: 500 });
@@ -130,7 +98,7 @@ export async function PUT(request: NextRequest) {
       "city", "address", "street", "streetNumber", "cadastralCode",
       "price", "pricePerSqm", "currency", "area", "rooms", "bedrooms",
       "floor", "totalFloors", "projectType", "bathrooms", "balconyArea",
-      "verandaArea", "loggiaArea", "description", "images",
+      "verandaArea", "loggiaArea", "description", "images", "rawData",
     ] as const;
 
     const data: Record<string, unknown> = {};

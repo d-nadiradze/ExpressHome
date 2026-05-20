@@ -68,6 +68,7 @@ type EditableFields = {
 };
 
 const statusColors: Record<string, string> = {
+  PARSING: "bg-blue-100 text-blue-700",
   PENDING: "bg-yellow-100 text-yellow-700",
   POSTED: "bg-green-100 text-green-700",
   FAILED: "bg-red-100 text-red-700",
@@ -83,6 +84,9 @@ export default function ListingDetail({ listing: initial }: { listing: Listing }
   const [listing, setListing] = useState<Listing>(initial);
   const [editing, setEditing] = useState(false);
   const [editData, setEditData] = useState<EditableFields | null>(null);
+  const [editRawData, setEditRawData] = useState<Record<string, string>>({});
+  const [newParamKey, setNewParamKey] = useState("");
+  const [newParamValue, setNewParamValue] = useState("");
   const [saving, setSaving] = useState(false);
   const [posting, setPosting] = useState(false);
 
@@ -129,6 +133,9 @@ export default function ListingDetail({ listing: initial }: { listing: Listing }
       loggiaArea: listing.loggiaArea || "",
       description: listing.description || "",
     });
+    setEditRawData({ ...(listing.rawData || {}) });
+    setNewParamKey("");
+    setNewParamValue("");
     setEditing(true);
   }
 
@@ -139,10 +146,10 @@ export default function ListingDetail({ listing: initial }: { listing: Listing }
       const res = await fetch("/api/myhome/parse", {
         method: "PUT",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ id: listing.id, ...editData }),
+        body: JSON.stringify({ id: listing.id, ...editData, rawData: editRawData }),
       });
       if (!res.ok) { toast.error("Failed to save"); return; }
-      setListing({ ...listing, ...editData });
+      setListing({ ...listing, ...editData, rawData: editRawData });
       setEditing(false);
       setEditData(null);
       toast.success("Saved!");
@@ -162,6 +169,21 @@ export default function ListingDetail({ listing: initial }: { listing: Listing }
       toast.success("Listing deleted");
       router.push("/dashboard");
     } catch { toast.error("Something went wrong"); }
+  }
+
+  function addRawDataParam() {
+    const key = newParamKey.trim();
+    const value = newParamValue.trim();
+    if (!key) return;
+    setEditRawData({ ...editRawData, [key]: value });
+    setNewParamKey("");
+    setNewParamValue("");
+  }
+
+  function removeRawDataParam(key: string) {
+    const updated = { ...editRawData };
+    delete updated[key];
+    setEditRawData(updated);
   }
 
   const images = listing.images || [];
@@ -335,6 +357,65 @@ export default function ListingDetail({ listing: initial }: { listing: Listing }
           <div className="card space-y-4">
             <h3 className="font-semibold text-gray-900">Description</h3>
             <textarea className="input w-full min-h-[120px]" value={ed.description} onChange={(e) => setEditData({ ...ed, description: e.target.value })} />
+          </div>
+
+          {/* Raw Data / Additional Parameters */}
+          <div className="card space-y-4">
+            <h3 className="font-semibold text-gray-900">Additional Parameters (rawData)</h3>
+
+            {Object.keys(editRawData).length > 0 && (
+              <div className="space-y-2">
+                {Object.entries(editRawData).map(([key, value]) => (
+                  <div key={key} className="flex items-center gap-2">
+                    <span className="text-sm text-gray-600 min-w-[160px] shrink-0 truncate" title={key}>{key}</span>
+                    <input
+                      className="input flex-1"
+                      value={value}
+                      onChange={(e) => setEditRawData({ ...editRawData, [key]: e.target.value })}
+                    />
+                    <button
+                      onClick={() => removeRawDataParam(key)}
+                      className="text-red-400 hover:text-red-600 shrink-0 p-1 rounded hover:bg-red-50 transition-colors"
+                      title="Remove"
+                    >
+                      <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+                      </svg>
+                    </button>
+                  </div>
+                ))}
+              </div>
+            )}
+
+            <div className="flex items-end gap-2 pt-2 border-t border-gray-100">
+              <div className="flex-1">
+                <label className="block text-xs text-gray-500 mb-1">Key</label>
+                <input
+                  className="input w-full"
+                  placeholder="e.g. გათბობა"
+                  value={newParamKey}
+                  onChange={(e) => setNewParamKey(e.target.value)}
+                  onKeyDown={(e) => { if (e.key === "Enter") addRawDataParam(); }}
+                />
+              </div>
+              <div className="flex-1">
+                <label className="block text-xs text-gray-500 mb-1">Value</label>
+                <input
+                  className="input w-full"
+                  placeholder="e.g. კი"
+                  value={newParamValue}
+                  onChange={(e) => setNewParamValue(e.target.value)}
+                  onKeyDown={(e) => { if (e.key === "Enter") addRawDataParam(); }}
+                />
+              </div>
+              <button
+                onClick={addRawDataParam}
+                disabled={!newParamKey.trim()}
+                className="text-sm text-white bg-gray-600 hover:bg-gray-700 px-3 py-2 rounded-md font-medium disabled:opacity-30 transition-colors shrink-0"
+              >
+                Add
+              </button>
+            </div>
           </div>
         </>
       ) : (

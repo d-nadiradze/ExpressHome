@@ -1,3 +1,4 @@
+import "@/lib/esbuild-shim";
 import {
   chromium,
   type Browser,
@@ -15,7 +16,6 @@ import {
   RAW_DATA_HANDLED_LABELS,
 } from "@/lib/additional-params";
 import { resolveImagesForPlaywright } from "@/lib/listing-images";
-
 
 export interface MyhomeListing {
   title: string;
@@ -69,21 +69,16 @@ async function prefillPause(page: Page, ms = PREFILL_PAUSE_MS) {
   if (ms > 0) await page.waitForTimeout(ms);
 }
 
-/** Wait until a chip label exists (form section rendered). */
-async function waitForChipLabel(page: Page, label: string, timeout = 2000) {
-  await page
-    .waitForFunction(
-      (text) => {
-        for (const el of document.querySelectorAll("span, div, button, p")) {
-          if (el.children.length > 0) continue;
-          if (el.textContent?.trim() === text) return true;
-        }
-        return false;
-      },
-      label,
-      { timeout }
-    )
-    .catch(() => null);
+const BROWSER_EVALUATE_SHIM =
+  "globalThis.__name = globalThis.__name || function (t) { return t; };";
+
+/** esbuild keepNames adds __name calls; must exist in the browser before page.evaluate. */
+async function addBrowserEvaluateShim(context: BrowserContext): Promise<void> {
+  await context.addInitScript(BROWSER_EVALUATE_SHIM);
+}
+
+async function ensureBrowserEvaluateShim(page: Page): Promise<void> {
+  await page.evaluate(BROWSER_EVALUATE_SHIM);
 }
 
 function escapeRegExp(text: string): string {
@@ -106,65 +101,302 @@ const EXACT_LUK_FIELD_LABELS = new Set([
   "შესასვლელი",
 ]);
 
+/** All known პროექტის ტიპი dropdown options with aliases (parsed value → exact option text). */
+const PROJECT_TYPE_ALIASES: Record<string, string[]> = {
+  "არასტანდარტული": ["არასტანდარტული"],
+  "თუხარელის": ["თუხარელის", "თუხარელი"],
+  "იტალიური ეზო": ["იტალიური ეზო"],
+  "ლენინგრადის": ["ლენინგრადის", "ლენინგრადი"],
+  "ყავლაშვილის": ["ყავლაშვილის", "ყავლაშვილი"],
+  "ჩეხური": ["ჩეხური"],
+  "ხრუშოვის": ["ხრუშოვის", "ხრუშოვი", "ხრუშოვკა"],
+  "საერთო საცხოვრებელი": ["საერთო საცხოვრებელი"],
+  "დუპლექსი": ["დუპლექსი", "დუპლექს"],
+  "ტრიპლექსი": ["ტრიპლექსი", "ტრიპლექს"],
+  "m2-ის კომპლექსი": ["m2-ის კომპლექსი", "m2 კომპლექსი", "m2-ს კომპლექსი"],
+  "OPTIMA m2-ისკან": ["OPTIMA m2-ისკან", "optima m2-ისკან", "ოპტიმა m2"],
+  "METRA PARK": ["METRA PARK", "metra park", "მეტრა პარკი"],
+};
+
+/** All known მისაღები dropdown options with aliases. */
+const MISAGEBI_ALIASES: Record<string, string[]> = {
+  "გამოყოფილი": ["გამოყოფილი", "გამოყოფილია"],
+  "სტუდიო": ["სტუდიო", "სტუდიოს", "სტუდიოს ტიპი", "სტუდიოს ტიპის"],
+};
+
+/** All known სათავსო dropdown options with aliases. */
+const SATAVSO_ALIASES: Record<string, string[]> = {
+  "სარდაფი": ["სარდაფი", "სარდაფის"],
+  "სხვენი": ["სხვენი", "სხვენის"],
+  "საკუჭნაო": ["საკუჭნაო", "საკუჭნაოს"],
+  "გარე სათავსო": ["გარე სათავსო"],
+  "საერთო სათავსო": ["საერთო სათავსო"],
+  "სარდაფი + სხვენი": ["სარდაფი + სხვენი", "სარდაფი+სხვენი", "სარდაფი და სხვენი"],
+};
+
+function resolveAliasVariants(
+  raw: string,
+  aliasMap: Record<string, string[]>
+): string[] | null {
+  const lower = raw.toLowerCase();
+  for (const [option, aliases] of Object.entries(aliasMap)) {
+    for (const alias of aliases) {
+      if (alias.toLowerCase() === lower) {
+        const result = [option, ...aliases.filter((a) => a !== option)];
+        if (!result.includes(raw)) result.push(raw);
+        return [...new Set(result)];
+      }
+    }
+    if (option.toLowerCase() === lower) {
+      const result = [option, ...aliases];
+      if (!result.includes(raw)) result.push(raw);
+      return [...new Set(result)];
+    }
+  }
+  return null;
+}
+
 /** Dropdown option variants — prefer listing form (often genitive: თუხარელის). */
 function projectTypeOptionVariants(value: string): string[] {
   const raw = normFieldLabel(dedupeRepeatedLabelValue(value));
   if (!raw) return [];
+
+  const fromAliases = resolveAliasVariants(raw, PROJECT_TYPE_ALIASES);
+  if (fromAliases) return fromAliases;
+
   const ordered: string[] = [raw];
   if (/ის$/u.test(raw)) ordered.push(raw.replace(/ის$/u, "ი"));
   else if (/ი$/u.test(raw) && !/ის$/u.test(raw)) ordered.push(`${raw}ს`);
   return [...new Set(ordered)];
 }
 
+/** Drop alternate names in parentheses, e.g. "(არაგვის ქუჩა)". */
+function stripStreetParenthetical(raw: string): string {
+  return raw.replace(/\s*\([^)]*\)\s*/gu, " ").replace(/\s+/g, " ").trim();
+}
+
+const STREET_ADDRESS_TYPE_RE =
+  /ქ\.?|ქუჩა|გამზ|შესახვევი|ჩიხი|გამონაკლები/i;
+
+/** Cities for location autocomplete — districts (e.g. ჩუღურეთი) are excluded. */
+const KNOWN_CITIES_FOR_PREFILL = [
+  "თბილისი",
+  "ბათუმი",
+  "ქუთაისი",
+  "რუსთავი",
+  "ზუგდიდი",
+  "თელავი",
+  "გორი",
+  "ფოთი",
+  "ხაშური",
+  "ოზურგეთი",
+  "ქობულეთი",
+  "ბაკურიანი",
+  "მცხეთა",
+  "სიღნაღი",
+  "ბორჯომი",
+  "ზესტაფონი",
+  "თერჯოლა",
+  "სენაკი",
+  "გაგრა",
+  "გუდაური",
+  "ბოლნისი",
+  "ახალციხე",
+  "ონი",
+  "ჭიათურა",
+] as const;
+
+/** Location field: city only (თბილისი), never "თბილისი, ჩუღურეთი". */
+function cityForPrefill(city: string): string {
+  const s = city.replace(/\s+/g, " ").trim();
+  if (!s) return "";
+
+  for (const part of s.split(",").map((p) => p.trim())) {
+    if ((KNOWN_CITIES_FOR_PREFILL as readonly string[]).includes(part)) return part;
+  }
+  for (const c of KNOWN_CITIES_FOR_PREFILL) {
+    if (s.includes(c)) return c;
+  }
+  return s.split(",")[0]?.trim() || s;
+}
+
+const STREET_TYPE_WITH_NUMBER_RE =
+  /(\s+ქ\.?|\s+ქუჩა|\s+გამზ\.?)(\s*#?\s*\d|$)/iu;
+
+/** Microdistrict marker — require slash or dotted „მ. რ.“, not „მრ“ inside words like „ნომრის“. */
+const MICRODISTRICT_MARKER_RE =
+  /მ\/რ|(?:^|\s)მ\.\s*რ\.?(?:\s|$)|კვარტ|კორპ|უბან|დასახლ|მიკრორაიონ/i;
+
+/** Phone / CTA lines under the title (e.g. „558 188 ***ნომრის ნახვა“). */
+function isListingAddressNoise(text: string): boolean {
+  const s = text.replace(/\s+/g, " ").trim();
+  if (!s) return true;
+  if (/ნომრის\s*ნახვა|ნომერის\s*ნახვა|ნომრის\s*გამოჩ/i.test(s)) return true;
+  if (/\*{2,}/.test(s)) return true;
+  if (/^\d[\d\s*\-]{6,}/.test(s)) return true;
+  if (/ნახვა$/i.test(s) && /ნომრ|ნომერ|\*/i.test(s)) return true;
+  return false;
+}
+
+/** Microdistrict / quarter lines under title (no ქუჩა), e.g. „თემქა - XI მ/რ I კვარტ. 10“. */
+function isMicrodistrictOrBlockAddressLine(text: string): boolean {
+  const s = stripStreetParenthetical(text.replace(/\s+/g, " ").trim());
+  if (s.length < 4 || s.length > 120) return false;
+  if (isListingAddressNoise(s)) return false;
+  if (/^(ფართი|ოთახი|საძინებელი|სართული|ID\b)/iu.test(s)) return false;
+  if (/₾|\$|USD|€|მ²|m²|კვ\.\s*ფასი/i.test(s)) return false;
+  if (/^\d{5,}/.test(s)) return false;
+  if (/მეტრო|metro|სადგურ/i.test(s)) return false;
+  if (isStreetLineText(s)) return false;
+  if (MICRODISTRICT_MARKER_RE.test(s)) return true;
+  if (
+    /^[\u10A0-\u10FF][\u10A0-\u10FF\s\-–—.]+\s-\s+.+$/u.test(s) &&
+    /\d/.test(s)
+  ) {
+    return true;
+  }
+  return false;
+}
+
+/** Landmark / POI on the location pin when there is no ქუჩა line (e.g. „ლისის ტბა“). */
+function isPinLandmarkLine(text: string): boolean {
+  const s = text.replace(/\s+/g, " ").trim();
+  if (s.length < 3 || s.length > 90) return false;
+  if (isListingAddressNoise(s)) return false;
+  if (isStreetLineText(s) || isMicrodistrictOrBlockAddressLine(s)) return false;
+  if (
+    /[₾$]|მ²|m²|იპოთეკა|სესხი|ფასი|გადაფორმება|იყიდება|ქირავდება|ოთახიანი|მოითხოვე/i.test(
+      s
+    )
+  ) {
+    return false;
+  }
+  if (/^ID\b/i.test(s)) return false;
+  if (/^\d+(\.\d+)?\s*მ²/i.test(s)) return false;
+  if (/^\d+\s*\/\s*\d+/.test(s)) return false;
+  if (/^(ფართი|ოთახი|საძინებელი|სართული)$/iu.test(s)) return false;
+  if (/^\d+$/.test(s)) return false;
+  if (/მეტრო|metro|სადგურ/i.test(s)) return false;
+  if ((KNOWN_CITIES_FOR_PREFILL as readonly string[]).includes(s)) return false;
+  if (!/[\u10A0-\u10FF]{2,}/u.test(s)) return false;
+  return true;
+}
+
+/** True when text looks like a street / lane line (after stripping parentheticals). */
+function isStreetLineText(text: string): boolean {
+  const s = stripStreetParenthetical(text.replace(/\s+/g, " ").trim());
+  if (s.length < 3 || s.length > 90) return false;
+  if (isListingAddressNoise(s)) return false;
+  if (!STREET_ADDRESS_TYPE_RE.test(s)) return false;
+  if (/მეტრო|metro|სადგურ/i.test(s)) return false;
+  if (
+    /ფართი|საძინებელი|სართული|ოთახი/.test(s) &&
+    /\d/.test(s) &&
+    !/შესახვევი|ჩიხი/i.test(s)
+  ) {
+    return false;
+  }
+  return (
+    STREET_TYPE_WITH_NUMBER_RE.test(s) ||
+    /\s+(ქ\.?|ქუჩა|გამზ\.?)$/iu.test(s) ||
+    /\s+შესახვევი\s+\d+[ა-ჰa-z]?$/iu.test(s) ||
+    /\s+შესახვევი$/iu.test(s) ||
+    /\s+ჩიხი\s+\d+[ა-ჰa-z]?$/iu.test(s) ||
+    /\s+ჩიხი$/iu.test(s)
+  );
+}
+
+/** "მაჭავარიანი ალექსის ქ" → "ალექსი მაჭავარიანის ქ" (registry word order). */
+function streetNameReorderVariants(name: string): string[] {
+  const s = name.replace(/\s+/g, " ").trim();
+  const m = s.match(/^(\S+)\s+(\S+)ის\s+(ქ\.?|ქუჩა|ქ)$/iu);
+  if (!m) return [];
+  const surname = m[1];
+  const genitive = m[2];
+  if (!genitive.endsWith("ის")) return [];
+  const given = `${genitive.slice(0, -2)}ი`;
+  const tail = m[3].replace(/\.$/, "");
+  const suffix = tail === "ქუჩა" || tail === "ქ" ? "ქ" : tail;
+  return [`${given} ${surname}ის ${suffix}`];
+}
+
 /** Split listing address into street name + number (drop district / metro suffix). */
 function parseAddressPartsString(raw: string): { street: string; streetNumber: string } {
-  const text = raw.replace(/\s+/g, " ").trim();
+  const text = stripStreetParenthetical(raw.replace(/\s+/g, " ").trim());
   if (!text) return { street: "", streetNumber: "" };
 
   const withNumber = [
+    /^(.+?)\s+ქუჩა\s*#\s*([\d][\d\s,\-–—]*(?:,\s*[\d][\d\s,\-–—]*)*)$/iu,
     /^(.+?)\s+მ\.\s*ქ\.\s*(\d+[ა-ჰa-z]?)(?:\s+.+)?$/iu,
     /^(.+?)\s+მ\.\s*ქუჩა\s*(\d+[ა-ჰa-z]?)(?:\s+.+)?$/iu,
     /^(.+?)\s+გამზ\.?\s*(\d+[ა-ჰa-z]?)(?:\s+.+)?$/iu,
     /^(.+?)\s+ქ\.\s*(\d+[ა-ჰa-z]?)(?:\s+.+)?$/iu,
     /^(.+?)\s+ქუჩა\s*№?\s*(\d+[ა-ჰa-z]?)(?:\s+.+)?$/iu,
+    /^(.+?)\s+შესახვევი\s+(\d+[ა-ჰa-z]?)$/iu,
+    /^(.+?)\s+ჩიხი\s+(\d+[ა-ჰa-z]?)$/iu,
   ];
   for (const re of withNumber) {
     const m = text.match(re);
     if (m) {
+      let suffix = "ქ";
+      if (re.source.includes("ქუჩა")) suffix = "ქუჩა";
+      else if (re.source.includes("შესახვევი")) suffix = "შესახვევი";
+      else if (re.source.includes("ჩიხი")) suffix = "ჩიხი";
+      else if (re.source.includes("გამზ")) suffix = "გამზ";
       return {
-        street: `${m[1].trim()} ${text.includes("ქუჩა") && re.source.includes("ქუჩა") ? "ქუჩა" : "ქ"}`,
+        street: `${m[1].trim()} ${suffix}`,
         streetNumber: m[2].trim(),
       };
     }
   }
 
-  const streetOnly = text.match(/^(.+?)\s+(ქ\.?|ქუჩა|გამზ\.?)$/iu);
+  const streetOnly = text.match(
+    /^(.+?)\s+(ქ\.?|ქუჩა|გამზ\.?|შესახვევი|ჩიხი)$/iu
+  );
   if (streetOnly) return { street: text, streetNumber: "" };
 
-  return { street: text, streetNumber: "" };
+  if (isStreetLineText(text)) {
+    const laneNum = text.match(/^(.+?)\s+შესახვევი\s+(\d+[ა-ჰa-z]?)$/iu);
+    if (laneNum) {
+      return {
+        street: `${laneNum[1].trim()} შესახვევი`,
+        streetNumber: laneNum[2].trim(),
+      };
+    }
+    return { street: text, streetNumber: "" };
+  }
+
+  return { street: "", streetNumber: "" };
 }
 
 /** Street field: name only (… ქ / ქუჩა), never building number or metro label. */
 function streetNameOnly(raw: string): string {
-  const text = raw.replace(/\s+/g, " ").trim();
-  if (!text) return "";
+  const text = stripStreetParenthetical(raw.replace(/\s+/g, " ").trim());
+  if (!text || isListingAddressNoise(text)) return "";
 
   const { street } = parseAddressPartsString(text);
   let name = street || text;
 
   name = name
+    .replace(/\s+#\s*[\d][\d\s,\-–—]*(?:,\s*[\d][\d\s,\-–—]*)*\s*$/iu, "")
     .replace(/\s+\d+[ა-ჰa-z]?\s*$/iu, "")
     .replace(/\s+№\s*\d+[ა-ჰa-z]?\s*$/iu, "")
     .trim();
 
-  const suffix = name.match(/^(.+?)\s+(ქ\.?|ქუჩა|გამზ\.?)$/iu);
+  const suffix = name.match(
+    /^(.+?)\s+(ქ\.?|ქუჩა|გამზ\.?|შესახვევი|ჩიხი)$/iu
+  );
   if (suffix) {
     const tail = suffix[2].replace(/\.$/, "");
-    return `${suffix[1].trim()} ${tail === "ქ" ? "ქ" : tail}`;
+    const streetSuffix =
+      tail === "ქ" || tail === "ქუჩა" ? "ქ" : tail;
+    return `${suffix[1].trim()} ${streetSuffix}`;
   }
 
   if (/\s+ქუჩა\s*$/iu.test(name)) return name.replace(/\s+ქუჩა\s*$/iu, " ქ");
   if (/\s+ქ\.?\s*$/iu.test(name)) return name.replace(/\s+ქ\.?\s*$/iu, " ქ");
+  if (/\s+შესახვევი\s*$/iu.test(name)) return name;
+  if (/\s+ჩიხი\s*$/iu.test(name)) return name;
   return name;
 }
 
@@ -173,13 +405,32 @@ function resolveStreetForPrefill(
   streetNumber: string
 ): { street: string; streetNumber: string } {
   const combined = street.trim();
-  if (!combined) {
+  if (!combined || isListingAddressNoise(combined)) {
     return { street: "", streetNumber: streetNumber.trim() };
+  }
+
+  if (isMicrodistrictOrBlockAddressLine(combined)) {
+    return { street: combined, streetNumber: "" };
+  }
+  if (isPinLandmarkLine(combined)) {
+    return { street: combined, streetNumber: "" };
   }
 
   const parsed = parseAddressPartsString(combined);
   const num = streetNumber.trim() || parsed.streetNumber;
   const name = streetNameOnly(parsed.street || combined);
+  if (
+    !name ||
+    isListingAddressNoise(name) ||
+    (!isStreetLineText(combined) &&
+      !isMicrodistrictOrBlockAddressLine(combined) &&
+      !isPinLandmarkLine(combined) &&
+      !isStreetLineText(name) &&
+      !isMicrodistrictOrBlockAddressLine(name) &&
+      !isPinLandmarkLine(name))
+  ) {
+    return { street: "", streetNumber: num.trim() };
+  }
 
   return { street: name, streetNumber: num.trim() };
 }
@@ -212,7 +463,18 @@ function streetAutocompleteQueries(street: string): string[] {
   if (!s) return [];
 
   const queries: string[] = [s];
-  const withoutSuffix = s.replace(/\s+(ქ\.?|ქუჩა)\s*$/iu, "").trim();
+  if (isMicrodistrictOrBlockAddressLine(s) || isPinLandmarkLine(s)) {
+    if (isMicrodistrictOrBlockAddressLine(s)) {
+      const beforeDash = s.split(/\s-\s/)[0]?.trim();
+      if (beforeDash && beforeDash !== s) queries.push(beforeDash);
+      const noUnit = s.replace(/\s*(?:კვარტ\.?|კორპ\.?|№)\s*\d+\s*$/iu, "").trim();
+      if (noUnit && noUnit !== s) queries.push(noUnit);
+    }
+    return [...new Set(queries.filter((q) => q.length > 0))];
+  }
+  const withoutSuffix = s
+    .replace(/\s+(ქ\.?|ქუჩა|შესახვევი|ჩიხი)\s*$/iu, "")
+    .trim();
   const spacedAbbr = withoutSuffix.replace(/\.(\S)/gu, ". $1").replace(/\s+/g, " ").trim();
   const tightAbbr = withoutSuffix.replace(/\.\s+/g, ".").trim();
   const noDots = withoutSuffix.replace(/\./g, " ").replace(/\s+/g, " ").trim();
@@ -220,6 +482,12 @@ function streetAutocompleteQueries(street: string): string[] {
   for (const base of [withoutSuffix, spacedAbbr, tightAbbr, noDots]) {
     if (!base) continue;
     queries.push(base, `${base} ქ`, `${base} ქ.`, `${base} ქუჩა`);
+  }
+
+  for (const base of [s, withoutSuffix]) {
+    for (const alt of streetNameReorderVariants(base)) {
+      if (alt) queries.push(alt);
+    }
   }
 
   return [...new Set(queries.filter((q) => q.length > 0))];
@@ -322,10 +590,10 @@ function getNestedSectionTypeValue(
   return "";
 }
 
-/** e.g. „2/12 მ²“ → count before /, area after. */
+/** e.g. „2/12 მ²“ → count before /, area after. Ignores yes/no and bare digits. */
 function parseBalconyCountAndArea(value: string): { count: string; area: string } {
   const v = value.trim();
-  if (!v) return { count: "", area: "" };
+  if (!v || v === "არა" || v === "კი") return { count: "", area: "" };
 
   const slash = v.match(/^(\d+)\s*\/\s*(\d+(?:[.,]\d+)?)\s*(?:მ²|m²)?\s*$/iu);
   if (slash) {
@@ -339,19 +607,128 @@ function parseBalconyCountAndArea(value: string): { count: string; area: string 
     return { count: "", area: normalizeAreaForInput(v) };
   }
 
-  if (/^\d+$/.test(v)) return { count: v, area: "" };
   return { count: "", area: "" };
+}
+
+function balconyEvidenceInMain(main: string): boolean {
+  const m = main.trim();
+  if (!m || m === "არა" || m === "კი") return false;
+  const parsed = parseBalconyCountAndArea(m);
+  if (parsed.area) return true;
+  return Boolean(parsed.count && /\d+\s*\/\s*\d/.test(m));
+}
+
+function balconyMainFieldRaw(listing: MyhomeListing): string {
+  const rd = listing.rawData || {};
+  const fromTile = rd["აივანი"]?.trim() || "";
+  if (balconyEvidenceInMain(fromTile)) return fromTile;
+
+  const fromColumn = listing.balconyArea?.trim() || "";
+  if (!fromColumn) return "";
+  if (/\d+\s*\/\s*\d/.test(fromColumn) || /მ²|m²/i.test(fromColumn)) {
+    return fromColumn;
+  }
+  return "";
+}
+
+function isStrayBalconyCountOnly(
+  count: string,
+  area: string,
+  header: string
+): boolean {
+  const digits = count.replace(/[^\d]/g, "");
+  if (!digits || digits === "0") return true;
+  if (digits !== "1") return false;
+  if (area.trim() && /\d/.test(area)) return false;
+  if (balconyEvidenceInMain(header)) return false;
+  return true;
+}
+
+function listingHasBalconyData(listing: MyhomeListing): boolean {
+  const rd = listing.rawData || {};
+  const header = rd["აივანი"]?.trim() || "";
+  if (header === "არა") return false;
+
+  if (balconyEvidenceInMain(balconyMainFieldRaw(listing))) return true;
+
+  const countDirect = rd["აივნის რაოდენობა"]?.trim() || "";
+  const areaDirect = rd["აივნის ფართი"]?.trim() || "";
+
+  if (areaDirect && /\d/.test(areaDirect)) return true;
+
+  const countDigits = countDirect.replace(/[^\d]/g, "");
+  if (!countDigits || countDigits === "0") return false;
+  if (isStrayBalconyCountOnly(countDirect, areaDirect, header)) return false;
+
+  return true;
+}
+
+function clearInvalidBalconyRawData(
+  rd: Record<string, string>,
+  listing?: MyhomeListing
+): void {
+  const header = rd["აივანი"]?.trim() || "";
+  const count = rd["აივნის რაოდენობა"]?.trim() || "";
+  const area = rd["აივნის ფართი"]?.trim() || "";
+
+  if (header === "არა") {
+    delete rd["აივანი"];
+    delete rd["აივნის რაოდენობა"];
+    delete rd["აივნის ფართი"];
+    if (listing) listing.balconyArea = "";
+    return;
+  }
+
+  if (
+    header === "კი" ||
+    /^(1|0)$/.test(header) ||
+    (header && !balconyEvidenceInMain(header))
+  ) {
+    delete rd["აივანი"];
+  }
+
+  if (isStrayBalconyCountOnly(count, area, header)) {
+    delete rd["აივნის რაოდენობა"];
+  }
+
+  const probe: MyhomeListing = {
+    ...(listing || ({} as MyhomeListing)),
+    rawData: rd,
+  };
+  if (!listingHasBalconyData(probe)) {
+    delete rd["აივნის რაოდენობა"];
+    delete rd["აივნის ფართი"];
+    if (listing) listing.balconyArea = "";
+  }
+}
+
+function sanitizeBalconyListing(listing: MyhomeListing): void {
+  if (!listing.rawData) listing.rawData = {};
+  clearInvalidBalconyRawData(listing.rawData, listing);
 }
 
 function applyBalconyParsedFields(listing: MyhomeListing): void {
   const rd = listing.rawData || {};
-  const countDirect = rd["აივნის რაოდენობა"]?.trim();
-  const areaDirect = rd["აივნის ფართი"]?.trim();
-  const fromMain = rd["აივანი"]?.trim() || listing.balconyArea?.trim() || "";
+  listing.rawData = rd;
+
+  sanitizeBalconyListing(listing);
+
+  if (!listingHasBalconyData(listing)) {
+    listing.balconyArea = "";
+    return;
+  }
+
+  const fromMain = balconyMainFieldRaw(listing);
   const { count, area } = parseBalconyCountAndArea(fromMain);
 
-  if (countDirect) rd["აივნის რაოდენობა"] = countDirect.replace(/[^\d]/g, "") || countDirect;
-  else if (count) rd["აივნის რაოდენობა"] = count;
+  const countDirect = rd["აივნის რაოდენობა"]?.trim();
+  const areaDirect = rd["აივნის ფართი"]?.trim();
+
+  if (countDirect) {
+    rd["აივნის რაოდენობა"] = countDirect.replace(/[^\d]/g, "") || countDirect;
+  } else if (count) {
+    rd["აივნის რაოდენობა"] = count;
+  }
 
   if (areaDirect) {
     rd["აივნის ფართი"] = normalizeAreaForInput(areaDirect);
@@ -360,23 +737,33 @@ function applyBalconyParsedFields(listing: MyhomeListing): void {
     rd["აივნის ფართი"] = area;
     listing.balconyArea = area;
   }
+
+  clearInvalidBalconyRawData(rd, listing);
 }
 
 function getBalconyCountValue(listing: MyhomeListing): string {
+  sanitizeBalconyListing(listing);
+  if (!listingHasBalconyData(listing)) return "";
+
   const direct = listing.rawData?.["აივნის რაოდენობა"]?.trim();
   if (direct) return direct.replace(/[^\d]/g, "") || direct;
-  const { count } = parseBalconyCountAndArea(
-    listing.rawData?.["აივანი"]?.trim() || listing.balconyArea || ""
-  );
+  const { count } = parseBalconyCountAndArea(balconyMainFieldRaw(listing));
   return count;
 }
 
 function getBalconyAreaValue(listing: MyhomeListing): string {
+  sanitizeBalconyListing(listing);
+  if (!listingHasBalconyData(listing)) return "";
+
   const direct = listing.rawData?.["აივნის ფართი"]?.trim();
   if (direct) return normalizeAreaForInput(direct);
-  const { area } = parseBalconyCountAndArea(listing.rawData?.["აივანი"]?.trim() || "");
+  const { area } = parseBalconyCountAndArea(balconyMainFieldRaw(listing));
   if (area) return area;
-  return listing.balconyArea ? normalizeAreaForInput(listing.balconyArea) : "";
+  const col = listing.balconyArea?.trim() || "";
+  if (col && listingHasBalconyData(listing)) {
+    return normalizeAreaForInput(col);
+  }
+  return "";
 }
 
 /** „2/5“ → floor 2, total 5; single „3“ → both 3 (myhome often omits total floors). */
@@ -428,13 +815,19 @@ async function prefillFloorFields(
   if (totalFloors) await fillLabeledInput(page, "სართულები სულ", totalFloors);
 }
 
+/** Create form: „აივანი“ = section; „აივნის რაოდენობა“ / „ფართი“ = inputs. Form defaults count to 1 — clear when not parsed. */
 async function prefillBalconyFields(
   page: Page,
   listing: MyhomeListing
 ): Promise<void> {
+  sanitizeBalconyListing(listing);
   const count = getBalconyCountValue(listing);
   const area = getBalconyAreaValue(listing);
-  if (!count && !area) return;
+
+  if (!count && !area) {
+    await clearBalconyFormFields(page);
+    return;
+  }
 
   await scrollToFormField(page, "აივანი");
   await prefillPause(page, 120);
@@ -446,6 +839,61 @@ async function prefillBalconyFields(
   if (area) {
     await fillInputInNestedSection(page, "აივანი", "ფართი", area);
   }
+}
+
+/** Reset myhome default balcony count (often „1“) when listing has no balcony data. */
+async function clearBalconyFormFields(page: Page): Promise<void> {
+  await scrollToFormField(page, "აივანი").catch(() => {});
+  await page.evaluate(() => {
+    const inputSetter = Object.getOwnPropertyDescriptor(
+      window.HTMLInputElement.prototype,
+      "value"
+    )?.set;
+    if (!inputSetter) return;
+
+    function norm(s: string) {
+      return (s || "").replace(/\s*\*\s*$/, "").trim().replace(/\s+/g, " ");
+    }
+
+    function clearInput(input: HTMLInputElement) {
+      inputSetter!.call(input, "");
+      input.dispatchEvent(
+        new InputEvent("input", {
+          bubbles: true,
+          cancelable: true,
+          inputType: "deleteContentBackward",
+        })
+      );
+      input.dispatchEvent(new Event("change", { bubbles: true }));
+    }
+
+    function inputIsInBalconySection(input: Element): boolean {
+      if (input.getAttribute("data-prefill-main-area") === "1") return false;
+      let node: Element | null = input.parentElement;
+      while (node) {
+        if (/^H[234]$/.test(node.tagName)) {
+          const t = norm(node.textContent || "");
+          if (t === "აივანი") return true;
+        }
+        node = node.parentElement;
+      }
+      return false;
+    }
+
+    for (const lbl of document.querySelectorAll("label")) {
+      for (const span of lbl.querySelectorAll("span")) {
+        const t = norm(span.textContent || "");
+        if (t !== "აივნის რაოდენობა" && t !== "ფართი") continue;
+
+        const forAttr = lbl.getAttribute("for");
+        const input = forAttr
+          ? (document.getElementById(forAttr) as HTMLInputElement | null)
+          : (lbl.querySelector("input") as HTMLInputElement | null);
+        if (input && inputIsInBalconySection(input)) clearInput(input);
+      }
+    }
+  });
+  await prefillPause(page, 40);
 }
 
 /** e.g. „8 მ²“, „1/12 მ²“ → area (after / when slash present). */
@@ -975,60 +1423,6 @@ async function fillInputInNestedSection(
   return false;
 }
 
-async function markLukSelectInSection(
-  page: Page,
-  sectionHeading: string
-): Promise<boolean> {
-  return page.evaluate((heading) => {
-    document
-      .querySelectorAll("[data-prefill-luk-field],[data-prefill-luk-trigger]")
-      .forEach((el) => {
-        el.removeAttribute("data-prefill-luk-field");
-        el.removeAttribute("data-prefill-luk-trigger");
-        if (el.getAttribute("data-prefill-field-label") === heading) {
-          el.removeAttribute("data-prefill-field-label");
-        }
-      });
-
-    function norm(s: string) {
-      return (s || "").replace(/\s*\*\s*$/, "").trim().replace(/\s+/g, " ");
-    }
-    function headingMatches(t: string) {
-      const n = norm(t);
-      if (heading === "სათავსო") return n === "სათავსო";
-      return n === heading;
-    }
-
-    for (const el of document.querySelectorAll("h2,h3,h4,label,span,p,motion.div,div")) {
-      if (!headingMatches(el.textContent || "")) continue;
-      if (
-        el.tagName !== "H2" &&
-        el.tagName !== "H3" &&
-        el.tagName !== "H4" &&
-        el.children.length > 4
-      ) {
-        continue;
-      }
-
-      let node: Element | null = el;
-      for (let depth = 0; depth < 20 && node; depth++) {
-        const selects = node.querySelectorAll(
-          ".luk-custom-select,[class*='luk-custom-select'],[role='combobox']"
-        );
-        if (selects.length > 0) {
-          const sel = selects[0];
-          sel.setAttribute("data-prefill-luk-field", heading);
-          sel.setAttribute("data-prefill-luk-trigger", "1");
-          sel.setAttribute("data-prefill-field-label", heading);
-          return true;
-        }
-        node = node.parentElement;
-      }
-    }
-    return false;
-  }, sectionHeading);
-}
-
 function nestedSectionHeadingPattern(sectionHeading: string): RegExp {
   return new RegExp(`^${escapeRegExp(sectionHeading)}\\s*\\*?$`, "u");
 }
@@ -1202,6 +1596,7 @@ async function prefillNestedSectionTypeDropdown(
   await prefillPause(page, 120);
 
   if (await lukFieldShowsValue(page, sectionHeading, variants)) return true;
+  if (await lukSelectSelectionApplied(page, sectionHeading, variants)) return true;
 
   await closeOpenDropdowns(page);
 
@@ -1212,10 +1607,7 @@ async function prefillNestedSectionTypeDropdown(
   );
 
   if (!(await select.isVisible({ timeout: 2500 }).catch(() => false))) {
-    return (
-      (await prefillLukDropdownField(page, sectionHeading, rawValue)) ||
-      (await prefillLukDropdownField(page, dropdownHint, rawValue))
-    );
+    return prefillLukDropdownField(page, sectionHeading, rawValue);
   }
 
   await select.evaluate(
@@ -1236,17 +1628,13 @@ async function prefillNestedSectionTypeDropdown(
   const menuBottomY = menuTopY + 480;
 
   if (await pickLukMenuVariants(page, sectionHeading, variants)) return true;
+
   if (await clickLukOptionVariants(page, sectionHeading, variants, menuTopY, menuBottomY)) {
     if (await lukFieldShowsValue(page, sectionHeading, variants)) return true;
     if (await lukSelectSelectionApplied(page, sectionHeading, variants)) return true;
   }
 
-  if (
-    (await prefillLukDropdownField(page, sectionHeading, rawValue)) ||
-    (await prefillLukDropdownField(page, dropdownHint, rawValue))
-  ) {
-    return true;
-  }
+  if (await scrollMenuAndClickOption(page, sectionHeading, variants)) return true;
 
   await closeOpenDropdowns(page);
   return false;
@@ -1329,7 +1717,10 @@ async function lukFieldShowsValue(
         if (!t || /აირჩიეთ/i.test(t)) return false;
         return targets.some((target) => {
           const o = norm(target);
-          return t === o || t === o.replace(/ის$/u, "ი") || t === `${o}ს`;
+          if (t === o || t === o.replace(/ის$/u, "ი") || t === `${o}ს`) return true;
+          const tN = t.replace(/\s*\+\s*/g, "+").toLowerCase();
+          const oN = o.replace(/\s*\+\s*/g, "+").toLowerCase();
+          return tN === oN;
         });
       }
 
@@ -1414,7 +1805,11 @@ function optionTextMatchesVariant(text: string, variant: string): boolean {
   const t = (text || "").replace(/\s+/g, " ").trim();
   const o = variant.replace(/\s+/g, " ").trim();
   if (!t || !o) return false;
-  return t === o || t === o.replace(/ის$/u, "ი") || t === `${o}ს`;
+  if (t === o) return true;
+  if (t === o.replace(/ის$/u, "ი") || t === `${o}ს`) return true;
+  const tNorm = t.replace(/\s*\+\s*/g, "+").toLowerCase();
+  const oNorm = o.replace(/\s*\+\s*/g, "+").toLowerCase();
+  return tNorm === oNorm;
 }
 
 async function clickLukMenuOption(page: Page, variant: string): Promise<boolean> {
@@ -1430,7 +1825,10 @@ async function clickLukMenuOption(page: Page, variant: string): Promise<boolean>
     }
     function matches(t: string) {
       const o = norm(target);
-      return t === o || t === o.replace(/ის$/u, "ი") || t === `${o}ს`;
+      if (t === o || t === o.replace(/ის$/u, "ი") || t === `${o}ს`) return true;
+      const tN = t.replace(/\s*\+\s*/g, "+").toLowerCase();
+      const oN = o.replace(/\s*\+\s*/g, "+").toLowerCase();
+      return tN === oN;
     }
 
     const candidates: { el: Element; depth: number; len: number }[] = [];
@@ -1490,9 +1888,12 @@ async function prefillLukDropdownField(
       ? projectTypeOptionVariants(value)
       : dropdownOptionVariants(value, sectionLabel);
 
+  if (await lukFieldShowsValue(page, sectionLabel, variants)) return true;
+  if (await lukSelectSelectionApplied(page, sectionLabel, variants)) return true;
+
   await scrollToFormField(page, sectionLabel);
 
-  for (let attempt = 0; attempt < 3; attempt++) {
+  for (let attempt = 0; attempt < 2; attempt++) {
     await closeOpenDropdowns(page);
 
     const marked = await markLukFieldTrigger(page, sectionLabel);
@@ -1569,23 +1970,22 @@ async function prefillLukDropdownField(
   return false;
 }
 
-function projectTypeSearchPrefix(value: string): string {
-  const v = value.trim();
-  if (v.length <= 6) return v;
-  return v.slice(0, 8);
-}
-
-async function projectTypeSelectionApplied(
-  page: Page,
-  variants: string[]
-): Promise<boolean> {
-  return lukSelectSelectionApplied(page, "პროექტის ტიპი", variants);
-}
-
 function dropdownOptionVariants(value: string, sectionLabel: string): string[] {
   if (sectionLabel === "პროექტის ტიპი") return projectTypeOptionVariants(value);
   const raw = normFieldLabel(dedupeRepeatedLabelValue(value));
   if (!raw) return [];
+
+  if (sectionLabel === "მისაღები" || sectionLabel === "მისაღების ტიპი") {
+    const fromAliases = resolveAliasVariants(raw, MISAGEBI_ALIASES);
+    if (fromAliases) return fromAliases;
+  }
+  if (
+    sectionLabel === "სათავსო" ||
+    sectionLabel === "სათავსოს ტიპი"
+  ) {
+    const fromAliases = resolveAliasVariants(raw, SATAVSO_ALIASES);
+    if (fromAliases) return fromAliases;
+  }
 
   const ordered: string[] = [raw];
   if (/ის$/u.test(raw)) ordered.push(raw.replace(/ის$/u, "ი"));
@@ -1608,6 +2008,7 @@ function dropdownOptionVariants(value: string, sectionLabel: string): string[] {
     if (/სტუდიო/i.test(raw)) ordered.push("სტუდიო");
     if (/გამოყოფილ/i.test(raw)) ordered.push("გამოყოფილი");
     if (/ერთიან/i.test(raw)) ordered.push("ერთიანი", "ერთ - ოთახიანი");
+    if (/სარდაფი?\s*[\+და]+\s*სხვენი?/i.test(raw)) ordered.push("სარდაფი + სხვენი");
   }
 
   return [...new Set(ordered)];
@@ -1731,10 +2132,6 @@ async function markLukSelectRoot(page: Page, sectionLabel: string): Promise<bool
   }, sectionLabel);
 }
 
-async function markProjectTypeSelectRoot(page: Page): Promise<boolean> {
-  return markLukSelectRoot(page, "პროექტის ტიპი");
-}
-
 async function markLukSelectOption(page: Page, variants: string[]): Promise<boolean> {
   return page.evaluate((targets) => {
     document.querySelectorAll("[data-prefill-luk-option]").forEach((el) => {
@@ -1748,7 +2145,10 @@ async function markLukSelectOption(page: Page, variants: string[]): Promise<bool
       if (!t || t.length > 60) return false;
       return targets.some((target) => {
         const o = norm(target);
-        return t === o || t === o.replace(/ის$/u, "ი") || t === `${o}ს`;
+        if (t === o || t === o.replace(/ის$/u, "ი") || t === `${o}ს`) return true;
+        const tN = t.replace(/\s*\+\s*/g, "+").toLowerCase();
+        const oN = o.replace(/\s*\+\s*/g, "+").toLowerCase();
+        return tN === oN;
       });
     }
 
@@ -1800,10 +2200,6 @@ async function markLukSelectOption(page: Page, variants: string[]): Promise<bool
   }, variants);
 }
 
-async function markProjectTypeOption(page: Page, variants: string[]): Promise<boolean> {
-  return markLukSelectOption(page, variants);
-}
-
 async function clickMarkedLukOption(page: Page): Promise<boolean> {
   const opt = page.locator("[data-prefill-luk-option='1']").first();
   if (!(await opt.isVisible({ timeout: 1500 }).catch(() => false))) return false;
@@ -1818,10 +2214,6 @@ async function clickMarkedLukOption(page: Page): Promise<boolean> {
   }
   await opt.dispatchEvent("mouseup");
   return true;
-}
-
-async function clickMarkedProjectTypeOption(page: Page): Promise<boolean> {
-  return clickMarkedLukOption(page);
 }
 
 async function waitForLukSelectOptions(page: Page, minCount = 1): Promise<void> {
@@ -1854,95 +2246,6 @@ async function waitForLukSelectOptions(page: Page, minCount = 1): Promise<void> 
       { timeout: 10000 }
     )
     .catch(() => {});
-}
-
-async function waitForProjectTypeOptions(page: Page, minCount = 1): Promise<void> {
-  return waitForLukSelectOptions(page, minCount);
-}
-
-async function typeProjectTypeFilter(page: Page, text: string): Promise<void> {
-  const candidates = [
-    page.locator("[data-prefill-project-type-root='1'] input"),
-    page.locator("[class*='luk-custom-select'] input").filter({ visible: true }),
-    page.locator("[class*='menu'] input").filter({ visible: true }),
-    page.locator("input:focus"),
-  ];
-
-  for (const input of candidates) {
-    if (!(await input.isVisible({ timeout: 500 }).catch(() => false))) continue;
-    await input.click({ force: true });
-    await input.press("Control+a").catch(() => input.press("Meta+a"));
-    await input.pressSequentially(text, { delay: 50 });
-    return;
-  }
-
-  await page.keyboard.type(text, { delay: 50 });
-}
-
-async function selectProjectTypeOption(page: Page, variant: string): Promise<boolean> {
-  for (const v of projectTypeOptionVariants(variant)) {
-    const picked = await page.evaluate((optionText) => {
-      function norm(s: string) {
-        return (s || "").replace(/\s+/g, " ").trim();
-      }
-      const target = norm(optionText);
-      for (const el of document.querySelectorAll(
-        "[role='option'], [class*='option'], [class*='menu-list'] > div, li"
-      )) {
-        const t = norm(el.textContent || "");
-        if (t !== target && t !== target.replace(/ის$/u, "ი") && t !== `${target}ს`) {
-          continue;
-        }
-        const clickEl =
-          el.closest("[role='option']") ||
-          el.closest('[class*="option"]') ||
-          el;
-        (clickEl as HTMLElement).dispatchEvent(
-          new MouseEvent("mousedown", { bubbles: true })
-        );
-        (clickEl as HTMLElement).click();
-        return true;
-      }
-      return false;
-    }, v);
-
-    if (picked) return true;
-
-    const exact = page
-      .locator("[role='option'], [class*='option'], [class*='menu-list'] > div")
-      .filter({ hasText: new RegExp(`^${escapeRegExp(v)}$`, "u") })
-      .filter({ visible: true })
-      .first();
-    if (await exact.isVisible({ timeout: 1500 }).catch(() => false)) {
-      await exact.dispatchEvent("mousedown");
-      await exact.click({ timeout: CHIP_CLICK_TIMEOUT_MS, force: true });
-      return true;
-    }
-  }
-  return false;
-}
-
-async function openProjectTypeDropdown(page: Page): Promise<boolean> {
-  if (!(await markProjectTypeSelectRoot(page))) return false;
-
-  const selectRoot = page.locator("[data-prefill-project-type-root='1']").first();
-  await selectRoot.scrollIntoViewIfNeeded().catch(() => {});
-
-  const openers = [
-    selectRoot.locator("[class*='indicator']").first(),
-    selectRoot.locator("[class*='control']").first(),
-    selectRoot.locator("[class*='value-container']").first(),
-    selectRoot,
-  ];
-
-  for (const opener of openers) {
-    if (await opener.isVisible({ timeout: 400 }).catch(() => false)) {
-      await opener.click({ timeout: CHIP_CLICK_TIMEOUT_MS, force: true });
-      await prefillPause(page, 350);
-      return true;
-    }
-  }
-  return false;
 }
 
 /** Click visible menu row (full list loads on open — no filter typing). */
@@ -1995,14 +2298,6 @@ async function clickVisibleLukMenuItem(
   }
 
   return false;
-}
-
-async function clickVisibleProjectTypeMenuItem(
-  page: Page,
-  variant: string,
-  menuTopY: number
-): Promise<boolean> {
-  return clickVisibleLukMenuItem(page, projectTypeOptionVariants(variant), menuTopY);
 }
 
 /** Luk select (პროექტის ტიპი, მისაღები, სათავსო, …) — open list, click exact option. */
@@ -2064,7 +2359,61 @@ async function prefillLukSelectByLabel(
     }
   }
 
+  if (await scrollMenuAndClickOption(page, sectionLabel, variants)) return true;
+
   await closeOpenDropdowns(page);
+  return false;
+}
+
+/** Scroll the dropdown menu container down in steps to find and click off-screen options. */
+async function scrollMenuAndClickOption(
+  page: Page,
+  sectionLabel: string,
+  variants: string[]
+): Promise<boolean> {
+  const menuLocator = page
+    .locator(
+      "[class*='luk-custom-select__menu-list'], [class*='menu-list'], [role='listbox'], [class*='MenuList']"
+    )
+    .last();
+  if (!(await menuLocator.isVisible({ timeout: 600 }).catch(() => false))) return false;
+
+  const scrollInfo = await menuLocator.evaluate((el) => ({
+    scrollHeight: el.scrollHeight,
+    clientHeight: el.clientHeight,
+  })).catch(() => null);
+  if (!scrollInfo || scrollInfo.scrollHeight <= scrollInfo.clientHeight) return false;
+
+  const stepSize = Math.max(scrollInfo.clientHeight - 20, 80);
+  const maxScrolls = Math.ceil(scrollInfo.scrollHeight / stepSize) + 1;
+
+  for (let step = 1; step <= maxScrolls; step++) {
+    await menuLocator.evaluate(
+      (el, offset) => el.scrollTo({ top: offset, behavior: "instant" }),
+      step * stepSize
+    ).catch(() => {});
+    await prefillPause(page, 150);
+
+    for (const variant of variants) {
+      if (await markLukSelectOption(page, [variant])) {
+        await clickMarkedLukOption(page);
+        await prefillPause(page, 300);
+        if (await lukSelectSelectionApplied(page, sectionLabel, variants)) return true;
+      }
+    }
+
+    for (const variant of variants) {
+      const row = menuLocator.getByText(variant, { exact: true }).first();
+      if (await row.isVisible({ timeout: 400 }).catch(() => false)) {
+        await row.scrollIntoViewIfNeeded().catch(() => {});
+        await row.dispatchEvent("mousedown");
+        await row.click({ force: true, timeout: CHIP_CLICK_TIMEOUT_MS });
+        await prefillPause(page, 300);
+        if (await lukSelectSelectionApplied(page, sectionLabel, variants)) return true;
+      }
+    }
+  }
+
   return false;
 }
 
@@ -2116,6 +2465,32 @@ async function prefillPreferenceField(
   return prefillLukDropdownField(page, sectionLabel, value, placeholder);
 }
 
+/** True only for chips/controls inside the balcony block, not a shared form ancestor. */
+async function locatorIsExclusiveBalconyScope(loc: Locator): Promise<boolean> {
+  return loc
+    .evaluate((el) => {
+      function norm(s: string) {
+        return (s || "").replace(/\s*\*\s*$/, "").trim().replace(/\s+/g, " ");
+      }
+      let node: Element | null = el;
+      for (let depth = 0; depth < 16 && node; depth++) {
+        let hasBalconyCount = false;
+        let hasOtherCountSection = false;
+        for (const marker of node.querySelectorAll("label,span,p")) {
+          const t = norm(marker.textContent || "");
+          if (/^აივნის\s*რაოდენობა$/iu.test(t)) hasBalconyCount = true;
+          if (/^საძინებელი/i.test(t)) hasOtherCountSection = true;
+          if (/^ოთახ/i.test(t)) hasOtherCountSection = true;
+          if (t.includes("სვ") && t.includes("წერტილი")) hasOtherCountSection = true;
+        }
+        if (hasBalconyCount && !hasOtherCountSection) return true;
+        node = node.parentElement;
+      }
+      return false;
+    })
+    .catch(() => false);
+}
+
 /**
  * Playwright click on count chips (ოთახი, საძინებელი) — reliable React state vs evaluate .click().
  */
@@ -2146,6 +2521,7 @@ async function prefillCountChipPlaywright(
         for (let c = 0; c < chipCount; c++) {
           const chipEl = chips.nth(c);
           if (!(await chipEl.isVisible({ timeout: 300 }).catch(() => false))) continue;
+          if (await locatorIsExclusiveBalconyScope(chipEl)) continue;
           await chipEl.click({ timeout: CHIP_CLICK_TIMEOUT_MS, force: true });
           await prefillPause(page, 40);
           return true;
@@ -2161,15 +2537,6 @@ async function prefillCountChipPlaywright(
 }
 
 /** Open პროექტის ტიპი luk-select and pick option (e.g. თუხარელის). */
-async function selectProjectTypePlaywright(
-  page: Page,
-  rawValue: string
-): Promise<boolean> {
-  const value = dedupeRepeatedLabelValue(rawValue.trim());
-  if (!value) return false;
-  return prefillProjectTypeField(page, value);
-}
-
 // Click a chip inside a labeled section (სტატუსი, მდგომარეობა). Playwright click updates React state.
 async function clickChipInSection(
   page: Page,
@@ -2305,120 +2672,6 @@ async function clickChipInSectionLabels(
 }
 
 /** Click a chip by label inside a parent section (e.g. სხვა პარამეტრები → ინტერნეტი). */
-async function clickChipInNamedSection(
-  page: Page,
-  parentSectionLabel: string,
-  chipLabel: string
-): Promise<void> {
-  const value = chipLabel.trim();
-  if (!value) return;
-
-  const marked = await page.evaluate(
-    ({ parentSectionLabel, chipLabel }) => {
-      function norm(s: string) {
-        return s.replace(/\s*\*\s*$/, "").trim();
-      }
-
-      function isSelected(el: Element): boolean {
-        const chip =
-          el.closest("button") ||
-          el.closest("[role='button']") ||
-          el.closest("label") ||
-          el;
-        if (chip.getAttribute("aria-pressed") === "true") return true;
-        if (chip.getAttribute("aria-checked") === "true") return true;
-        const cls = chip.className?.toString() || "";
-        return /active|selected|checked|bg-primary|border-primary|ring/i.test(cls);
-      }
-
-      function sectionMatches(heading: string, target: string): boolean {
-        const h = norm(heading);
-        const t = norm(target);
-        if (!h || !t) return false;
-        if (h === t) return true;
-        if (h.startsWith(t) || t.startsWith(h)) return true;
-        if (h.includes(t) || t.includes(h)) return true;
-        return false;
-      }
-
-      function chipTextMatches(text: string, target: string): boolean {
-        const t = norm(text);
-        const c = norm(target);
-        if (t === c) return true;
-        return t.includes(c) && t.length <= c.length + 24;
-      }
-
-      let sectionHost: Element | null = null;
-      for (const el of document.querySelectorAll("label, span, p, div, h2, h3, h4")) {
-        const t = norm(el.textContent || "");
-        if (!sectionMatches(t, parentSectionLabel)) continue;
-        if (t.length > parentSectionLabel.length + 50) continue;
-
-        let node: Element | null = el;
-        for (let depth = 0; depth < 10 && node; depth++) {
-          const chipCount = node.querySelectorAll(
-            "button, [role='button'], label[class*='rounded'], div[class*='rounded']"
-          ).length;
-          if (chipCount >= 2) {
-            sectionHost = node;
-            break;
-          }
-          node = node.parentElement;
-        }
-        if (sectionHost) break;
-      }
-      if (!sectionHost) return false;
-
-      document.querySelectorAll("[data-prefill-target]").forEach((el) => {
-        el.removeAttribute("data-prefill-target");
-      });
-
-      for (const el of sectionHost.querySelectorAll(
-        "button, [role='button'], label[class*='rounded'], div[class*='rounded'], span, div"
-      )) {
-        if (el.children.length > 5) continue;
-        if (!chipTextMatches(el.textContent || "", chipLabel)) continue;
-        if (isSelected(el)) return "skip";
-        const chip =
-          el.closest("button") ||
-          el.closest("[role='button']") ||
-          el.closest("label[class*='rounded']") ||
-          el.closest("[class*='cursor-pointer']") ||
-          el;
-        chip.setAttribute("data-prefill-target", "1");
-        return true;
-      }
-      return false;
-    },
-    { parentSectionLabel, chipLabel: value }
-  );
-
-  if (marked === "skip") return;
-  if (marked) {
-    const clicked = await page.evaluate(() => {
-      const el = document.querySelector(
-        "[data-prefill-target='1']"
-      ) as HTMLElement | null;
-      if (!el) return false;
-      el.click();
-      el.removeAttribute("data-prefill-target");
-      return true;
-    });
-    if (!clicked) {
-      await page
-        .locator("[data-prefill-target='1']")
-        .first()
-        .click({ timeout: CHIP_CLICK_TIMEOUT_MS })
-        .catch(() => {});
-    }
-    await page.evaluate(() => {
-      document.querySelectorAll("[data-prefill-target]").forEach((el) => {
-        el.removeAttribute("data-prefill-target");
-      });
-    });
-  }
-}
-
 type ChipClickTask = { section: string; chip: string };
 
 /** Known chip-row fields on create form (label row → pick one chip). */
@@ -2452,10 +2705,6 @@ function buildEarlyPropertyChipTasks(listing: MyhomeListing): ChipClickTask[] {
     tasks.push({ section: "გარიგების ტიპი", chip: listing.dealType });
   }
   return tasks;
-}
-
-function buildEarlyFormChipTasks(listing: MyhomeListing): ChipClickTask[] {
-  return buildEarlyPropertyChipTasks(listing);
 }
 
 function preferenceChipMatches(chipText: string, target: string): boolean {
@@ -2577,6 +2826,163 @@ function getBedroomsValue(listing: MyhomeListing): string {
   ).trim();
 }
 
+function getAreaValue(listing: MyhomeListing): string {
+  const raw =
+    listing.area?.trim() || listing.rawData?.["ფართი"]?.trim() || "";
+  return raw ? normalizeAreaForInput(raw) : "";
+}
+
+async function inputUnderFeatureSection(loc: Locator): Promise<boolean> {
+  return loc.evaluate((el) => {
+    const BLOCK = /^(აივანი|ლოჯია|ვერანდა|ეზო|მისაღები|სათავსო|ავეჯი)/iu;
+    let node = el.parentElement;
+    while (node) {
+      if (/^H[234]$/.test(node.tagName)) {
+        const t = (node.textContent || "").replace(/\s*\*\s*$/, "").trim();
+        if (BLOCK.test(t) || /^აივნის\s*რაოდენობა$/iu.test(t)) return true;
+      }
+      node = node.parentElement;
+    }
+    return false;
+  });
+}
+
+async function fillMainAreaInputPlaywright(
+  page: Page,
+  area: string
+): Promise<boolean> {
+  await page.waitForSelector("#total_price", { timeout: 12000 }).catch(() => {});
+
+  const marked = await page.evaluate(() => {
+    document.querySelectorAll("[data-prefill-main-area]").forEach((el) => {
+      el.removeAttribute("data-prefill-main-area");
+    });
+    const BLOCK = /^(აივანი|ლოჯია|ვერანდა|ეზო|მისაღები|სათავსო|ავეჯი)/iu;
+    function norm(s: string) {
+      return (s || "").replace(/\s*\*\s*$/, "").trim().replace(/\s+/g, " ");
+    }
+    function underFeature(el: Element): boolean {
+      let node: Element | null = el.parentElement;
+      while (node) {
+        if (/^H[234]$/.test(node.tagName)) {
+          const t = norm(node.textContent || "");
+          if (BLOCK.test(t) || /^აივნის\s*რაოდენობა$/iu.test(t)) return true;
+        }
+        node = node.parentElement;
+      }
+      return false;
+    }
+    function labelMatchesArea(lbl: Element): boolean {
+      const t = norm(lbl.textContent || "");
+      if (t === "ფართი" || t.startsWith("ფართი ")) return true;
+      for (const span of lbl.querySelectorAll("span")) {
+        const st = norm(span.textContent || "");
+        if (st === "ფართი" || st.startsWith("ფართი ")) return true;
+      }
+      return false;
+    }
+    function markFromLabel(lbl: Element): boolean {
+      if (!labelMatchesArea(lbl) || underFeature(lbl)) return false;
+      const forAttr = lbl.getAttribute("for");
+      const input = forAttr
+        ? document.getElementById(forAttr)
+        : lbl.querySelector("input");
+      if (!input || underFeature(input)) return false;
+      input.setAttribute("data-prefill-main-area", "1");
+      return true;
+    }
+
+    const price = document.getElementById("total_price");
+    if (price) {
+      let block: Element | null = price.parentElement;
+      for (let depth = 0; depth < 10 && block; depth++) {
+        for (const lbl of block.querySelectorAll("label")) {
+          if (markFromLabel(lbl)) return true;
+        }
+        block = block.parentElement;
+      }
+    }
+    for (const lbl of document.querySelectorAll("label")) {
+      if (markFromLabel(lbl)) return true;
+    }
+    return false;
+  });
+
+  if (marked) {
+    const markedInput = page.locator("[data-prefill-main-area='1']").first();
+    if (await markedInput.isVisible({ timeout: 2000 }).catch(() => false)) {
+      await markedInput.scrollIntoViewIfNeeded().catch(() => {});
+      await markedInput.click({ timeout: CHIP_CLICK_TIMEOUT_MS });
+      await markedInput.fill(area);
+      await prefillPause(page, 80);
+      const current = (await markedInput.inputValue().catch(() => ""))
+        .replace(",", ".")
+        .trim();
+      if (current === area) {
+        await markedInput.evaluate((el) => {
+          el.setAttribute("data-prefill-main-area", "1");
+        });
+        return true;
+      }
+    }
+  }
+
+  const candidates: Locator[] = [
+    page
+      .locator("label")
+      .filter({ has: page.getByText(/^ფართი\s*\*?$/u) })
+      .locator("input")
+      .first(),
+    page.getByLabel(/^ფართი\s*\*?$/u).first(),
+  ];
+
+  for (const candidate of candidates) {
+    if ((await candidate.count()) === 0) continue;
+    const input = candidate.first();
+    if (!(await input.isVisible({ timeout: 1000 }).catch(() => false))) continue;
+    if (await inputUnderFeatureSection(input)) continue;
+
+    await input.scrollIntoViewIfNeeded().catch(() => {});
+    await input.click({ timeout: CHIP_CLICK_TIMEOUT_MS });
+    await input.fill("");
+    await input.fill(area);
+    await prefillPause(page, 80);
+
+    const current = (await input.inputValue().catch(() => "")).replace(",", ".").trim();
+    if (current === area) {
+      await input.evaluate((el) => {
+        el.setAttribute("data-prefill-main-area", "1");
+      });
+      return true;
+    }
+
+    await input.evaluate(
+      (el, val) => {
+        const setter = Object.getOwnPropertyDescriptor(
+          window.HTMLInputElement.prototype,
+          "value"
+        )?.set;
+        if (!setter) return;
+        setter.call(el, val);
+        el.dispatchEvent(
+          new InputEvent("input", { bubbles: true, cancelable: true, inputType: "insertText", data: val })
+        );
+        el.dispatchEvent(new Event("change", { bubbles: true }));
+      },
+      area
+    );
+    const after = (await input.inputValue().catch(() => "")).replace(",", ".").trim();
+    if (after === area) {
+      await input.evaluate((el) => {
+        el.setAttribute("data-prefill-main-area", "1");
+      });
+      return true;
+    }
+  }
+
+  return false;
+}
+
 function getProjectTypeValue(listing: MyhomeListing): string {
   return dedupeRepeatedLabelValue(
     listing.projectType || listing.rawData?.["პროექტის ტიპი"] || ""
@@ -2672,14 +3078,6 @@ function buildChipPrefillTasks(listing: MyhomeListing): ChipClickTask[] {
   }
 
   return tasks;
-}
-
-function buildAllChipPrefillTasks(listing: MyhomeListing): ChipClickTask[] {
-  return [
-    ...buildEarlyFormChipTasks(listing),
-    ...buildExpandedFormChipTasks(listing),
-    ...buildChipPrefillTasks(listing),
-  ];
 }
 
 /**
@@ -3072,12 +3470,31 @@ async function prefillRowCountChip(
             el.closest("button,[role=button]") ||
             el.parentElement ||
             el) as HTMLElement;
+          if (chipInExclusiveBalconyBlock(target)) continue;
 
           document.querySelectorAll("[data-prefill-count-chip]").forEach((n) => {
             n.removeAttribute("data-prefill-count-chip");
           });
           target.setAttribute("data-prefill-count-chip", "1");
           return true;
+        }
+        return false;
+      }
+
+      function chipInExclusiveBalconyBlock(chip: Element): boolean {
+        let node: Element | null = chip;
+        for (let depth = 0; depth < 16 && node; depth++) {
+          let hasBalconyCount = false;
+          let hasOtherCountSection = false;
+          for (const marker of node.querySelectorAll("label,span,p")) {
+            const t = norm(marker.textContent || "");
+            if (/^აივნის\s*რაოდენობა$/iu.test(t)) hasBalconyCount = true;
+            if (/^საძინებელი/i.test(t)) hasOtherCountSection = true;
+            if (/^ოთახ/i.test(t)) hasOtherCountSection = true;
+            if (t.includes("სვ") && t.includes("წერტილი")) hasOtherCountSection = true;
+          }
+          if (hasBalconyCount && !hasOtherCountSection) return true;
+          node = node.parentElement;
         }
         return false;
       }
@@ -3166,7 +3583,11 @@ async function prefillMainCountChips(
     .waitForFunction(
       () => {
         const body = document.body?.innerText || "";
-        return body.includes("ოთახი") || body.includes("სვ");
+        return (
+          body.includes("ოთახი") ||
+          body.includes("საძინებელი") ||
+          body.includes("სვ")
+        );
       },
       { timeout: 8000 }
     )
@@ -3216,9 +3637,6 @@ async function prefillMainCountChips(
         CHIP_SECTION_ALIASES["სველი წერტილი"],
         normalizeCountChipValue(bathrooms)
       );
-    }
-    for (const label of CHIP_SECTION_ALIASES["სველი წერტილი"]) {
-      await fillLabeledInput(page, label, normalizeNumericParam(bathrooms));
     }
   }
 }
@@ -3349,7 +3767,41 @@ async function fillInputByLabelEvaluate(
       )?.set;
       if (!inputSetter) return;
 
+      function inputInBalconySection(input: Element): boolean {
+        let node: Element | null = input.parentElement;
+        while (node) {
+          if (/^H[234]$/.test(node.tagName)) {
+            const t = norm(node.textContent || "");
+            if (t === "აივანი" || /^აივნის\s*რაოდენობა$/iu.test(t)) return true;
+          }
+          node = node.parentElement;
+        }
+        return false;
+      }
+
+      function isNestedFeatureAreaInput(input: Element): boolean {
+        const BLOCK = /^(აივანი|ლოჯია|ვერანდა|ეზო|მისაღები|სათავსო|ავეჯი)/iu;
+        let node: Element | null = input.parentElement;
+        while (node) {
+          if (/^H[234]$/.test(node.tagName)) {
+            const t = norm(node.textContent || "");
+            if (BLOCK.test(t) || /^აივნის\s*რაოდენობა$/iu.test(t)) return true;
+          }
+          node = node.parentElement;
+        }
+        return false;
+      }
+
+      function isWetPointLabel(text: string): boolean {
+        const t = norm(text);
+        return t.includes("სვ") && t.includes("წერტილი");
+      }
+
       function fillInput(input: HTMLInputElement): boolean {
+        if (inputInBalconySection(input)) return false;
+        if (norm(labelText) === "ფართი" && isNestedFeatureAreaInput(input)) {
+          return false;
+        }
         input.focus();
         inputSetter!.call(input, val);
         input.dispatchEvent(
@@ -3366,6 +3818,19 @@ async function fillInputByLabelEvaluate(
       }
 
       for (const lbl of document.querySelectorAll("label")) {
+        if (inputInBalconySection(lbl)) continue;
+        if (norm(labelText) === "ფართი" && isNestedFeatureAreaInput(lbl)) continue;
+        const lblNorm = norm(lbl.textContent || "");
+        if (
+          norm(labelText) === "ფართი" &&
+          (lblNorm === "ფართი" || lblNorm.startsWith("ფართი "))
+        ) {
+          const forAttr = lbl.getAttribute("for");
+          const input = forAttr
+            ? (document.getElementById(forAttr) as HTMLInputElement | null)
+            : (lbl.querySelector("input") as HTMLInputElement | null);
+          if (input && fillInput(input)) return;
+        }
         for (const span of lbl.querySelectorAll("span")) {
           if (norm(span.textContent || "") !== norm(labelText)) continue;
           const forAttr = lbl.getAttribute("for");
@@ -3376,11 +3841,15 @@ async function fillInputByLabelEvaluate(
         }
       }
 
+      if (isWetPointLabel(labelText)) return;
+
       for (const el of document.querySelectorAll("span, label, p")) {
         if (norm(el.textContent || "") !== norm(labelText)) continue;
         if (el.children.length > 3) continue;
+        if (inputInBalconySection(el)) continue;
         let node: Element | null = el.parentElement;
         for (let depth = 0; depth < 12 && node; depth++) {
+          if (inputInBalconySection(node)) break;
           const input = node.querySelector("input") as HTMLInputElement | null;
           if (input && fillInput(input)) return;
           node = node.parentElement;
@@ -3394,6 +3863,76 @@ async function fillInputByLabelEvaluate(
 async function fillLabeledInput(page: Page, label: string, value: string): Promise<void> {
   if (!value?.trim()) return;
   await fillInputByLabelEvaluate(page, label, value.trim());
+}
+
+/** Main listing area (m²) — not balcony / loggia / veranda / yard sub-fields. */
+async function prefillMainAreaField(
+  page: Page,
+  listing: MyhomeListing
+): Promise<void> {
+  const area = getAreaValue(listing);
+  if (!area) return;
+
+  await scrollToFormField(page, "ფართი");
+
+  if (await fillMainAreaInputPlaywright(page, area)) return;
+
+  await fillLabeledInput(page, "ფართი", area);
+  if (await fillMainAreaInputPlaywright(page, area)) return;
+
+  await page.evaluate((val) => {
+    const BLOCK = /^(აივანი|ლოჯია|ვერანდა|ეზო|მისაღები|სათავსო|ავეჯი)/iu;
+    function norm(s: string) {
+      return (s || "").replace(/\s*\*\s*$/, "").trim().replace(/\s+/g, " ");
+    }
+    function underFeature(el: Element): boolean {
+      let node: Element | null = el.parentElement;
+      while (node) {
+        if (/^H[234]$/.test(node.tagName)) {
+          const t = norm(node.textContent || "");
+          if (BLOCK.test(t) || /^აივნის\s*რაოდენობა$/iu.test(t)) return true;
+        }
+        node = node.parentElement;
+      }
+      return false;
+    }
+    const setter = Object.getOwnPropertyDescriptor(
+      window.HTMLInputElement.prototype,
+      "value"
+    )?.set;
+    if (!setter) return;
+
+    function setVal(input: HTMLInputElement) {
+      setter!.call(input, val);
+      input.dispatchEvent(
+        new InputEvent("input", { bubbles: true, cancelable: true, inputType: "insertText", data: val })
+      );
+      input.dispatchEvent(new Event("change", { bubbles: true }));
+    }
+
+    function labelMatchesArea(lbl: Element | null): boolean {
+      if (!lbl) return false;
+      const t = norm(lbl.textContent || "");
+      if (t === "ფართი" || t.startsWith("ფართი ")) return true;
+      for (const span of lbl.querySelectorAll("span")) {
+        const st = norm(span.textContent || "");
+        if (st === "ფართი" || st.startsWith("ფართი ")) return true;
+      }
+      return false;
+    }
+
+    for (const lbl of document.querySelectorAll("label")) {
+      if (!labelMatchesArea(lbl) || underFeature(lbl)) continue;
+      const forAttr = lbl.getAttribute("for");
+      const input = forAttr
+        ? (document.getElementById(forAttr) as HTMLInputElement | null)
+        : (lbl.querySelector("input") as HTMLInputElement | null);
+      if (input && !underFeature(input)) {
+        setVal(input);
+        return;
+      }
+    }
+  }, area);
 }
 
 async function selectAutocompleteOption(
@@ -3667,6 +4206,10 @@ async function fillLocationAutocompleteField(
     return;
   }
 
+  const currentValue = await input.inputValue().catch(() => "");
+  if (currentValue.trim() && currentValue.trim().toLowerCase() === val.toLowerCase()) return;
+  if (await isAutocompleteFieldValid(page, label) && currentValue.trim()) return;
+
   await input.scrollIntoViewIfNeeded().catch(() => {});
   await input.click({ timeout: CHIP_CLICK_TIMEOUT_MS });
   await input.fill("");
@@ -3748,15 +4291,16 @@ async function fillLocationFields(
       }
     }
   });
-  if (city) {
-    await fillLocationAutocompleteField(page, "მდებარეობა", city);
+  const cityQuery = cityForPrefill(city);
+  if (cityQuery) {
+    await fillLocationAutocompleteField(page, "მდებარეობა", cityQuery);
   }
 
   if (street) {
     await fillStreetAutocompleteField(page, street);
   }
 
-  if (streetNumber) {
+  if (streetNumber && !isMicrodistrictOrBlockAddressLine(street)) {
     await fillLabeledInput(page, "ქუჩის ნომერი", streetNumber);
   }
 
@@ -3799,181 +4343,6 @@ async function closeOpenDropdowns(page: Page): Promise<void> {
     .waitFor({ state: "hidden", timeout: 1200 })
     .catch(() => {});
   await prefillPause(page, 40);
-}
-
-/** Click an option in myhome.ge luk-custom-select or ARIA listbox menus. */
-async function clickOpenDropdownOption(
-  page: Page,
-  value: string,
-  matchVariants?: string[]
-): Promise<boolean> {
-  const variants = matchVariants?.length ? matchVariants : [value];
-  const clicked = await page.evaluate((targets) => {
-    function norm(s: string) {
-      return s.replace(/\s*\*\s*$/, "").trim();
-    }
-
-    function matchesTarget(t: string): boolean {
-      return targets.some(
-        (target) =>
-          t === target ||
-          t.includes(target) ||
-          target.includes(t) ||
-          t.replace(/ის$/u, "ი") === target ||
-          target.replace(/ის$/u, "ი") === t
-      );
-    }
-
-    function isVisible(el: Element): boolean {
-      const style = window.getComputedStyle(el);
-      if (style.display === "none" || style.visibility === "hidden") return false;
-      const r = el.getBoundingClientRect();
-      return r.width > 2 && r.height > 2;
-    }
-
-    function tryClick(el: Element): boolean {
-      if (!isVisible(el)) return false;
-      (el as HTMLElement).click();
-      return true;
-    }
-
-    const roots: Element[] = [];
-    document
-      .querySelectorAll(
-        '[data-prefill-dropdown-open="1"], [role="listbox"], [class*="luk-custom-select"][class*="open"], [class*="luk-custom-select--open"], [class*="luk-select"], [class*="dropdown-menu"], [class*="select-dropdown"]'
-      )
-      .forEach((el) => {
-        if (isVisible(el)) roots.push(el);
-      });
-
-    document.querySelectorAll("body > div, body > ul").forEach((el) => {
-      const style = window.getComputedStyle(el);
-      if (style.display === "none") return;
-      const z = parseInt(style.zIndex || "0", 10);
-      if (z < 100 && style.position !== "fixed") return;
-      const r = el.getBoundingClientRect();
-      if (r.height < 24 || r.width < 40) return;
-      const t = el.textContent || "";
-      const minLen = Math.min(...targets.map((target) => target.length));
-      if (t.length > 400 || t.length < minLen) return;
-      if (!targets.some((target) => t.includes(target))) return;
-      const itemCount = el.querySelectorAll("li, [class*='item'], [role='option']").length;
-      if (itemCount < 1) return;
-      roots.push(el);
-    });
-
-    const tryInRoot = (root: Element): boolean => {
-      for (const el of root.querySelectorAll("li, div, span, button, a, p")) {
-        if (el.children.length > 4) continue;
-        const t = norm(el.textContent || "");
-        if (!matchesTarget(t) || t.length > 80) continue;
-        if (tryClick(el)) return true;
-      }
-      return false;
-    };
-
-    for (const root of roots) {
-      if (tryInRoot(root)) return true;
-    }
-    return false;
-  }, variants);
-
-  if (clicked) return true;
-
-  const optionLoc = page.locator(
-    "[role='listbox'] [role='option'], [role='option'], [class*='option'], [class*='menu-item'], [class*='luk-custom-select'] li, [class*='luk-custom-select'] div"
-  );
-
-  for (const variant of variants) {
-    const exact = optionLoc
-      .filter({ hasText: new RegExp(`^${escapeRegExp(variant)}$`, "u") })
-      .filter({ visible: true })
-      .first();
-    if (await exact.isVisible({ timeout: 800 }).catch(() => false)) {
-      await exact.click({ timeout: CHIP_CLICK_TIMEOUT_MS });
-      return true;
-    }
-
-    const partial = optionLoc.filter({ hasText: variant }).filter({ visible: true }).first();
-    if (await partial.isVisible({ timeout: 800 }).catch(() => false)) {
-      await partial.click({ timeout: CHIP_CLICK_TIMEOUT_MS });
-      return true;
-    }
-
-    const byText = page.getByText(variant, { exact: true }).filter({ visible: true }).last();
-    if (await byText.isVisible({ timeout: 800 }).catch(() => false)) {
-      await byText.click();
-      return true;
-    }
-  }
-
-  return false;
-}
-
-async function listFieldAlreadySet(
-  page: Page,
-  sectionLabel: string,
-  value: string
-): Promise<boolean> {
-  return page.evaluate(
-    ({ sectionLabel, value }) => {
-      function norm(s: string) {
-        return s.replace(/\s*\*\s*$/, "").trim();
-      }
-
-      function findFieldContainer(label: string): Element | null {
-        const nodes = document.querySelectorAll("label, span, p, div, h2, h3, h4");
-        for (const el of nodes) {
-          const t = norm(el.textContent || "").replace(/\s+/g, " ");
-          if (t !== label && !t.startsWith(label)) continue;
-          let node: Element | null = el;
-          for (let depth = 0; depth < 10 && node; depth++) {
-            if (
-              node.querySelector(
-                ".luk-custom-select, [role='combobox'], select, [aria-haspopup='listbox']"
-              )
-            ) {
-              return node;
-            }
-            node = node.parentElement;
-          }
-        }
-        return null;
-      }
-
-      const root = findFieldContainer(sectionLabel);
-      if (!root) return false;
-
-      const custom =
-        root.querySelector(".luk-custom-select") ||
-        root.querySelector("[role='combobox']");
-      if (custom && norm(custom.textContent || "").includes(value)) return true;
-
-      const sel = root.querySelector("select") as HTMLSelectElement | null;
-      const selected = sel?.selectedOptions?.[0]?.textContent?.trim() || "";
-      return selected.includes(value);
-    },
-    { sectionLabel, value }
-  );
-}
-
-async function selectListOptionInSection(
-  page: Page,
-  sectionLabel: string,
-  optionText: string,
-  placeholder?: string,
-  options?: { closeDropdowns?: boolean }
-): Promise<void> {
-  const value = optionText.trim();
-  if (!value) return;
-  const closeDropdowns = options?.closeDropdowns !== false;
-  if (closeDropdowns) await closeOpenDropdowns(page);
-  if (await listFieldAlreadySet(page, sectionLabel, value)) return;
-  const ok =
-    (await prefillLukSelectByLabel(page, sectionLabel, value)) ||
-    (await prefillLukDropdownField(page, sectionLabel, value, placeholder));
-  if (!ok) throw new Error(`Could not select "${value}" for ${sectionLabel}`);
-  if (closeDropdowns) await closeOpenDropdowns(page);
 }
 
 function listingLocation(listing: MyhomeListing) {
@@ -4044,6 +4413,7 @@ async function applyAdditionalParametersPrefill(
   listing: MyhomeListing
 ): Promise<void> {
   await expandCreateFormSections(page);
+  await prefillMainAreaField(page, listing);
   await prefillBuildingStatusAndCondition(page, listing);
   await page
     .locator("h2,h3,h4")
@@ -4274,6 +4644,7 @@ async function evaluatePriceRowCurrency(
       }
 
       function priceRowShowsUsd() {
+        if (!anchor) return false;
         const root = findPriceRow(anchor);
         if (!root) return false;
 
@@ -4297,6 +4668,7 @@ async function evaluatePriceRowCurrency(
       }
 
       function clickUsdInPriceRow() {
+        if (!anchor) return false;
         const root = findPriceRow(anchor);
         if (!root) return false;
 
@@ -4524,6 +4896,93 @@ export async function loginToMyhome(credentials: MyhomeCredentials): Promise<{
   }
 }
 
+/** Location pin line under title (arrow-only evaluate — safe under tsx keepNames). */
+async function extractPinStreetRaw(page: Page): Promise<string> {
+  return page.evaluate(() => {
+    const strip = (raw: string) =>
+      raw.replace(/\s*\([^)]*\)\s*/gu, " ").replace(/\s+/g, " ").trim();
+    const isStreetCore = (core: string) => {
+      if (core.length < 3 || core.length > 120) return false;
+      if (/მეტრო|metro|სადგურ/i.test(core)) return false;
+      if (/მ\/რ|(?:^|\s)მ\.\s*რ\.?(?:\s|$)|კვარტ|კორპ/i.test(core) && core.length >= 4)
+        return true;
+      if (/ნომრის\s*ნახვა|ნომერის\s*ნახვა|\*{2,}/i.test(core)) return false;
+      if (!/ქ\.?|ქუჩა|გამზ|შესახვევი|ჩიხი/i.test(core)) return false;
+      return (
+        /(\s+ქ\.?|\s+ქუჩა|\s+გამზ\.?)(\s*#?\s*\d|$)/iu.test(core) ||
+        /\s+(ქ\.?|ქუჩა|გამზ\.?)$/iu.test(core) ||
+        /\s+შესახვევი\s+\d+[ა-ჰa-z]?$/iu.test(core) ||
+        /\s+შესახვევი$/iu.test(core) ||
+        /\s+ჩიხი\s+\d+[ა-ჰa-z]?$/iu.test(core) ||
+        /\s+ჩიხი$/iu.test(core)
+      );
+    };
+    const isPinLandmarkCore = (core: string): boolean => {
+      if (core.length < 3 || core.length > 90) return false;
+      if (/ნომრის\s*ნახვა|ნომერის\s*ნახვა|\*{2,}/i.test(core)) return false;
+      if (/[₾$]|მ²|m²|იპოთეკა|ფასი|ოთახიანი/i.test(core)) return false;
+      if (/^\d+(\.\d+)?\s*მ²/i.test(core)) return false;
+      if (/^\d+\s*\/\s*\d+/.test(core)) return false;
+      if (/ქ\.?|ქუჩა|გამზ|შესახვევი|ჩიხი/i.test(core)) return false;
+      if (/მ\/რ|(?:^|\s)მ\.\s*რ\.?(?:\s|$)|კვარტ|კორპ/i.test(core)) return false;
+      if (!/[\u10A0-\u10FF]{2,}/u.test(core)) return false;
+      return true;
+    };
+    const isPinRow = (row: Element) =>
+      Boolean(
+        row.querySelector('svg[width="13"][height="15"]') ||
+          row.querySelector('svg[viewBox="0 0 13 15"]')
+      );
+
+    for (const svg of document.querySelectorAll(
+      'svg[width="13"][height="15"], svg[viewBox="0 0 13 15"]'
+    )) {
+      const row = svg.closest(
+        "[class*='gap-2'], [class*='items-center'], motion.div, div, a, p, span"
+      );
+      if (!row || !isPinRow(row)) continue;
+      for (const el of row.querySelectorAll("span, a, p")) {
+        if (el.children.length > 0) continue;
+        const raw = (el.textContent || "").replace(/\s+/g, " ").trim();
+        if (!raw) continue;
+        const core = strip(raw);
+        if (isStreetCore(core)) return raw;
+        if (isPinLandmarkCore(core)) return raw;
+      }
+    }
+    return "";
+  });
+}
+
+function applyPinStreetToListing(listing: MyhomeListing, pinRaw: string): void {
+  const raw = pinRaw.replace(/\s+/g, " ").trim();
+  if (
+    !raw ||
+    (!isStreetLineText(raw) &&
+      !isMicrodistrictOrBlockAddressLine(raw) &&
+      !isPinLandmarkLine(raw))
+  ) {
+    return;
+  }
+
+  const resolved = resolveStreetForPrefill(
+    listing.street || listing.rawData?.["ქუჩა"] || raw,
+    listing.streetNumber || listing.rawData?.["ქუჩის ნომერი"] || ""
+  );
+  if (!resolved.street) return;
+
+  listing.street = resolved.street;
+  listing.streetNumber = resolved.streetNumber;
+  if (!listing.address) listing.address = resolved.street;
+  if (!listing.rawData) listing.rawData = {};
+  listing.rawData["ქუჩა"] = resolved.street;
+  if (resolved.streetNumber) {
+    listing.rawData["ქუჩის ნომერი"] = resolved.streetNumber;
+  } else {
+    delete listing.rawData["ქუჩის ნომერი"];
+  }
+}
+
 // Parse a myhome.ge listing page
 export async function parseListing(url: string): Promise<{
   success: boolean;
@@ -4535,6 +4994,12 @@ export async function parseListing(url: string): Promise<{
     userAgent:
       "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
     locale: "ka-GE",
+  });
+  await addBrowserEvaluateShim(context);
+  await context.route("**/*", (route) => {
+    const type = route.request().resourceType();
+    if (type === "media" || type === "font") route.abort();
+    else route.continue();
   });
   const page = await context.newPage();
 
@@ -4569,6 +5034,8 @@ export async function parseListing(url: string): Promise<{
       .first()
       .scrollIntoViewIfNeeded()
       .catch(() => {});
+
+    const pinStreetRaw = await extractPinStreetRaw(page);
 
     const parseParams = {
       additionalLabels: [...ADDITIONAL_PARAM_LABELS],
@@ -5516,135 +5983,17 @@ export async function parseListing(url: string): Promise<{
 
       // --- Address / street (pin line under title, e.g. "ფარავნის ქ") ---
       const ADDRESS_NOISE =
-        /[₾$]|მ²|იპოთეკა|სესხი|ფასი|გადაფორმება|იყიდება|ქირავდება|გირავდება|ოთახიანი|მოითხოვე|დღეს\s+\d/i;
+        /[₾$]|მ²|იპოთეკა|სესხი|ფასი|გადაფორმება|იყიდება|ქირავდება|გირავდება|ოთახიანი|მოითხოვე|დღეს\s+\d|ნომრის\s*ნახვა|ნომერის\s*ნახვა|\*{2,}/i;
 
-      function isMetroOrStationLine(text: string): boolean {
+      const isListingAddressNoise = (text: string) => {
         const s = text.replace(/\s+/g, " ").trim();
         if (!s) return true;
-        if (/მეტრო|metro|სადგურ/i.test(s)) return true;
-        if (!/ქ\.?|ქუჩა|გამზ/i.test(s)) return true;
+        if (/ნომრის\s*ნახვა|ნომერის\s*ნახვა|ნომრის\s*გამოჩ/i.test(s)) return true;
+        if (/\*{2,}/.test(s)) return true;
+        if (/^\d[\d\s*\-]{6,}/.test(s)) return true;
+        if (/ნახვა$/i.test(s) && /ნომრ|ნომერ|\*/i.test(s)) return true;
         return false;
-      }
-
-      function isStreetLine(text: string): boolean {
-        const s = text.replace(/\s+/g, " ").trim();
-        if (s.length < 3 || s.length > 70) return false;
-        if (ADDRESS_NOISE.test(s)) return false;
-        if (isMetroOrStationLine(s)) return false;
-        if (/ფართი|საძინებელი|სართული|ოთახი/.test(s) && /\d/.test(s)) return false;
-        return (
-          /(\s+ქ\.?|\s+ქუჩა|\s+გამზ\.?)(\s+\d|$)/iu.test(s) ||
-          /\s+(ქ\.?|ქუჩა|გამზ\.?)$/iu.test(s)
-        );
-      }
-
-      function normalizeStreetNameOnly(raw: string): string {
-        const text = raw.replace(/\s+/g, " ").trim();
-        if (!text) return "";
-        const parts = parseAddressParts(text);
-        let name = parts.street || text;
-        name = name
-          .replace(/\s+\d+[ა-ჰa-z]?\s*$/iu, "")
-          .replace(/\s+№\s*\d+[ა-ჰa-z]?\s*$/iu, "")
-          .trim();
-        const suffix = name.match(/^(.+?)\s+(ქ\.?|ქუჩა|გამზ\.?)$/iu);
-        if (suffix) {
-          const tail = suffix[2].replace(/\.$/, "");
-          return `${suffix[1].trim()} ${tail === "ქ" ? "ქ" : tail}`;
-        }
-        return name;
-      }
-
-      function isLocationPinRow(row: Element): boolean {
-        if (row.querySelector('svg[width="16"][height="17"]')) return false;
-        if (row.querySelector('svg[viewBox="0 0 16 17"]')) return false;
-        return !!(
-          row.querySelector('svg[width="13"][height="15"]') ||
-          row.querySelector('svg[viewBox="0 0 13 15"]')
-        );
-      }
-
-      function isStreetNumber(value: string): boolean {
-        const n = value.replace(/^№\s*/, "").trim();
-        return /^\d+[ა-ჰa-z]?$/iu.test(n) && n.length <= 10;
-      }
-
-      function parseAddressParts(raw: string) {
-        const text = raw.replace(/\s+/g, " ").trim();
-        const withNumber = [
-          /^(.+?)\s+მ\.\s*ქ\.\s*(\d+[ა-ჰa-z]?)(?:\s+.+)?$/iu,
-          /^(.+?)\s+მ\.\s*ქუჩა\s*(\d+[ა-ჰa-z]?)(?:\s+.+)?$/iu,
-          /^(.+?)\s+გამზ\.?\s*(\d+[ა-ჰa-z]?)(?:\s+.+)?$/iu,
-          /^(.+?)\s+ქ\.\s*(\d+[ა-ჰa-z]?)(?:\s+.+)?$/iu,
-          /^(.+?)\s+ქუჩა\s*№?\s*(\d+[ა-ჰa-z]?)(?:\s+.+)?$/iu,
-        ];
-        for (const re of withNumber) {
-          const m = text.match(re);
-          if (m) {
-            return {
-              street: `${m[1].trim()} ${text.includes("ქუჩა") ? "ქუჩა" : "ქ"}`,
-              streetNumber: m[2].trim(),
-            };
-          }
-        }
-        const streetOnly = text.match(/^(.+?)\s+(ქ\.?|ქუჩა)$/iu);
-        if (streetOnly) {
-          return { street: text, streetNumber: "" };
-        }
-        if (isStreetLine(text)) {
-          return { street: text, streetNumber: "" };
-        }
-        return { street: "", streetNumber: "" };
-      }
-
-      function extractStreetNearTitle(): string {
-        const h1 = document.querySelector("h1");
-        const scanRoot = h1?.parentElement?.parentElement || h1?.parentElement;
-
-        const tryText = (raw: string) => {
-          const t = raw.replace(/\s+/g, " ").trim();
-          if (!isStreetLine(t)) return "";
-          return normalizeStreetNameOnly(t);
-        };
-
-        for (const svg of document.querySelectorAll(
-          'svg[width="13"][height="15"], svg[viewBox="0 0 13 15"]'
-        )) {
-          const row = svg.closest(
-            "[class*='gap-2'], [class*='items-center'], motion.div, div, a, p, span"
-          );
-          if (!row || !isLocationPinRow(row)) continue;
-
-          for (const el of row.querySelectorAll("span, a, p")) {
-            if (el.children.length > 0) continue;
-            const name = tryText(el.textContent || "");
-            if (name) return name;
-          }
-        }
-
-        if (scanRoot) {
-          for (const row of scanRoot.querySelectorAll(
-            "[class*='gap-2'][class*='mt-2'], [class*='items-center'][class*='gap-2']"
-          )) {
-            if (!isLocationPinRow(row)) continue;
-            for (const el of row.querySelectorAll("span, a, p")) {
-              if (el.children.length > 0) continue;
-              const name = tryText(el.textContent || "");
-              if (name) return name;
-            }
-          }
-        }
-
-        return "";
-      }
-
-      let address = "";
-      let city = "";
-      let street = "";
-      let streetNumber = "";
-
-      street = extractStreetNearTitle();
-      if (street) address = street;
+      };
 
       const KNOWN_CITIES = [
         "თბილისი",
@@ -5672,6 +6021,237 @@ export async function parseListing(url: string): Promise<{
         "ონი",
         "ჭიათურა",
       ];
+
+      function isMetroOrStationLine(text: string): boolean {
+        const s = text.replace(/\s+/g, " ").trim();
+        if (!s) return true;
+        if (/მეტრო|metro|სადგურ/i.test(s)) return true;
+        if (!/ქ\.?|ქუჩა|გამზ|შესახვევი|ჩიხი/i.test(s)) return true;
+        return false;
+      }
+
+      function stripStreetParenthetical(raw: string): string {
+        return raw.replace(/\s*\([^)]*\)\s*/gu, " ").replace(/\s+/g, " ").trim();
+      }
+
+      function isStreetLine(text: string): boolean {
+        const s = text.replace(/\s+/g, " ").trim();
+        if (s.length < 3 || s.length > 90) return false;
+        if (isListingAddressNoise(s)) return false;
+        if (ADDRESS_NOISE.test(s)) return false;
+        if (isMetroOrStationLine(s)) return false;
+        if (/ფართი|საძინებელი|სართული|ოთახი/.test(s) && /\d/.test(s)) return false;
+        const core = stripStreetParenthetical(s);
+        if (!/ქ\.?|ქუჩა|გამზ|შესახვევი|ჩიხი/i.test(core)) return false;
+        return (
+          /(\s+ქ\.?|\s+ქუჩა|\s+გამზ\.?)(\s*#?\s*\d|$)/iu.test(core) ||
+          /\s+(ქ\.?|ქუჩა|გამზ\.?)$/iu.test(core) ||
+          /\s+შესახვევი\s+\d+[ა-ჰa-z]?$/iu.test(core) ||
+          /\s+შესახვევი$/iu.test(core) ||
+          /\s+ჩიხი\s+\d+[ა-ჰa-z]?$/iu.test(core) ||
+          /\s+ჩიხი$/iu.test(core)
+        );
+      }
+
+      function isMicrodistrictAddressLine(text: string): boolean {
+        const s = stripStreetParenthetical(text.replace(/\s+/g, " ").trim());
+        if (s.length < 4 || s.length > 120) return false;
+        if (isListingAddressNoise(s)) return false;
+        if (/^(ფართი|ოთახი|საძინებელი|სართული|ID\b)/iu.test(s)) return false;
+        if (/₾|\$|USD|€|მ²|m²|კვ\.\s*ფასი/i.test(s)) return false;
+        if (/^\d{5,}/.test(s)) return false;
+        if (/მეტრო|metro|სადგურ/i.test(s)) return false;
+        if (isStreetLine(s)) return false;
+        if (
+          /მ\/რ|(?:^|\s)მ\.\s*რ\.?(?:\s|$)|კვარტ|კორპ|უბან|დასახლ|მიკრორაიონ/i.test(s)
+        ) {
+          return true;
+        }
+        if (
+          /^[\u10A0-\u10FF][\u10A0-\u10FF\s\-–—.]+\s-\s+.+$/u.test(s) &&
+          /\d/.test(s)
+        ) {
+          return true;
+        }
+        return false;
+      }
+
+      function isPinLandmarkLine(text: string): boolean {
+        const s = text.replace(/\s+/g, " ").trim();
+        if (s.length < 3 || s.length > 90) return false;
+        if (isListingAddressNoise(s)) return false;
+        if (isStreetLine(s) || isMicrodistrictAddressLine(s)) return false;
+        if (
+          /[₾$]|მ²|m²|იპოთეკა|სესხი|ფასი|გადაფორმება|იყიდება|ქირავდება|ოთახიანი|მოითხოვე/i.test(
+            s
+          )
+        ) {
+          return false;
+        }
+        if (/^ID\b/i.test(s)) return false;
+        if (/^\d+(\.\d+)?\s*მ²/i.test(s)) return false;
+        if (/^\d+\s*\/\s*\d+/.test(s)) return false;
+        if (/^(ფართი|ოთახი|საძინებელი|სართული)$/iu.test(s)) return false;
+        if (/^\d+$/.test(s)) return false;
+        if (/მეტრო|metro|სადგურ/i.test(s)) return false;
+        if (KNOWN_CITIES.includes(s)) return false;
+        if (!/[\u10A0-\u10FF]{2,}/u.test(s)) return false;
+        return true;
+      }
+
+      function normalizeStreetNameOnly(raw: string): string {
+        const text = stripStreetParenthetical(raw.replace(/\s+/g, " ").trim());
+        if (!text) return "";
+        const parts = parseAddressParts(text);
+        let name = parts.street || text;
+        name = name
+          .replace(/\s+#\s*[\d][\d\s,\-–—]*(?:,\s*[\d][\d\s,\-–—]*)*\s*$/iu, "")
+          .replace(/\s+\d+[ა-ჰa-z]?\s*$/iu, "")
+          .replace(/\s+№\s*\d+[ა-ჰa-z]?\s*$/iu, "")
+          .trim();
+        const suffix = name.match(
+          /^(.+?)\s+(ქ\.?|ქუჩა|გამზ\.?|შესახვევი|ჩიხი)$/iu
+        );
+        if (suffix) {
+          const tail = suffix[2].replace(/\.$/, "");
+          const streetSuffix =
+            tail === "ქ" || tail === "ქუჩა" ? "ქ" : tail;
+          return `${suffix[1].trim()} ${streetSuffix}`;
+        }
+        return name;
+      }
+
+      function isLocationPinRow(row: Element): boolean {
+        if (row.querySelector('svg[width="16"][height="17"]')) return false;
+        if (row.querySelector('svg[viewBox="0 0 16 17"]')) return false;
+        return !!(
+          row.querySelector('svg[width="13"][height="15"]') ||
+          row.querySelector('svg[viewBox="0 0 13 15"]')
+        );
+      }
+
+      function isStreetNumber(value: string): boolean {
+        const n = value.replace(/^#?\s*/, "").replace(/^№\s*/, "").trim();
+        return /^[\d][\d\s,\-–—]*[ა-ჰa-z]?$/iu.test(n) && n.length <= 40;
+      }
+
+      function parseAddressParts(raw: string) {
+        const text = stripStreetParenthetical(raw.replace(/\s+/g, " ").trim());
+        const withNumber = [
+          /^(.+?)\s+ქუჩა\s*#\s*([\d][\d\s,\-–—]*(?:,\s*[\d][\d\s,\-–—]*)*)$/iu,
+          /^(.+?)\s+მ\.\s*ქ\.\s*(\d+[ა-ჰa-z]?)(?:\s+.+)?$/iu,
+          /^(.+?)\s+მ\.\s*ქუჩა\s*(\d+[ა-ჰa-z]?)(?:\s+.+)?$/iu,
+          /^(.+?)\s+გამზ\.?\s*(\d+[ა-ჰa-z]?)(?:\s+.+)?$/iu,
+          /^(.+?)\s+ქ\.\s*(\d+[ა-ჰa-z]?)(?:\s+.+)?$/iu,
+          /^(.+?)\s+ქუჩა\s*№?\s*(\d+[ა-ჰa-z]?)(?:\s+.+)?$/iu,
+          /^(.+?)\s+შესახვევი\s+(\d+[ა-ჰa-z]?)$/iu,
+          /^(.+?)\s+ჩიხი\s+(\d+[ა-ჰa-z]?)$/iu,
+        ];
+        for (const re of withNumber) {
+          const m = text.match(re);
+          if (m) {
+            let suffix = "ქ";
+            if (re.source.includes("ქუჩა")) suffix = "ქუჩა";
+            else if (re.source.includes("შესახვევი")) suffix = "შესახვევი";
+            else if (re.source.includes("ჩიხი")) suffix = "ჩიხი";
+            else if (re.source.includes("გამზ")) suffix = "გამზ";
+            return {
+              street: `${m[1].trim()} ${suffix}`,
+              streetNumber: m[2].trim(),
+            };
+          }
+        }
+        const streetOnly = text.match(
+          /^(.+?)\s+(ქ\.?|ქუჩა|შესახვევი|ჩიხი)$/iu
+        );
+        if (streetOnly) {
+          return { street: text, streetNumber: "" };
+        }
+        if (isStreetLine(text)) {
+          const laneNum = text.match(/^(.+?)\s+შესახვევი\s+(\d+[ა-ჰa-z]?)$/iu);
+          if (laneNum) {
+            return {
+              street: `${laneNum[1].trim()} შესახვევი`,
+              streetNumber: laneNum[2].trim(),
+            };
+          }
+          return { street: text, streetNumber: "" };
+        }
+        return { street: "", streetNumber: "" };
+      }
+
+      function collectTitleStreetLines(): string[] {
+        const lines: string[] = [];
+        const acceptLine = (raw: string, fromPin = false) => {
+          const t = raw.replace(/\s+/g, " ").trim();
+          if (!t || lines.includes(t) || isListingAddressNoise(t)) return;
+          if (isStreetLine(t) || isMicrodistrictAddressLine(t)) {
+            lines.push(t);
+            return;
+          }
+          if (fromPin && isPinLandmarkLine(t)) lines.push(t);
+        };
+
+        const h1 = document.querySelector("h1");
+        const scanRoot = h1?.parentElement?.parentElement || h1?.parentElement;
+
+        for (const svg of document.querySelectorAll(
+          'svg[width="13"][height="15"], svg[viewBox="0 0 13 15"]'
+        )) {
+          const row = svg.closest(
+            "[class*='gap-2'], [class*='items-center'], motion.div, div, a, p, span"
+          );
+          if (!row || !isLocationPinRow(row)) continue;
+          for (const el of row.querySelectorAll("span, a, p")) {
+            if (el.children.length > 0) continue;
+            acceptLine(el.textContent || "", true);
+          }
+        }
+
+        if (scanRoot) {
+          for (const row of scanRoot.querySelectorAll(
+            "[class*='gap-2'][class*='mt-2'], [class*='items-center'][class*='gap-2']"
+          )) {
+            for (const el of row.querySelectorAll("span, a, p")) {
+              if (el.children.length > 0) continue;
+              acceptLine(el.textContent || "");
+            }
+          }
+          for (const el of scanRoot.querySelectorAll("span, a, p")) {
+            if (el.children.length > 0) continue;
+            acceptLine(el.textContent || "");
+          }
+        }
+
+        return lines;
+      }
+
+      function ingestStreetFromTitle(): boolean {
+        for (const line of collectTitleStreetLines()) {
+          if (isListingAddressNoise(line)) continue;
+          if (isMicrodistrictAddressLine(line) || isPinLandmarkLine(line)) {
+            street = line;
+            address = line;
+            streetNumber = "";
+            return true;
+          }
+          const parts = parseAddressParts(line);
+          const name = normalizeStreetNameOnly(parts.street || line);
+          if (!name || isListingAddressNoise(name)) continue;
+          street = name;
+          if (parts.streetNumber) streetNumber = parts.streetNumber;
+          address = line;
+          return true;
+        }
+        return false;
+      }
+
+      let address = "";
+      let city = "";
+      let street = "";
+      let streetNumber = "";
+
+      ingestStreetFromTitle();
 
       function readSchemaAddress(node: Record<string, unknown>): { region: string; locality: string } {
         const out = { region: "", locality: "" };
@@ -5783,21 +6363,28 @@ export async function parseListing(url: string): Promise<{
             if (el.children.length > 0) return;
             const t = (el.textContent || "").replace(/\s+/g, " ").trim();
             if (!t || t.length > 50) return;
-            if (/ქ\.|ქუჩა|მეტრო|metro/i.test(t)) return;
+            if (/ქ\.|ქუჩა|შესახვევი|ჩიხი|მეტრო|metro/i.test(t)) return;
             if (isStreetLine(t)) return;
+            if (isMicrodistrictAddressLine(t)) return;
             if (!locParts.includes(t)) locParts.push(t);
           });
 
         for (const p of locParts) {
-          if (KNOWN_CITIES.includes(p)) {
-            const next = locParts[locParts.indexOf(p) + 1];
-            if (next && !KNOWN_CITIES.includes(next)) return `${p}, ${next}`;
-            return p;
-          }
+          if (KNOWN_CITIES.includes(p)) return p;
         }
 
-        if (locParts.length >= 2) return `${locParts[0]}, ${locParts[1]}`;
-        return locParts[0] || "";
+        const cityPart = locParts.find((p) => KNOWN_CITIES.includes(p));
+        return cityPart || locParts[0] || "";
+      }
+
+      function pickCityOnly(...sources: string[]): string {
+        for (const src of sources) {
+          if (!src) continue;
+          for (const part of src.split(",").map((s) => s.trim())) {
+            if (KNOWN_CITIES.includes(part)) return part;
+          }
+        }
+        return extractCityFromH1();
       }
 
       function extractCityFromListingHeader(): string {
@@ -5829,27 +6416,7 @@ export async function parseListing(url: string): Promise<{
       const titleAreaCity = extractCityFromTitleArea();
       const headerCity = extractCityFromListingHeader();
 
-      if (h1City && schemaCity) {
-        const schemaPrimary = schemaCity.split(",")[0]?.trim() || "";
-        if (schemaPrimary && schemaPrimary !== h1City) {
-          const district = schemaCity.includes(",")
-            ? schemaCity
-                .split(",")
-                .slice(1)
-                .join(",")
-                .trim()
-            : schemaLoc.locality &&
-                schemaLoc.locality !== h1City &&
-                !KNOWN_CITIES.includes(schemaLoc.locality)
-              ? schemaLoc.locality
-              : "";
-          city = district ? `${h1City}, ${district}` : h1City;
-        } else {
-          city = schemaCity;
-        }
-      } else {
-        city = schemaCity || titleAreaCity || h1City || headerCity;
-      }
+      city = pickCityOnly(h1City, schemaCity, titleAreaCity, headerCity);
 
       // --- Specs: area, rooms, bedrooms, floor ---
       let area = "";
@@ -6067,6 +6634,12 @@ export async function parseListing(url: string): Promise<{
       ensureFurnitureRawData(data.rawData);
     }
     if (data) {
+      if (data.city) {
+        const cityOnly = cityForPrefill(data.city);
+        data.city = cityOnly;
+        if (data.rawData?.["მდებარეობა"]) data.rawData["მდებარეობა"] = cityOnly;
+      }
+      applyPinStreetToListing(data, pinStreetRaw);
       applyBalconyParsedFields(data);
       applyLoggiaParsedFields(data);
       applyVerandaParsedFields(data);
@@ -6082,8 +6655,12 @@ export async function parseListing(url: string): Promise<{
         if (data.rawData) data.rawData["ქუჩა"] = resolvedStreet.street;
       }
       data.streetNumber = resolvedStreet.streetNumber;
-      if (data.rawData && resolvedStreet.streetNumber) {
-        data.rawData["ქუჩის ნომერი"] = resolvedStreet.streetNumber;
+      if (data.rawData) {
+        if (resolvedStreet.streetNumber) {
+          data.rawData["ქუჩის ნომერი"] = resolvedStreet.streetNumber;
+        } else {
+          delete data.rawData["ქუჩის ნომერი"];
+        }
       }
       if (data.buildingStatus) {
         data.buildingStatus = dedupeRepeatedLabelValue(data.buildingStatus);
@@ -6112,6 +6689,10 @@ export async function parseListing(url: string): Promise<{
       if (!data.bedrooms && data.rawData?.["საძინებელი"]) {
         data.bedrooms = data.rawData["საძინებელი"].replace(/[^\d]/g, "") || data.rawData["საძინებელი"];
       }
+      if (data.area) {
+        data.area = normalizeAreaForInput(data.area);
+        if (data.rawData) data.rawData["ფართი"] = data.area;
+      }
     }
 
     return { success: true, data };
@@ -6129,17 +6710,17 @@ async function ensurePostSessionLogin(
     page: Page,
     credentials: MyhomeCredentials
 ): Promise<void> {
-  await page.goto("https://auth.tnet.ge/ka/user/login/?Continue=https://www.myhome.ge/", {
-    waitUntil: "domcontentloaded",
-    timeout: 30000,
-  });
-  await page.waitForSelector('input[name="Email"]', { timeout: 10000 });
-  await page.fill('input[name="Email"]', credentials.email);
-  await page.fill('input[name="Password"]', credentials.password);
-  await page.click('[data-testid="login-form__button-submit"]');
-  await page.waitForURL((url) => !url.href.includes("auth.tnet.ge"), {
-    timeout: 20000,
-  });
+    await page.goto("https://auth.tnet.ge/ka/user/login/?Continue=https://www.myhome.ge/", {
+      waitUntil: "domcontentloaded",
+      timeout: 30000,
+    });
+    await page.waitForSelector('input[name="Email"]', { timeout: 10000 });
+    await page.fill('input[name="Email"]', credentials.email);
+    await page.fill('input[name="Password"]', credentials.password);
+    await page.click('[data-testid="login-form__button-submit"]');
+    await page.waitForURL((url) => !url.href.includes("auth.tnet.ge"), {
+      timeout: 20000,
+    });
 }
 
 // Navigate to the photo gallery step and upload images via the hidden file input.
@@ -6213,6 +6794,7 @@ export async function createMyhomePost(
     browser = postSession.browser;
     context = postSession.context;
     page = await context.newPage();
+    await ensureBrowserEvaluateShim(page);
   } else {
     if (postSession?.browser.isConnected()) {
       await postSession.context.close().catch(() => null);
@@ -6220,12 +6802,13 @@ export async function createMyhomePost(
     }
     browser = await chromium.launch({
       headless,
-      args: ["--no-sandbox", "--disable-setuid-sandbox"],
+      args: ["--no-sandbox", "--disable-setuid-sandbox", "--start-maximized"],
     });
     context = await browser.newContext({
       userAgent:
         "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
       locale: "ka-GE",
+      viewport: null,
     });
     await context.route("**/*", (route) => {
       const type = route.request().resourceType();
@@ -6235,6 +6818,7 @@ export async function createMyhomePost(
         route.continue();
       }
     });
+    await addBrowserEvaluateShim(context);
     page = await context.newPage();
     postSession = { email: credentials.email, browser, context };
   }
@@ -6243,6 +6827,7 @@ export async function createMyhomePost(
     if (listing.rawData) {
       ensureFurnitureRawData(listing.rawData);
     }
+    sanitizeBalconyListing(listing);
     applyFloorParsedFields(listing);
 
     if (!reuseSession) {
@@ -6279,13 +6864,39 @@ export async function createMyhomePost(
           }
         }
 
+        function labelInBalconySection(lbl: Element): boolean {
+          let node: Element | null = lbl.parentElement;
+          while (node) {
+            if (/^H[234]$/.test(node.tagName)) {
+              const t = (node.textContent || "").replace(/\s*\*\s*$/, "").trim();
+              if (t === "აივანი" || /^აივნის\s*რაოდენობა$/iu.test(t)) return true;
+            }
+            node = node.parentElement;
+          }
+          return false;
+        }
+
         function fillInputByLabel(labelText: string, value: string) {
           if (!value) return;
           let filled = false;
           document.querySelectorAll("label").forEach((label) => {
             if (filled) return;
+            if (labelText === "ფართი" && labelInBalconySection(label)) return;
             const forAttr = label.getAttribute("for");
-            // Check ALL spans inside the label, not just the first
+            const normLabel = (label.textContent || "")
+              .replace(/\s*\*\s*$/, "")
+              .trim()
+              .replace(/\s+/g, " ");
+            if (labelText === "ფართი" && (normLabel === "ფართი" || normLabel.startsWith("ფართი "))) {
+              const input = forAttr
+                ? (document.getElementById(forAttr) as HTMLInputElement)
+                : (label.querySelector("input") as HTMLInputElement);
+              if (input?.tagName === "INPUT" && !labelInBalconySection(label)) {
+                setInputValue(input, value);
+                filled = true;
+                return;
+              }
+            }
             const spans = label.querySelectorAll("span");
             for (const span of spans) {
               const t = span.textContent?.trim()?.replace(/\s*\*\s*$/, "").trim();
@@ -6348,6 +6959,24 @@ export async function createMyhomePost(
             return false;
           }
 
+          function chipInExclusiveBalconyBlock(chip: Element): boolean {
+            let node: Element | null = chip;
+            for (let depth = 0; depth < 16 && node; depth++) {
+              let hasBalconyCount = false;
+              let hasOtherCountSection = false;
+              for (const marker of node.querySelectorAll("label,span,p")) {
+                const t = norm(marker.textContent || "");
+                if (/^აივნის\s*რაოდენობა$/iu.test(t)) hasBalconyCount = true;
+                if (/^საძინებელი/i.test(t)) hasOtherCountSection = true;
+                if (/^ოთახ/i.test(t)) hasOtherCountSection = true;
+                if (t.includes("სვ") && t.includes("წერტილი")) hasOtherCountSection = true;
+              }
+              if (hasBalconyCount && !hasOtherCountSection) return true;
+              node = node.parentElement;
+            }
+            return false;
+          }
+
           function tryGluedCountChip(parent: Element | null, re: RegExp): boolean {
             if (!parent) return false;
             const joined = (parent.textContent || "").replace(/\s+/g, "");
@@ -6362,6 +6991,7 @@ export async function createMyhomePost(
               const t = norm(el.textContent || "");
               if (t === digit || t === `${digit}+` || variants.includes(t)) {
                 const chip = (el.closest("[class*='rounded']") || el) as HTMLElement;
+                if (chipInExclusiveBalconyBlock(chip)) continue;
                 chip.click();
                 return true;
               }
@@ -6406,6 +7036,8 @@ export async function createMyhomePost(
           for (const el of row.querySelectorAll("span,motion.div,div,button,p")) {
             if (clicked) break;
             if (el.children.length > 0) continue;
+            const chip = (el.closest("[class*='rounded']") || el) as HTMLElement;
+            if (chipInExclusiveBalconyBlock(chip)) continue;
             const t = norm(el.textContent || "");
             if (!variants.includes(t)) {
               const tm = t.match(/^(\d+)\+?$/);
@@ -6413,7 +7045,6 @@ export async function createMyhomePost(
                 continue;
               }
             }
-            const chip = (el.closest("[class*='rounded']") || el) as HTMLElement;
             chip.click();
             clicked = true;
           }
@@ -6476,17 +7107,19 @@ export async function createMyhomePost(
 
     await switchPriceFieldToUsd(page, "#total_price");
     await prefillPause(page);
+    await prefillMainAreaField(page, listing);
 
     const bedroomsForForm = getBedroomsValue(listing);
     const bathroomsForForm = getBathroomsValue(listing);
     const totalFloorsForForm = getTotalFloorsValue(listing);
+    const areaForForm = getAreaValue(listing);
 
     await fillForm({
       ...empty,
       price: listing.price,
       pricePerSqm: listing.pricePerSqm,
       currency: "USD",
-      area: listing.area,
+      area: areaForForm,
       rooms: listing.rooms,
       bedrooms: bedroomsForForm,
       bathrooms: bathroomsForForm,
@@ -6495,11 +7128,19 @@ export async function createMyhomePost(
       description: listing.description,
     });
 
+    await expandCreateFormSections(page);
+    await prefillPause(page, 120);
+    await prefillMainAreaField(page, listing);
+
     await page
       .waitForFunction(
         () => {
           const t = document.body?.innerText || "";
-          return t.includes("ოთახი") || t.includes("საძინებელი");
+          return (
+            t.includes("ოთახი") ||
+            t.includes("საძინებელი") ||
+            t.includes("სვ")
+          );
         },
         { timeout: 12000 }
       )
@@ -6510,35 +7151,45 @@ export async function createMyhomePost(
     }
     if (bedroomsForForm) {
       await scrollToFormField(page, "საძინებელი");
-      await prefillCountChipPlaywright(
+      let bedroomOk = await prefillCountChipPlaywright(
         page,
         CHIP_SECTION_ALIASES["საძინებელი"],
         bedroomsForForm
       );
+      if (!bedroomOk) {
+        bedroomOk = await prefillRowCountChip(
+          page,
+          CHIP_SECTION_ALIASES["საძინებელი"],
+          bedroomsForForm
+        );
+      }
     }
     if (bathroomsForForm) {
-      await prefillCountChipPlaywright(
+      let bathOk = await prefillCountChipPlaywright(
         page,
         CHIP_SECTION_ALIASES["სველი წერტილი"],
         bathroomsForForm
       );
-    }
-
-    await expandCreateFormSections(page);
-    await prefillPause(page, 80);
-
-    if (bedroomsForForm) {
-      await scrollToFormField(page, "საძინებელი");
-      await prefillRowCountChip(
-        page,
-        CHIP_SECTION_ALIASES["საძინებელი"],
-        bedroomsForForm
-      );
+      if (!bathOk) {
+        bathOk = await prefillRowCountChip(
+          page,
+          CHIP_SECTION_ALIASES["სველი წერტილი"],
+          bathroomsForForm
+        );
+      }
     }
 
     await prefillMainCountChips(page, listing);
 
     await applyAdditionalParametersPrefill(page, listing);
+
+    if (!listingHasBalconyData(listing)) {
+      await clearBalconyFormFields(page);
+    }
+
+    if (getAreaValue(listing)) {
+      await prefillMainAreaField(page, listing);
+    }
 
     // Upload images to photo gallery
     if (listing.images.length > 0) {
