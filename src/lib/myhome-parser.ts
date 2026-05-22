@@ -101,6 +101,11 @@ const EXACT_LUK_FIELD_LABELS = new Set([
   "შესასვლელი",
 ]);
 
+/** statements.myhome.ge create form: <ul class="options-list luk-overflow-y-auto"> + <li> rows. */
+const LUK_OPTIONS_LIST_SELECTOR =
+  "ul.options-list, ul[class*='options-list']";
+const LUK_OPTION_ROW_SELECTOR = `${LUK_OPTIONS_LIST_SELECTOR} > li`;
+
 /** All known პროექტის ტიპი dropdown options with aliases (parsed value → exact option text). */
 const PROJECT_TYPE_ALIASES: Record<string, string[]> = {
   "არასტანდარტული": ["არასტანდარტული"],
@@ -1673,12 +1678,17 @@ async function prefillNestedSectionTypeDropdown(
   await openNestedSectionLukSelect(page, select);
   await waitForLukSelectOptions(page, 1);
   await prefillPause(page, LUK_DROPDOWN_PAUSE_MS);
+  await markActiveLukMenu(page);
+  await markOpenLukMenuScrollContainer(page);
 
   const rootBox = await select.boundingBox().catch(() => null);
   const menuTopY = rootBox ? rootBox.y + rootBox.height : 0;
   const menuBottomY = menuTopY + 480;
+  const activeMenu = page.locator("[data-prefill-active-menu='1']");
 
   if (await pickLukMenuVariants(page, sectionHeading, variants)) return true;
+
+  if (await tryPickLukVariants(page, sectionHeading, variants, activeMenu)) return true;
 
   if (await clickLukOptionVariants(page, sectionHeading, variants, menuTopY, menuBottomY)) {
     if (await lukFieldShowsValue(page, sectionHeading, variants)) return true;
@@ -1686,6 +1696,8 @@ async function prefillNestedSectionTypeDropdown(
   }
 
   if (await scrollMenuAndClickOption(page, sectionHeading, variants)) return true;
+
+  if (await tryPickLukVariants(page, sectionHeading, variants)) return true;
 
   await closeOpenDropdowns(page);
   return false;
@@ -1831,6 +1843,12 @@ async function markLukFieldMenu(page: Page): Promise<boolean> {
       )) {
         if (markMenu(menu)) return true;
       }
+    }
+
+    for (const menu of document.querySelectorAll(
+      "ul.options-list, ul[class*='options-list']"
+    )) {
+      if (markMenu(menu)) return true;
     }
 
     const tr = trigger.getBoundingClientRect();
@@ -2076,24 +2094,49 @@ async function lukSelectSelectionApplied(
       function norm(s: string) {
         return (s || "").replace(/\s+/g, " ").trim();
       }
+      function matchesValue(text: string) {
+        const t = norm(text);
+        if (!t || /აირჩიეთ/i.test(t)) return false;
+        return targets.some((target) => {
+          const o = norm(target);
+          if (t === o || t.includes(o)) return true;
+          return (
+            t.includes(o.replace(/ის$/u, "ი")) ||
+            t.includes(`${o}ს`)
+          );
+        });
+      }
+
       const trigger =
         document.querySelector(`[data-prefill-luk-field="${sectionLabel}"]`) ||
         document.querySelector(`[data-prefill-field-label="${sectionLabel}"]`);
-      if (!trigger) return false;
-      const valueEl =
-        trigger.querySelector(
-          "[class*='single-value'], [class*='singleValue'], [class*='placeholder']"
-        ) || trigger;
-      const t = norm(valueEl.textContent || "");
-      if (!t || /აირჩიეთ/i.test(t)) return false;
-      return targets.some((target) => {
-        const o = norm(target);
-        return (
-          t.includes(o) ||
-          t.includes(o.replace(/ის$/u, "ი")) ||
-          t.includes(`${o}ს`)
-        );
-      });
+      if (trigger) {
+        const valueEl =
+          trigger.querySelector(
+            "[class*='single-value'], [class*='singleValue'], [class*='placeholder']"
+          ) || trigger;
+        if (matchesValue(valueEl.textContent || "")) return true;
+        if (matchesValue(trigger.textContent || "")) return true;
+      }
+
+      for (const el of document.querySelectorAll("label, span, p")) {
+        const t = norm(el.textContent || "").replace(/\s*\*$/, "");
+        if (t !== norm(sectionLabel)) continue;
+        let node: Element | null = el.parentElement;
+        for (let depth = 0; depth < 8 && node; depth++) {
+          const input = node.querySelector("input, textarea");
+          if (input) {
+            const v = (input as HTMLInputElement).value || input.textContent || "";
+            if (matchesValue(v)) return true;
+          }
+          for (const chip of node.querySelectorAll("span, div")) {
+            const ct = norm(chip.textContent || "");
+            if (matchesValue(ct)) return true;
+          }
+          node = node.parentElement;
+        }
+      }
+      return false;
     },
     { sectionLabel, targets: variants }
   );
@@ -2103,10 +2146,6 @@ async function markLukSelectRoot(page: Page, sectionLabel: string): Promise<bool
   return page.evaluate((label) => {
     document.querySelectorAll("[data-prefill-luk-field]").forEach((el) => {
       el.removeAttribute("data-prefill-luk-field");
-    });
-    document.querySelectorAll("[data-prefill-field-label]").forEach((el) => {
-      if (el.getAttribute("data-prefill-luk-field")) return;
-      el.removeAttribute("data-prefill-field-label");
     });
 
     function norm(s: string) {
@@ -2121,9 +2160,12 @@ async function markLukSelectRoot(page: Page, sectionLabel: string): Promise<bool
 
     function findSelectNearLabel(labelEl: Element): Element | null {
       const findIn = (root: Element): Element | null =>
+        root.querySelector("input") ||
+        root.querySelector("button") ||
         root.querySelector(".luk-custom-select") ||
         root.querySelector("[class*='luk-custom-select']") ||
-        root.querySelector("[role='combobox']");
+        root.querySelector("[role='combobox']") ||
+        root.querySelector("[class*='cursor-pointer']");
 
       let sib: Element | null = labelEl.nextElementSibling;
       for (let i = 0; i < 6 && sib; i++) {
@@ -2153,7 +2195,7 @@ async function markLukSelectRoot(page: Page, sectionLabel: string): Promise<bool
       let node: Element | null = labelEl.parentElement;
       for (let depth = 0; depth < 14 && node; depth++) {
         for (const sel of node.querySelectorAll(
-          ".luk-custom-select, [class*='luk-custom-select'], [role='combobox']"
+          "input, .luk-custom-select, [class*='luk-custom-select'], [role='combobox'], [class*='cursor-pointer']"
         )) {
           const sr = sel.getBoundingClientRect();
           if (sr.width < 40 || sr.height < 10) continue;
@@ -2205,7 +2247,7 @@ async function markLukSelectOption(page: Page, variants: string[]): Promise<bool
 
     const menus = Array.from(
       document.querySelectorAll(
-        '[role="listbox"], [class*="menu"], [class*="MenuList"], [class*="menu-list"]'
+        'ul.options-list, ul[class*="options-list"], [role="listbox"], [class*="menu"], [class*="MenuList"], [class*="menu-list"]'
       )
     ).filter((el) => {
       const style = window.getComputedStyle(el);
@@ -2217,7 +2259,7 @@ async function markLukSelectOption(page: Page, variants: string[]): Promise<bool
     const candidates: { el: Element; depth: number }[] = [];
     for (const menu of menus) {
       for (const el of menu.querySelectorAll(
-        '[role="option"], [class*="option"], div, span, li, p'
+        "li, [role='option'], [class*='option'], div, span, p"
       )) {
         const t = norm(el.textContent || "");
         if (!matches(t)) continue;
@@ -2246,6 +2288,7 @@ async function markLukSelectOption(page: Page, variants: string[]): Promise<bool
       pick.closest('[class*="option"]') ||
       pick.closest("li") ||
       pick;
+    clickTarget.scrollIntoView({ block: "nearest", inline: "nearest" });
     clickTarget.setAttribute("data-prefill-luk-option", "1");
     return true;
   }, variants);
@@ -2253,18 +2296,232 @@ async function markLukSelectOption(page: Page, variants: string[]): Promise<bool
 
 async function clickMarkedLukOption(page: Page): Promise<boolean> {
   const opt = page.locator("[data-prefill-luk-option='1']").first();
-  if (!(await opt.isVisible({ timeout: 1500 }).catch(() => false))) return false;
+  if ((await opt.count()) === 0) return false;
 
   await opt.scrollIntoViewIfNeeded().catch(() => {});
   await opt.dispatchEvent("mousedown");
   const box = await opt.boundingBox().catch(() => null);
   if (box) {
-    await page.mouse.click(box.x + box.width / 2, box.y + box.height / 2);
+    await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2);
+    await page.mouse.down();
+    await page.mouse.up();
   } else {
-    await opt.click({ timeout: CHIP_CLICK_TIMEOUT_MS, force: true });
+    await opt.click({ force: true, timeout: CHIP_CLICK_TIMEOUT_MS });
   }
-  await opt.dispatchEvent("mouseup");
+  await prefillPause(page, 220);
   return true;
+}
+
+/** Tag the visible luk menu portal so Playwright clicks stay scoped to the open list. */
+async function markActiveLukMenu(page: Page): Promise<boolean> {
+  return page.evaluate(() => {
+    document.querySelectorAll("[data-prefill-active-menu]").forEach((el) => {
+      el.removeAttribute("data-prefill-active-menu");
+    });
+
+    function countRows(menu: Element) {
+      let n = 0;
+      for (const o of menu.querySelectorAll("li, [role='option'], [class*='option']")) {
+        const t = (o.textContent || "").replace(/\s+/g, " ").trim();
+        if (!t || t.length > 60 || /აირჩიეთ/i.test(t)) continue;
+        n++;
+      }
+      return n;
+    }
+
+    let best: Element | null = null;
+    let bestCount = 0;
+    const selectors = [
+      "ul.options-list",
+      'ul[class*="options-list"]',
+      '[class*="luk-custom-select__menu"]',
+      '[class*="menu-list"]',
+      '[role="listbox"]',
+    ];
+    for (const sel of selectors) {
+      for (const menu of document.querySelectorAll(sel)) {
+        const style = window.getComputedStyle(menu);
+        if (style.display === "none" || style.visibility === "hidden") continue;
+        const r = menu.getBoundingClientRect();
+        if (r.width < 40 || r.height < 12) continue;
+        const n = countRows(menu);
+        if (n > bestCount) {
+          bestCount = n;
+          best = menu;
+        }
+      }
+    }
+    if (!best) return false;
+    best.setAttribute("data-prefill-active-menu", "1");
+    return true;
+  });
+}
+
+/** Playwright click on an option row (React-select needs real pointer events, not .click() in evaluate). */
+async function playwrightClickLukVariants(
+  page: Page,
+  variants: string[],
+  menuLocator?: Locator
+): Promise<boolean> {
+  const menus: Locator[] = [];
+  if (menuLocator) {
+    menus.push(menuLocator);
+  } else {
+    const scrollMenu = page.locator("[data-prefill-scroll-menu='1']");
+    const activeMenu = page.locator("[data-prefill-active-menu='1']");
+    if ((await scrollMenu.count()) > 0) menus.push(scrollMenu);
+    if ((await activeMenu.count()) > 0) menus.push(activeMenu);
+    menus.push(
+      page.locator(LUK_OPTIONS_LIST_SELECTOR).last(),
+      page.locator("[class*='luk-custom-select__menu']").last(),
+      page.locator("[role='listbox']").last()
+    );
+  }
+
+  for (const variant of variants) {
+    const textRe = new RegExp(`^${escapeRegExp(variant)}$`, "u");
+    for (const menu of menus) {
+      if ((await menu.count()) === 0) continue;
+
+      const liOpt = menu.locator("li").filter({ hasText: textRe }).first();
+      const classOpt = menu
+        .locator('li, [role="option"], [class*="option"]')
+        .filter({ hasText: textRe })
+        .first();
+      const textOpt = menu.getByText(variant, { exact: true }).first();
+
+      for (const target of [liOpt, classOpt, textOpt]) {
+        if ((await target.count()) === 0) continue;
+        await target.scrollIntoViewIfNeeded().catch(() => {});
+        await target.dispatchEvent("mousedown");
+        const box = await target.boundingBox().catch(() => null);
+        if (box) {
+          await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2);
+          await page.mouse.down();
+          await page.mouse.up();
+        } else {
+          await target.click({ force: true, timeout: CHIP_CLICK_TIMEOUT_MS });
+        }
+        await prefillPause(page, 280);
+        return true;
+      }
+    }
+  }
+  return false;
+}
+
+async function tryPickLukVariants(
+  page: Page,
+  sectionLabel: string,
+  variants: string[],
+  menuLocator?: Locator
+): Promise<boolean> {
+  if (await playwrightClickLukVariants(page, variants, menuLocator)) {
+    if (await lukSelectSelectionApplied(page, sectionLabel, variants)) return true;
+    await page.keyboard.press("Enter").catch(() => {});
+    await prefillPause(page, 200);
+    if (await lukSelectSelectionApplied(page, sectionLabel, variants)) return true;
+  }
+  for (const variant of variants) {
+    if (await markLukSelectOption(page, [variant])) {
+      await clickMarkedLukOption(page);
+      await prefillPause(page, 280);
+      if (await lukSelectSelectionApplied(page, sectionLabel, variants)) return true;
+      await page.keyboard.press("Enter").catch(() => {});
+      await prefillPause(page, 200);
+      if (await lukSelectSelectionApplied(page, sectionLabel, variants)) return true;
+    }
+  }
+  return false;
+}
+
+/** Mark the scrollable listbox inside the open luk menu (not the outer menu wrapper). */
+async function markOpenLukMenuScrollContainer(page: Page): Promise<boolean> {
+  return page.evaluate(() => {
+    document.querySelectorAll("[data-prefill-scroll-menu]").forEach((el) => {
+      el.removeAttribute("data-prefill-scroll-menu");
+    });
+
+    const candidates: { el: Element; overflow: number; options: number }[] = [];
+    for (const el of document.querySelectorAll(
+      'ul.options-list, ul[class*="options-list"], [class*="menu-list"], [class*="MenuList"], [role="listbox"]'
+    )) {
+      const style = window.getComputedStyle(el);
+      if (style.display === "none" || style.visibility === "hidden") continue;
+      const r = el.getBoundingClientRect();
+      if (r.width < 40 || r.height < 16) continue;
+      const overflow = el.scrollHeight - el.clientHeight;
+      let options = 0;
+      for (const li of el.querySelectorAll("li")) {
+        const t = (li.textContent || "").replace(/\s+/g, " ").trim();
+        if (t && t.length < 60 && !/აირჩიეთ/i.test(t)) options++;
+      }
+      if (overflow > 4 || options >= 3) {
+        candidates.push({ el, overflow: Math.max(overflow, options), options });
+      }
+    }
+
+    candidates.sort((a, b) => b.overflow - a.overflow || b.options - a.options);
+    const pick = candidates[0]?.el;
+    if (!pick) return false;
+    pick.setAttribute("data-prefill-scroll-menu", "1");
+    return true;
+  });
+}
+
+/** Primary picker for statements.myhome.ge <ul class="options-list"><li>…</li>. */
+async function pickFromLukOptionsList(
+  page: Page,
+  sectionLabel: string,
+  variants: string[]
+): Promise<boolean> {
+  const list = page.locator(LUK_OPTIONS_LIST_SELECTOR).filter({ visible: true }).last();
+  if ((await list.count()) === 0) return false;
+
+  await list.evaluate((el) => {
+    el.setAttribute("data-prefill-scroll-menu", "1");
+    el.setAttribute("data-prefill-active-menu", "1");
+  });
+
+  const scrollMeta = await list.evaluate((el) => ({
+    maxTop: Math.max(0, el.scrollHeight - el.clientHeight),
+    step: Math.max(el.clientHeight - 40, 36),
+  }));
+
+  const scrollTops: number[] = [0];
+  for (let top = scrollMeta.step; top < scrollMeta.maxTop; top += scrollMeta.step) {
+    scrollTops.push(top);
+  }
+  if (!scrollTops.includes(scrollMeta.maxTop)) scrollTops.push(scrollMeta.maxTop);
+
+  for (const top of scrollTops) {
+    await list.evaluate((el, offset) => {
+      el.scrollTop = offset;
+    }, top);
+    await prefillPause(page, 160);
+
+    for (const variant of variants) {
+      const textRe = new RegExp(`^\\s*${escapeRegExp(variant)}\\s*$`, "u");
+      const li = list.locator("li").filter({ hasText: textRe }).first();
+      if ((await li.count()) === 0) continue;
+
+      await li.scrollIntoViewIfNeeded().catch(() => {});
+      await li.dispatchEvent("mousedown");
+      const box = await li.boundingBox().catch(() => null);
+      if (box) {
+        await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2);
+        await page.mouse.down();
+        await page.mouse.up();
+      } else {
+        await li.click({ force: true, timeout: CHIP_CLICK_TIMEOUT_MS });
+      }
+      await prefillPause(page, 320);
+
+      if (await lukSelectSelectionApplied(page, sectionLabel, variants)) return true;
+    }
+  }
+
+  return false;
 }
 
 async function waitForLukSelectOptions(page: Page, minCount = 1): Promise<void> {
@@ -2274,7 +2531,7 @@ async function waitForLukSelectOptions(page: Page, minCount = 1): Promise<void> 
         function countOptions(root: ParentNode) {
           let n = 0;
           for (const el of root.querySelectorAll(
-            '[role="option"], [class*="option"], [class*="menu-list"] > div, [class*="MenuList"] > div'
+            "ul.options-list > li, ul[class*='options-list'] > li, [role='option'], [class*='option']"
           )) {
             const t = (el.textContent || "").replace(/\s+/g, " ").trim();
             if (!t || t.length > 60) continue;
@@ -2285,7 +2542,7 @@ async function waitForLukSelectOptions(page: Page, minCount = 1): Promise<void> 
           return n;
         }
         for (const lb of document.querySelectorAll(
-          '[role="listbox"], [class*="menu"], [class*="MenuList"]'
+          'ul.options-list, ul[class*="options-list"], [role="listbox"], [class*="menu"]'
         )) {
           const style = window.getComputedStyle(lb);
           if (style.display === "none" || style.visibility === "hidden") continue;
@@ -2364,7 +2621,30 @@ async function prefillLukSelectByLabel(
   await prefillPause(page, 80);
 
   if (await lukSelectSelectionApplied(page, sectionLabel, variants)) return true;
-  if (!(await markLukSelectRoot(page, sectionLabel))) return false;
+
+  let marked = await markLukSelectRoot(page, sectionLabel);
+  if (!marked) {
+    marked = await page.evaluate((label) => {
+      function norm(s: string) {
+        return (s || "").replace(/\s*\*\s*$/, "").trim().replace(/\s+/g, " ");
+      }
+      for (const el of document.querySelectorAll("label, span, p")) {
+        if (norm(el.textContent || "") !== norm(label)) continue;
+        let node: Element | null = el.parentElement;
+        for (let depth = 0; depth < 10 && node; depth++) {
+          const input = node.querySelector("input");
+          if (input) {
+            input.setAttribute("data-prefill-luk-field", label);
+            input.setAttribute("data-prefill-field-label", label);
+            return true;
+          }
+          node = node.parentElement;
+        }
+      }
+      return false;
+    }, sectionLabel);
+  }
+  if (!marked) return false;
 
   const selectRoot = page.locator(`[data-prefill-luk-field="${sectionLabel}"]`).first();
   await selectRoot.scrollIntoViewIfNeeded().catch(() => {});
@@ -2375,42 +2655,40 @@ async function prefillLukSelectByLabel(
   await closeOpenDropdowns(page);
   await prefillPause(page, 60);
 
-  const opener = selectRoot
-    .locator("[class*='indicator'], [class*='control'], [class*='value-container']")
-    .first();
-  await opener.click({ timeout: CHIP_CLICK_TIMEOUT_MS, force: true }).catch(() =>
-    selectRoot.click({ timeout: CHIP_CLICK_TIMEOUT_MS, force: true })
-  );
+  const input = selectRoot.locator("input").first();
+  if (await input.isVisible({ timeout: 800 }).catch(() => false)) {
+    await input.click({ timeout: CHIP_CLICK_TIMEOUT_MS, force: true });
+  } else {
+    const opener = selectRoot
+      .locator("[class*='indicator'], [class*='control'], [class*='value-container']")
+      .first();
+    await opener.click({ timeout: CHIP_CLICK_TIMEOUT_MS, force: true }).catch(() =>
+      selectRoot.click({ timeout: CHIP_CLICK_TIMEOUT_MS, force: true })
+    );
+  }
 
   await waitForLukSelectOptions(page, 1);
   await prefillPause(page, 250);
+
+  if (await pickFromLukOptionsList(page, sectionLabel, variants)) return true;
+
+  await markActiveLukMenu(page);
+  await markOpenLukMenuScrollContainer(page);
+
+  const activeMenu = page.locator("[data-prefill-active-menu='1']");
+  const scrollMenu = page.locator("[data-prefill-scroll-menu='1']");
+
+  if (await pickFromLukOptionsList(page, sectionLabel, variants)) return true;
 
   if (await clickVisibleLukMenuItem(page, variants, menuTopY, menuBottomY)) {
     if (await lukSelectSelectionApplied(page, sectionLabel, variants)) return true;
   }
 
-  for (const variant of variants) {
-    if (await markLukSelectOption(page, [variant])) {
-      await clickMarkedLukOption(page);
-      await prefillPause(page, 300);
-      if (await lukSelectSelectionApplied(page, sectionLabel, variants)) return true;
-    }
-  }
-
-  for (const variant of variants) {
-    const menu = page
-      .locator("[class*='luk-custom-select__menu'], [class*='menu-list'], [role='listbox']")
-      .last();
-    const row = menu.getByText(variant, { exact: true }).first();
-    if (await row.isVisible({ timeout: 1000 }).catch(() => false)) {
-      await row.dispatchEvent("mousedown");
-      await row.click({ force: true, timeout: CHIP_CLICK_TIMEOUT_MS });
-      await prefillPause(page, 300);
-      if (await lukSelectSelectionApplied(page, sectionLabel, variants)) return true;
-    }
-  }
+  if (await tryPickLukVariants(page, sectionLabel, variants, activeMenu)) return true;
 
   if (await scrollMenuAndClickOption(page, sectionLabel, variants)) return true;
+
+  if (await tryPickLukVariants(page, sectionLabel, variants)) return true;
 
   await closeOpenDropdowns(page);
   return false;
@@ -2422,47 +2700,41 @@ async function scrollMenuAndClickOption(
   sectionLabel: string,
   variants: string[]
 ): Promise<boolean> {
-  const menuLocator = page
-    .locator(
-      "[class*='luk-custom-select__menu-list'], [class*='menu-list'], [role='listbox'], [class*='MenuList']"
-    )
-    .last();
-  if (!(await menuLocator.isVisible({ timeout: 600 }).catch(() => false))) return false;
+  if (await lukFieldShowsValue(page, sectionLabel, variants)) return true;
 
-  const scrollInfo = await menuLocator.evaluate((el) => ({
-    scrollHeight: el.scrollHeight,
-    clientHeight: el.clientHeight,
-  })).catch(() => null);
-  if (!scrollInfo || scrollInfo.scrollHeight <= scrollInfo.clientHeight) return false;
+  const hasScrollMenu = await markOpenLukMenuScrollContainer(page);
 
-  const stepSize = Math.max(scrollInfo.clientHeight - 20, 80);
-  const maxScrolls = Math.ceil(scrollInfo.scrollHeight / stepSize) + 1;
+  const scrollMeta = hasScrollMenu
+    ? await page.evaluate(() => {
+        const menu = document.querySelector("[data-prefill-scroll-menu='1']");
+        if (!menu) return null;
+        const maxTop = Math.max(0, menu.scrollHeight - menu.clientHeight);
+        const step = Math.max(menu.clientHeight - 24, 48);
+        return { maxTop, step };
+      })
+    : null;
 
-  for (let step = 1; step <= maxScrolls; step++) {
-    await menuLocator.evaluate(
-      (el, offset) => el.scrollTo({ top: offset, behavior: "instant" }),
-      step * stepSize
-    ).catch(() => {});
-    await prefillPause(page, 150);
+  const scrollTops: number[] = [0];
+  if (scrollMeta) {
+    for (let top = scrollMeta.step; top < scrollMeta.maxTop; top += scrollMeta.step) {
+      scrollTops.push(top);
+    }
+    if (!scrollTops.includes(scrollMeta.maxTop)) scrollTops.push(scrollMeta.maxTop);
+  }
 
-    for (const variant of variants) {
-      if (await markLukSelectOption(page, [variant])) {
-        await clickMarkedLukOption(page);
-        await prefillPause(page, 300);
-        if (await lukSelectSelectionApplied(page, sectionLabel, variants)) return true;
-      }
+  const scrollMenu = page.locator("[data-prefill-scroll-menu='1']");
+
+  for (const top of scrollTops) {
+    if (hasScrollMenu) {
+      await page.evaluate((offset) => {
+        const menu = document.querySelector("[data-prefill-scroll-menu='1']");
+        if (menu) menu.scrollTop = offset;
+      }, top);
+      await prefillPause(page, 160);
     }
 
-    for (const variant of variants) {
-      const row = menuLocator.getByText(variant, { exact: true }).first();
-      if (await row.isVisible({ timeout: 400 }).catch(() => false)) {
-        await row.scrollIntoViewIfNeeded().catch(() => {});
-        await row.dispatchEvent("mousedown");
-        await row.click({ force: true, timeout: CHIP_CLICK_TIMEOUT_MS });
-        await prefillPause(page, 300);
-        if (await lukSelectSelectionApplied(page, sectionLabel, variants)) return true;
-      }
-    }
+    if (await tryPickLukVariants(page, sectionLabel, variants, scrollMenu)) return true;
+    if (await tryPickLukVariants(page, sectionLabel, variants)) return true;
   }
 
   return false;
