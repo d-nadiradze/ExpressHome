@@ -1646,9 +1646,8 @@ async function prefillNestedSectionTypeDropdown(
   await scrollToFormField(page, sectionHeading);
   await prefillPause(page, 120);
 
-  const probe = { dropdownHint };
-  if (await lukFieldShowsValue(page, sectionHeading, variants, probe)) return true;
-  if (await lukSelectSelectionApplied(page, sectionHeading, variants, probe)) return true;
+  if (await lukFieldShowsValue(page, sectionHeading, variants)) return true;
+  if (await lukSelectSelectionApplied(page, sectionHeading, variants)) return true;
 
   await closeOpenDropdowns(page);
 
@@ -1682,8 +1681,8 @@ async function prefillNestedSectionTypeDropdown(
   if (await pickLukMenuVariants(page, sectionHeading, variants)) return true;
 
   if (await clickLukOptionVariants(page, sectionHeading, variants, menuTopY, menuBottomY)) {
-    if (await lukFieldShowsValue(page, sectionHeading, variants, probe)) return true;
-    if (await lukSelectSelectionApplied(page, sectionHeading, variants, probe)) return true;
+    if (await lukFieldShowsValue(page, sectionHeading, variants)) return true;
+    if (await lukSelectSelectionApplied(page, sectionHeading, variants)) return true;
   }
 
   if (await scrollMenuAndClickOption(page, sectionHeading, variants)) return true;
@@ -1754,24 +1753,20 @@ async function markLukFieldTrigger(
   );
 }
 
-type LukFieldProbeOptions = { dropdownHint?: string };
-
 async function lukFieldShowsValue(
   page: Page,
   sectionLabel: string,
-  variants: string[],
-  options?: LukFieldProbeOptions
+  variants: string[]
 ): Promise<boolean> {
   return page.evaluate(
-    ({ sectionLabel, variants: targets, dropdownHint, exactLabels }) => {
+    ({ sectionLabel, variants: targets }) => {
       function norm(s: string) {
         return (s || "").replace(/\s+/g, " ").trim();
       }
       function exactMatch(text: string) {
         const t = norm(text);
         if (!t || /აირჩიეთ/i.test(t)) return false;
-        if (/ტიპი$/i.test(t) && t.length < 24) return false;
-        return targets.some((target: string) => {
+        return targets.some((target) => {
           const o = norm(target);
           if (t === o || t === o.replace(/ის$/u, "ი") || t === `${o}ს`) return true;
           const tN = t.replace(/\s*\+\s*/g, "+").toLowerCase();
@@ -1780,122 +1775,26 @@ async function lukFieldShowsValue(
         });
       }
 
-      function readSelectValue(select: Element): string {
-        const valueEl = select.querySelector(
-          "[class*='single-value'], [class*='singleValue']"
-        );
-        if (valueEl) {
-          const t = norm(valueEl.textContent || "");
-          if (t && !/აირჩიეთ/i.test(t)) return t;
-        }
-        const control = select.querySelector(
-          "[class*='control'], [class*='value-container']"
-        );
-        const fromControl = norm(control?.textContent || "");
-        if (fromControl && !/აირჩიეთ/i.test(fromControl)) return fromControl;
-        return norm(select.textContent || "");
+      const trigger = document.querySelector(
+        `[data-prefill-field-label="${sectionLabel}"]`
+      );
+      if (!trigger) return false;
+
+      const valueParts = trigger.querySelectorAll(
+        "[class*='single-value'], [class*='singleValue'], [class*='value-container'] > *"
+      );
+      for (const el of valueParts) {
+        if (exactMatch(el.textContent || "")) return true;
       }
 
-      function selectMatches(select: Element): boolean {
-        return exactMatch(readSelectValue(select));
-      }
+      const control = trigger.querySelector(
+        "[class*='control'], [class*='value-container']"
+      );
+      if (control && exactMatch(control.textContent || "")) return true;
 
-      function labelMatches(text: string) {
-        const t = norm(text).replace(/\s*\*$/, "");
-        const l = norm(sectionLabel);
-        if (exactLabels.includes(l)) return t === l;
-        return t === l || t.startsWith(l);
-      }
-
-      function findSelectNearLabel(labelEl: Element): Element | null {
-        const findIn = (root: Element): Element | null =>
-          root.querySelector(".luk-custom-select") ||
-          root.querySelector("[class*='luk-custom-select']") ||
-          root.querySelector("[role='combobox']");
-
-        let sib: Element | null = labelEl.nextElementSibling;
-        for (let i = 0; i < 6 && sib; i++) {
-          const sel =
-            (sib.classList?.toString().includes("luk-custom-select") ? sib : null) ||
-            findIn(sib);
-          if (sel) return sel;
-          sib = sib.nextElementSibling;
-        }
-
-        const parent = labelEl.parentElement;
-        if (parent) {
-          const kids = Array.from(parent.children);
-          const idx = kids.indexOf(labelEl);
-          for (let j = idx + 1; j < kids.length && j < idx + 5; j++) {
-            const child = kids[j];
-            const sel =
-              (child.classList?.toString().includes("luk-custom-select") ? child : null) ||
-              findIn(child);
-            if (sel) return sel;
-          }
-        }
-
-        const lr = labelEl.getBoundingClientRect();
-        let best: Element | null = null;
-        let bestScore = Infinity;
-        let node: Element | null = labelEl.parentElement;
-        for (let depth = 0; depth < 14 && node; depth++) {
-          for (const sel of node.querySelectorAll(
-            ".luk-custom-select, [class*='luk-custom-select'], [role='combobox']"
-          )) {
-            const sr = sel.getBoundingClientRect();
-            if (sr.width < 40 || sr.height < 10) continue;
-            const dy = Math.abs(sr.top - lr.top);
-            const dx = Math.abs(sr.left - lr.left);
-            if (dy > 120) continue;
-            const score = dy * 3 + dx;
-            if (score < bestScore) {
-              bestScore = score;
-              best = sel;
-            }
-          }
-          node = node.parentElement;
-        }
-        return best;
-      }
-
-      const marked =
-        document.querySelector(`[data-prefill-field-label="${sectionLabel}"]`) ||
-        document.querySelector(`[data-prefill-luk-field="${sectionLabel}"]`);
-      if (marked && selectMatches(marked)) return true;
-
-      for (const el of document.querySelectorAll("label, span, p, h2, h3, h4")) {
-        if (!labelMatches(el.textContent || "")) continue;
-        if (el.children.length > 8) continue;
-        const sel = findSelectNearLabel(el);
-        if (sel && selectMatches(sel)) return true;
-      }
-
-      const hint = norm(dropdownHint || "");
-      if (hint) {
-        for (const el of document.querySelectorAll("label, span, p, h2, h3, h4, div")) {
-          if (norm(el.textContent || "") !== norm(sectionLabel)) continue;
-          if (el.children.length > 8) continue;
-          let block: Element | null = el.parentElement;
-          for (let depth = 0; depth < 10 && block; depth++) {
-            for (const sel of block.querySelectorAll(
-              ".luk-custom-select, [class*='luk-custom-select'], [role='combobox']"
-            )) {
-              if (selectMatches(sel)) return true;
-            }
-            block = block.parentElement;
-          }
-        }
-      }
-
-      return false;
+      return exactMatch(trigger.textContent || "");
     },
-    {
-      sectionLabel,
-      variants,
-      dropdownHint: options?.dropdownHint ?? "",
-      exactLabels: [...EXACT_LUK_FIELD_LABELS],
-    }
+    { sectionLabel, variants }
   );
 }
 
@@ -2046,9 +1945,6 @@ async function prefillLukDropdownField(
   await scrollToFormField(page, sectionLabel);
 
   for (let attempt = 0; attempt < 2; attempt++) {
-    if (await lukFieldShowsValue(page, sectionLabel, variants)) return true;
-    if (await lukSelectSelectionApplied(page, sectionLabel, variants)) return true;
-
     await closeOpenDropdowns(page);
 
     const marked = await markLukFieldTrigger(page, sectionLabel);
@@ -2172,10 +2068,9 @@ function dropdownOptionVariants(value: string, sectionLabel: string): string[] {
 async function lukSelectSelectionApplied(
   page: Page,
   sectionLabel: string,
-  variants: string[],
-  options?: LukFieldProbeOptions
+  variants: string[]
 ): Promise<boolean> {
-  if (await lukFieldShowsValue(page, sectionLabel, variants, options)) return true;
+  if (await lukFieldShowsValue(page, sectionLabel, variants)) return true;
   return page.evaluate(
     ({ sectionLabel, targets }) => {
       function norm(s: string) {
@@ -2468,7 +2363,6 @@ async function prefillLukSelectByLabel(
   await scrollToFormField(page, sectionLabel);
   await prefillPause(page, 80);
 
-  if (await lukFieldShowsValue(page, sectionLabel, variants)) return true;
   if (await lukSelectSelectionApplied(page, sectionLabel, variants)) return true;
   if (!(await markLukSelectRoot(page, sectionLabel))) return false;
 
@@ -2576,10 +2470,6 @@ async function scrollMenuAndClickOption(
 
 /** პროექტის ტიპი — open list, click exact option (e.g. თუხარელის). */
 async function prefillProjectTypeField(page: Page, rawValue: string): Promise<boolean> {
-  const variants = projectTypeOptionVariants(rawValue);
-  if (!variants.length) return false;
-  if (await lukFieldShowsValue(page, "პროექტის ტიპი", variants)) return true;
-  if (await lukSelectSelectionApplied(page, "პროექტის ტიპი", variants)) return true;
   await expandCreateFormSections(page);
   return prefillLukSelectByLabel(page, "პროექტის ტიპი", rawValue);
 }
@@ -2622,11 +2512,6 @@ async function prefillPreferenceField(
     { sectionLabel, value }
   );
   if (chipOk) return true;
-
-  const variants = dropdownOptionVariants(value, sectionLabel);
-  if (variants.length && (await lukFieldShowsValue(page, sectionLabel, variants))) {
-    return true;
-  }
 
   return prefillLukDropdownField(page, sectionLabel, value, placeholder);
 }
@@ -2927,40 +2812,6 @@ async function prefillSectionChipPlaywright(
   return false;
 }
 
-async function sectionChipAlreadySelected(
-  page: Page,
-  sectionLabel: string,
-  chipValue: string
-): Promise<boolean> {
-  return page.evaluate(
-    ({ sectionLabel, value }) => {
-      function norm(s: string) {
-        return (s || "").replace(/\s+/g, " ").trim();
-      }
-      for (const el of document.querySelectorAll("label, span, p, motion.div, div")) {
-        if (norm(el.textContent || "") !== norm(sectionLabel)) continue;
-        let node: Element | null = el.parentElement;
-        for (let depth = 0; depth < 12 && node; depth++) {
-          for (const chip of node.querySelectorAll(
-            "motion.div, button, [role=button], [class*='rounded']"
-          )) {
-            const t = norm(chip.textContent || "");
-            if (t !== norm(value)) continue;
-            const cls = chip.className?.toString() || "";
-            if (/border-green|bg-green|selected|active|checked|primary/i.test(cls)) {
-              return true;
-            }
-            if (chip.getAttribute("aria-pressed") === "true") return true;
-          }
-          node = node.parentElement;
-        }
-      }
-      return false;
-    },
-    { sectionLabel, value: chipValue }
-  );
-}
-
 async function prefillBuildingStatusAndCondition(
   page: Page,
   listing: MyhomeListing
@@ -2969,28 +2820,24 @@ async function prefillBuildingStatusAndCondition(
   const condition = getConditionValue(listing);
 
   if (buildingStatus) {
-    if (!(await sectionChipAlreadySelected(page, "სტატუსი", buildingStatus))) {
-      await scrollToFormField(page, "სტატუსი");
-      await prefillPause(page, 250);
-      if (
-        !(await prefillSectionChipPlaywright(page, "სტატუსი", buildingStatus)) &&
-        !(await prefillPreferenceField(page, "სტატუსი", buildingStatus))
-      ) {
-        await batchPrefillChips(page, [{ section: "სტატუსი", chip: buildingStatus }]);
-      }
+    await scrollToFormField(page, "სტატუსი");
+    await prefillPause(page, 250);
+    if (
+      !(await prefillSectionChipPlaywright(page, "სტატუსი", buildingStatus)) &&
+      !(await prefillPreferenceField(page, "სტატუსი", buildingStatus))
+    ) {
+      await batchPrefillChips(page, [{ section: "სტატუსი", chip: buildingStatus }]);
     }
   }
 
   if (condition) {
-    if (!(await sectionChipAlreadySelected(page, "მდგომარეობა", condition))) {
-      await scrollToFormField(page, "მდგომარეობა");
-      await prefillPause(page, 250);
-      if (
-        !(await prefillSectionChipPlaywright(page, "მდგომარეობა", condition)) &&
-        !(await prefillPreferenceField(page, "მდგომარეობა", condition))
-      ) {
-        await batchPrefillChips(page, [{ section: "მდგომარეობა", chip: condition }]);
-      }
+    await scrollToFormField(page, "მდგომარეობა");
+    await prefillPause(page, 250);
+    if (
+      !(await prefillSectionChipPlaywright(page, "მდგომარეობა", condition)) &&
+      !(await prefillPreferenceField(page, "მდგომარეობა", condition))
+    ) {
+      await batchPrefillChips(page, [{ section: "მდგომარეობა", chip: condition }]);
     }
   }
 }
@@ -4411,14 +4258,8 @@ async function fillLocationAutocompleteField(
   }
 
   const currentValue = await input.inputValue().catch(() => "");
-  const cur = currentValue.trim();
-  if (cur) {
-    if (cur.toLowerCase() === val.toLowerCase()) return;
-    if (cityMatchesInText(cur, val)) return;
-    const firstPart = cur.split(",")[0]?.trim() || "";
-    if (firstPart && firstPart.toLowerCase() === val.toLowerCase()) return;
-    if (await isAutocompleteFieldValid(page, label)) return;
-  }
+  if (currentValue.trim() && currentValue.trim().toLowerCase() === val.toLowerCase()) return;
+  if (await isAutocompleteFieldValid(page, label) && currentValue.trim()) return;
 
   await input.scrollIntoViewIfNeeded().catch(() => {});
   await input.click({ timeout: CHIP_CLICK_TIMEOUT_MS });
@@ -4462,15 +4303,6 @@ async function fillStreetAutocompleteField(page: Page, street: string): Promise<
   const input = await locatorForLabeledInput(page, "ქუჩა");
   if (!input) {
     await fillLocationAutocompleteField(page, "ქუჩა", queries[0]);
-    return;
-  }
-
-  const streetCur = (await input.inputValue().catch(() => "")).trim();
-  if (
-    streetCur &&
-    (await isAutocompleteFieldValid(page, "ქუჩა")) &&
-    (streetCur.includes(street) || street.includes(streetCur))
-  ) {
     return;
   }
 
@@ -4633,6 +4465,7 @@ async function applyAdditionalParametersPrefill(
 ): Promise<void> {
   await expandCreateFormSections(page);
   await prefillMainAreaField(page, listing);
+  await prefillBuildingStatusAndCondition(page, listing);
   await page
     .locator("h2,h3,h4")
     .filter({ hasText: /ავეჯი/i })
