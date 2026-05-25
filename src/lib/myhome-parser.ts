@@ -60,13 +60,29 @@ let postSession: {
   context: BrowserContext;
 } | null = null;
 
-const PREFILL_PAUSE_MS = 40;
-const CHIP_CLICK_TIMEOUT_MS = 1500;
-const DROPDOWN_PAUSE_MS = 60;
-const LUK_DROPDOWN_PAUSE_MS = 400;
+const PREFILL_PAUSE_MS = 20;
+const CHIP_CLICK_TIMEOUT_MS = 1200;
+const DROPDOWN_PAUSE_MS = 40;
+const LUK_DROPDOWN_PAUSE_MS = 180;
+/** After typing in autocomplete — wait for suggestions instead of a fixed long sleep. */
+const TYPEAHEAD_SUGGESTION_TIMEOUT_MS = 2200;
+const LUK_CLICK_VERIFY_MS = 90;
 
 async function prefillPause(page: Page, ms = PREFILL_PAUSE_MS) {
   if (ms > 0) await page.waitForTimeout(ms);
+}
+
+/** Wait until autocomplete / luk list rows appear (or short fallback pause). */
+async function waitForTypeaheadSuggestions(page: Page): Promise<void> {
+  const ready = await page
+    .locator(
+      '[role="listbox"]:visible [role="option"], ul.options-list:visible li, [data-prefill-active-menu="1"] li'
+    )
+    .first()
+    .waitFor({ state: "visible", timeout: TYPEAHEAD_SUGGESTION_TIMEOUT_MS })
+    .then(() => true)
+    .catch(() => false);
+  if (!ready) await prefillPause(page, 60);
 }
 
 const BROWSER_EVALUATE_SHIM =
@@ -138,6 +154,128 @@ const SATAVSO_ALIASES: Record<string, string[]> = {
   "საერთო სათავსო": ["საერთო სათავსო"],
   "სარდაფი + სხვენი": ["სარდაფი + სხვენი", "სარდაფი+სხვენი", "სარდაფი და სხვენი"],
 };
+
+/** Step 4 single-choice rows: div.luk-flex-wrap chips under h2 headings. */
+type FlexChipRowConfig = {
+  chipLabels: readonly string[];
+  aliases: Record<string, string[]>;
+  /** Identify the correct chip row when several exist on the page. */
+  rowMarkers: RegExp[];
+};
+
+const FLEX_CHIP_ROW_CONFIGS: Record<string, FlexChipRowConfig> = {
+  "პარკირება": {
+    chipLabels: [
+      "ავტოფარეხი",
+      "პარკინგის ადგილი",
+      "ეზოს პარკინგი",
+      "მიწისქვეშა პარკინგი",
+      "ფასიანი ავტოსადგომი",
+      "პარკინგის გარეშე",
+    ],
+    aliases: {
+      "ავტოფარეხი": ["ავტოფარეხი", "ავტოფარეხის", "გარაჟი"],
+      "პარკინგის ადგილი": [
+        "პარკინგის ადგილი",
+        "პარკინგის ადგილის",
+        "პარკინგ ადგილი",
+      ],
+      "ეზოს პარკინგი": ["ეზოს პარკინგი", "ეზოში პარკინგი"],
+      "მიწისქვეშა პარკინგი": [
+        "მიწისქვეშა პარკინგი",
+        "მიწის ქვეშა პარკინგი",
+        "მიწისქვეშა",
+        "მიწის ქვეშა",
+      ],
+      "ფასიანი ავტოსადგომი": ["ფასიანი ავტოსადგომი", "ფასიანი ავტოსადგომის"],
+      "პარკინგის გარეშე": ["პარკინგის გარეშე", "პარკინგის გარეშეა", "პარკინგი არ არის"],
+    },
+    rowMarkers: [/ავტოფარეხი/, /პარკინგის გარეშე/],
+  },
+  "სამშენებლო მასალა": {
+    chipLabels: ["ბლოკი", "აგური", "ხის მასალა", "რკინა-ბეტონი", "კომბინირებული"],
+    aliases: {
+      "ბლოკი": ["ბლოკი", "ბლოკის"],
+      "აგური": ["აგური", "აგურის"],
+      "ხის მასალა": ["ხის მასალა", "ხის", "თეხვი"],
+      "რკინა-ბეტონი": ["რკინა-ბეტონი", "რკინ-ბეტონი", "რკინა ბეტონი"],
+      "კომბინირებული": ["კომბინირებული", "კომბინირებულია"],
+    },
+    rowMarkers: [/ბლოკი/, /აგური/, /კომბინირებული/],
+  },
+};
+
+const FLEX_CHIP_EXACT_LABELS = new Set<string>(
+  Object.values(FLEX_CHIP_ROW_CONFIGS).flatMap((config) => [...config.chipLabels])
+);
+
+function isFlexChipExactLabel(label: string): boolean {
+  return FLEX_CHIP_EXACT_LABELS.has(normFieldLabel(label));
+}
+
+function flexChipOptionVariants(sectionLabel: string, value: string): string[] {
+  const config = FLEX_CHIP_ROW_CONFIGS[sectionLabel];
+  if (!config) return [];
+  const raw = normFieldLabel(dedupeRepeatedLabelValue(value));
+  if (!raw) return [];
+  const fromAliases = resolveAliasVariants(raw, config.aliases);
+  if (fromAliases) return fromAliases;
+  if (config.chipLabels.includes(raw)) return [raw];
+  return [];
+}
+
+function canonicalFlexChipLabel(sectionLabel: string, value: string): string {
+  return flexChipOptionVariants(sectionLabel, value)[0] || "";
+}
+
+function isFlexChipRowValue(sectionLabel: string, value: string): boolean {
+  return flexChipOptionVariants(sectionLabel, value).length > 0;
+}
+
+function isParkingChipValue(value: string): boolean {
+  return isFlexChipRowValue("პარკირება", value);
+}
+
+function canonicalParkingChipLabel(value: string): string {
+  return canonicalFlexChipLabel("პარკირება", value);
+}
+
+function getParkingPrefillValue(listing: MyhomeListing): string {
+  return getFlexChipPrefillValue(listing, "პარკირება", ["სათავსო", "სათავსოს ტიპი"]);
+}
+
+function getFlexChipPrefillValue(
+  listing: MyhomeListing,
+  sectionLabel: string,
+  extraValueKeys: readonly string[] = []
+): string {
+  const config = FLEX_CHIP_ROW_CONFIGS[sectionLabel];
+  if (!config) return "";
+
+  const candidates: string[] = [];
+  const direct = getRawPreferenceValue(listing, sectionLabel)?.trim();
+  if (direct && direct !== "კი" && direct !== "არა") candidates.push(direct);
+
+  for (const key of extraValueKeys) {
+    const v = listing.rawData?.[key]?.trim();
+    if (v && v !== "კი" && v !== "არა") candidates.push(v);
+  }
+
+  for (const raw of candidates) {
+    const canon = canonicalFlexChipLabel(sectionLabel, raw);
+    if (canon) return canon;
+  }
+
+  const sorted = [...config.chipLabels].sort((a, b) => b.length - a.length);
+  for (const raw of candidates) {
+    const norm = normFieldLabel(dedupeRepeatedLabelValue(raw));
+    for (const chip of sorted) {
+      if (norm === chip || norm.includes(chip)) return chip;
+    }
+  }
+
+  return "";
+}
 
 function resolveAliasVariants(
   raw: string,
@@ -572,6 +710,11 @@ async function scrollToFormField(page: Page, label: string): Promise<void> {
     "ჭერის სიმაღლე",
     "სტატუსი",
     "მდგომარეობა",
+    "სამშენებლო მასალა",
+    "პარკირება",
+    "გათბობა",
+    "ცხელი წყალი",
+    "კარ-ფანჯარა",
   ]);
   const locator = exactHeadings.has(label)
     ? page
@@ -582,7 +725,7 @@ async function scrollToFormField(page: Page, label: string): Promise<void> {
         .filter({ hasText: new RegExp(label.replace(/\./g, "\\."), "iu") });
 
   await locator.first().scrollIntoViewIfNeeded().catch(() => {});
-  await prefillPause(page, 30);
+  await prefillPause(page, 15);
 }
 
 /** Section heading → dropdown placeholder (…ტიპი) → option value. */
@@ -1567,24 +1710,24 @@ async function pickLukMenuVariants(
         await opt.scrollIntoViewIfNeeded().catch(() => {});
         await opt.dispatchEvent("mousedown");
         await opt.click({ force: true, timeout: CHIP_CLICK_TIMEOUT_MS });
-        await prefillPause(page, 220);
+        await prefillPause(page, LUK_CLICK_VERIFY_MS);
         if (await lukFieldShowsValue(page, sectionLabel, variants)) return true;
         if (await lukSelectSelectionApplied(page, sectionLabel, variants)) return true;
         await markLukFieldMenu(page);
       }
 
       const exact = menu.getByText(variant, { exact: true }).first();
-      if (await exact.isVisible({ timeout: 1000 }).catch(() => false)) {
+      if (await exact.isVisible({ timeout: 700 }).catch(() => false)) {
         await exact.dispatchEvent("mousedown");
         await exact.click({ force: true, timeout: CHIP_CLICK_TIMEOUT_MS });
-        await prefillPause(page, 220);
+        await prefillPause(page, LUK_CLICK_VERIFY_MS);
         if (await lukFieldShowsValue(page, sectionLabel, variants)) return true;
         if (await lukSelectSelectionApplied(page, sectionLabel, variants)) return true;
         await markLukFieldMenu(page);
       }
 
       if (await clickLukMenuOption(page, variant)) {
-        await prefillPause(page, 220);
+        await prefillPause(page, LUK_CLICK_VERIFY_MS);
         if (await lukFieldShowsValue(page, sectionLabel, variants)) return true;
         if (await lukSelectSelectionApplied(page, sectionLabel, variants)) return true;
         await markLukFieldMenu(page);
@@ -1619,7 +1762,7 @@ async function clickLukOptionVariants(
     if (await inMenu.isVisible({ timeout: 1200 }).catch(() => false)) {
       await inMenu.dispatchEvent("mousedown");
       await inMenu.click({ force: true, timeout: CHIP_CLICK_TIMEOUT_MS });
-      await prefillPause(page, 280);
+      await prefillPause(page, LUK_CLICK_VERIFY_MS);
       if (await lukFieldShowsValue(page, sectionLabel, variants)) return true;
     }
 
@@ -1632,7 +1775,7 @@ async function clickLukOptionVariants(
       if (box.y < menuTopY - 8 || box.y > menuBottomY) continue;
       await opt.dispatchEvent("mousedown");
       await opt.click({ force: true, timeout: CHIP_CLICK_TIMEOUT_MS });
-      await prefillPause(page, 280);
+      await prefillPause(page, LUK_CLICK_VERIFY_MS);
       if (await lukFieldShowsValue(page, sectionLabel, variants)) return true;
     }
   }
@@ -1649,7 +1792,7 @@ async function prefillNestedSectionTypeDropdown(
   if (!variants.length) return false;
 
   await scrollToFormField(page, sectionHeading);
-  await prefillPause(page, 120);
+  await prefillPause(page, 50);
 
   if (await lukFieldShowsValue(page, sectionHeading, variants)) return true;
   if (await lukSelectSelectionApplied(page, sectionHeading, variants)) return true;
@@ -1713,7 +1856,7 @@ async function expandCreateFormSections(page: Page): Promise<void> {
     .first()
     .click({ timeout: CHIP_CLICK_TIMEOUT_MS })
     .catch(() => {});
-  await prefillPause(page, 120);
+  await prefillPause(page, 60);
 }
 
 async function markLukFieldTrigger(
@@ -2043,6 +2186,11 @@ function dropdownOptionVariants(value: string, sectionLabel: string): string[] {
   if (sectionLabel === "პროექტის ტიპი") return projectTypeOptionVariants(value);
   const raw = normFieldLabel(dedupeRepeatedLabelValue(value));
   if (!raw) return [];
+
+  if (FLEX_CHIP_ROW_CONFIGS[sectionLabel]) {
+    const fromFlex = flexChipOptionVariants(sectionLabel, raw);
+    if (fromFlex.length) return fromFlex;
+  }
 
   if (sectionLabel === "მისაღები" || sectionLabel === "მისაღების ტიპი") {
     const fromAliases = resolveAliasVariants(raw, MISAGEBI_ALIASES);
@@ -2425,10 +2573,10 @@ async function tryPickLukVariants(
   for (const variant of variants) {
     if (await markLukSelectOption(page, [variant])) {
       await clickMarkedLukOption(page);
-      await prefillPause(page, 280);
+      await prefillPause(page, LUK_CLICK_VERIFY_MS);
       if (await lukSelectSelectionApplied(page, sectionLabel, variants)) return true;
       await page.keyboard.press("Enter").catch(() => {});
-      await prefillPause(page, 200);
+      await prefillPause(page, 60);
       if (await lukSelectSelectionApplied(page, sectionLabel, variants)) return true;
     }
   }
@@ -2498,7 +2646,7 @@ async function pickFromLukOptionsList(
     await list.evaluate((el, offset) => {
       el.scrollTop = offset;
     }, top);
-    await prefillPause(page, 160);
+    await prefillPause(page, 70);
 
     for (const variant of variants) {
       const textRe = new RegExp(`^\\s*${escapeRegExp(variant)}\\s*$`, "u");
@@ -2515,7 +2663,7 @@ async function pickFromLukOptionsList(
       } else {
         await li.click({ force: true, timeout: CHIP_CLICK_TIMEOUT_MS });
       }
-      await prefillPause(page, 320);
+      await prefillPause(page, LUK_CLICK_VERIFY_MS);
 
       if (await lukSelectSelectionApplied(page, sectionLabel, variants)) return true;
     }
@@ -2551,7 +2699,7 @@ async function waitForLukSelectOptions(page: Page, minCount = 1): Promise<void> 
         return countOptions(document.body) >= min;
       },
       minCount,
-      { timeout: 10000 }
+      { timeout: 5000 }
     )
     .catch(() => {});
 }
@@ -2668,7 +2816,7 @@ async function prefillLukSelectByLabel(
   }
 
   await waitForLukSelectOptions(page, 1);
-  await prefillPause(page, 250);
+  await prefillPause(page, 100);
 
   if (await pickFromLukOptionsList(page, sectionLabel, variants)) return true;
 
@@ -2730,7 +2878,7 @@ async function scrollMenuAndClickOption(
         const menu = document.querySelector("[data-prefill-scroll-menu='1']");
         if (menu) menu.scrollTop = offset;
       }, top);
-      await prefillPause(page, 160);
+      await prefillPause(page, 70);
     }
 
     if (await tryPickLukVariants(page, sectionLabel, variants, scrollMenu)) return true;
@@ -2746,6 +2894,203 @@ async function prefillProjectTypeField(page: Page, rawValue: string): Promise<bo
   return prefillLukSelectByLabel(page, "პროექტის ტიპი", rawValue);
 }
 
+/** Step 4 flex chip row — click leaf chip under h2, verify selection (not luk dropdown). */
+async function readFlexChipRowSelection(
+  page: Page,
+  sectionLabel: string
+): Promise<string> {
+  return page.evaluate((label) => {
+    function norm(s: string) {
+      return (s || "").replace(/\s*\*\s*$/, "").trim().replace(/\s+/g, " ");
+    }
+    function flexChipLooksSelected(el: Element): boolean {
+      const chip = (el.closest("[class*='rounded']") as HTMLElement) || (el as HTMLElement);
+      const cls = chip.className?.toString() || "";
+      if (chip.getAttribute("aria-pressed") === "true") return true;
+      if (chip.getAttribute("aria-checked") === "true") return true;
+      if (/luk-bg-white/i.test(cls)) {
+        return /border-(primary|brand|blue|green)|ring-|shadow/i.test(cls);
+      }
+      if (/border-(primary|brand|blue|green)|bg-(primary|brand|blue)|ring-/i.test(cls)) {
+        return true;
+      }
+      return false;
+    }
+    function directChipText(el: Element): string {
+      for (const node of [el, ...Array.from(el.querySelectorAll("span,p"))]) {
+        if (node.children.length > 1) continue;
+        const t = norm(node.textContent || "");
+        if (t && t.length <= 40) return t;
+      }
+      return norm(el.textContent || "");
+    }
+    function findChipRow(heading: Element): Element | null {
+      let node: Element | null = heading;
+      for (let d = 0; d < 16 && node; d++) {
+        for (const row of node.querySelectorAll('[class*="luk-flex-wrap"]')) {
+          if (row.children.length >= 2) return row;
+        }
+        node = node.parentElement;
+      }
+      return null;
+    }
+    function readSelectedFromRow(row: Element): string {
+      const children = Array.from(row.children);
+      const nonWhite = children.filter((c) => {
+        const cls = (c as HTMLElement).className?.toString() || "";
+        return !/luk-bg-white/i.test(cls);
+      });
+      if (nonWhite.length === 1) return directChipText(nonWhite[0]);
+      for (const child of children) {
+        if (flexChipLooksSelected(child)) return directChipText(child);
+      }
+      return "";
+    }
+
+    for (const heading of document.querySelectorAll("h2,h3,h4")) {
+      if (norm(heading.textContent || "") !== norm(label)) continue;
+      const row = findChipRow(heading);
+      if (!row) continue;
+      const selected = readSelectedFromRow(row);
+      if (selected) return selected;
+    }
+    return "";
+  }, sectionLabel);
+}
+
+async function clickFlexChipRowInPage(
+  page: Page,
+  sectionLabel: string,
+  chipLabel: string
+): Promise<boolean> {
+  return page.evaluate(
+    ({ sectionLabel, chipLabel }) => {
+      function norm(s: string) {
+        return (s || "").replace(/\s*\*\s*$/, "").trim().replace(/\s+/g, " ");
+      }
+      function flexChipLooksSelected(el: Element): boolean {
+        const chip = (el.closest("[class*='rounded']") as HTMLElement) || (el as HTMLElement);
+        const cls = chip.className?.toString() || "";
+        if (chip.getAttribute("aria-pressed") === "true") return true;
+        if (chip.getAttribute("aria-checked") === "true") return true;
+        if (/luk-bg-white/i.test(cls)) {
+          return /border-(primary|brand|blue|green)|ring-|shadow/i.test(cls);
+        }
+        if (/border-(primary|brand|blue|green)|bg-(primary|brand|blue)|ring-/i.test(cls)) {
+          return true;
+        }
+        return false;
+      }
+      function directChipText(el: Element): string {
+        for (const node of [el, ...Array.from(el.querySelectorAll("span,p"))]) {
+          if (node.children.length > 1) continue;
+          const t = norm(node.textContent || "");
+          if (t && t.length <= 40) return t;
+        }
+        return norm(el.textContent || "");
+      }
+      function findChipRow(heading: Element): Element | null {
+        let node: Element | null = heading;
+        for (let d = 0; d < 16 && node; d++) {
+          for (const row of node.querySelectorAll('[class*="luk-flex-wrap"]')) {
+            if (row.children.length >= 2) return row;
+          }
+          node = node.parentElement;
+        }
+        return null;
+      }
+      function activateChip(chip: HTMLElement): void {
+        chip.scrollIntoView({ block: "center", inline: "center" });
+        chip.dispatchEvent(new MouseEvent("mousedown", { bubbles: true, cancelable: true }));
+        chip.dispatchEvent(new MouseEvent("mouseup", { bubbles: true, cancelable: true }));
+        chip.click();
+      }
+
+      function readSelectedFromRow(row: Element): string {
+        const children = Array.from(row.children);
+        const nonWhite = children.filter((c) => {
+          const cls = (c as HTMLElement).className?.toString() || "";
+          return !/luk-bg-white/i.test(cls);
+        });
+        if (nonWhite.length === 1) return directChipText(nonWhite[0]);
+        for (const child of children) {
+          if (flexChipLooksSelected(child)) return directChipText(child);
+        }
+        return "";
+      }
+
+      const target = norm(chipLabel);
+      for (const heading of document.querySelectorAll("h2,h3,h4")) {
+        if (norm(heading.textContent || "") !== norm(sectionLabel)) continue;
+        const row = findChipRow(heading);
+        if (!row) continue;
+
+        for (const child of row.children) {
+          if (directChipText(child) !== target) continue;
+          activateChip(child as HTMLElement);
+          if (readSelectedFromRow(row) === target) return true;
+        }
+      }
+      return false;
+    },
+    { sectionLabel, chipLabel }
+  );
+}
+
+async function prefillFlexChipRowField(
+  page: Page,
+  sectionLabel: string,
+  rawValue: string
+): Promise<boolean> {
+  const chipLabel = canonicalFlexChipLabel(sectionLabel, rawValue) ||
+    getFlexChipPrefillValue(
+      { rawData: { [sectionLabel]: rawValue } } as MyhomeListing,
+      sectionLabel
+    );
+  if (!chipLabel || !FLEX_CHIP_ROW_CONFIGS[sectionLabel]) return false;
+
+  await scrollToFormField(page, sectionLabel);
+  await prefillPause(page, 60);
+
+  const current = await readFlexChipRowSelection(page, sectionLabel);
+  if (current === chipLabel) return true;
+
+  if (await clickFlexChipRowInPage(page, sectionLabel, chipLabel)) {
+    await prefillPause(page, 80);
+    if ((await readFlexChipRowSelection(page, sectionLabel)) === chipLabel) {
+      return true;
+    }
+  }
+
+  const sectionRe = new RegExp(
+    `^${escapeRegExp(sectionLabel)}(?:\\s*\\*)?$`,
+    "iu"
+  );
+  const heading = page.locator("h2,h3,h4").filter({ hasText: sectionRe }).first();
+  if (await heading.isVisible({ timeout: 800 }).catch(() => false)) {
+    const row = heading
+      .locator("xpath=following::*[contains(@class,'luk-flex-wrap')][1]")
+      .first();
+    const chip = row.getByText(chipLabel, { exact: true }).first();
+    if (await chip.isVisible({ timeout: 500 }).catch(() => false)) {
+      const box = await chip.boundingBox().catch(() => null);
+      if (box) {
+        await page.mouse.click(box.x + box.width / 2, box.y + box.height / 2);
+        await prefillPause(page, 80);
+        if ((await readFlexChipRowSelection(page, sectionLabel)) === chipLabel) {
+          return true;
+        }
+      }
+    }
+  }
+
+  return false;
+}
+
+async function prefillParkingChipField(page: Page, rawValue: string): Promise<boolean> {
+  return prefillFlexChipRowField(page, "პარკირება", rawValue);
+}
+
 /** Chip row or dropdown (გათბობა may be either on the create form). */
 async function prefillPreferenceField(
   page: Page,
@@ -2753,6 +3098,11 @@ async function prefillPreferenceField(
   value: string,
   placeholder?: string
 ): Promise<boolean> {
+  if (isFlexChipRowValue(sectionLabel, value)) {
+    if (await prefillFlexChipRowField(page, sectionLabel, value)) return true;
+    return false;
+  }
+
   await scrollToFormField(page, sectionLabel);
   await clickChipInSection(page, sectionLabel, value);
   await prefillPause(page, 80);
@@ -2761,8 +3111,15 @@ async function prefillPreferenceField(
       function norm(s: string) {
         return (s || "").replace(/\s+/g, " ").trim();
       }
-      for (const el of document.querySelectorAll("label, span, p, motion.div, div")) {
-        if (norm(el.textContent || "") !== norm(sectionLabel)) continue;
+      function headingMatches(text: string, label: string) {
+        const t = norm(text).replace(/\s*\*$/, "");
+        const l = norm(label);
+        return t === l;
+      }
+      for (const el of document.querySelectorAll(
+        "h2, h3, h4, label, span, p, motion.div, div"
+      )) {
+        if (!headingMatches(el.textContent || "", sectionLabel)) continue;
         let node: Element | null = el.parentElement;
         for (let depth = 0; depth < 12 && node; depth++) {
           for (const chip of node.querySelectorAll(
@@ -2870,7 +3227,8 @@ async function clickChipInSection(
   if (!value) return;
 
   const marked = await page.evaluate(
-    ({ sectionLabel, optionText }) => {
+    ({ sectionLabel, optionText, flexChipExactLabels }) => {
+      const flexExact = new Set(flexChipExactLabels);
       function norm(s: string) {
         return s.replace(/\s*\*\s*$/, "").trim();
       }
@@ -2878,17 +3236,21 @@ async function clickChipInSection(
       function chipRowIn(node: Element): Element | null {
         for (const child of Array.from(node.children)) {
           const chips = child.querySelectorAll(
-            "motion.div,button,[role='button'],motion.div[class*='rounded'],div[class*='rounded'],label[class*='rounded']"
+            "motion.div,button,[role='button'],motion.div[class*='rounded'],div[class*='rounded'],div[class*='rounded-lg'],label[class*='rounded']"
           );
           if (chips.length >= 2) return child;
         }
+        const flexRow = node.querySelector(".luk-flex.luk-flex-wrap.luk-gap-3");
+        if (flexRow) return flexRow;
         return null;
       }
 
       function labelsMatch(text: string, label: string): boolean {
         const t = norm(text).replace(/\s+/g, " ");
         const l = norm(label);
-        if (t === l || t.startsWith(l)) return true;
+        if (t === l) return true;
+        if (l.length >= 12 && t.startsWith(l)) return true;
+        if (l.length < 12 && (t === l || t.startsWith(l))) return true;
         if (l.includes("სვ") && l.includes("წერტილი") && t.includes("სვ") && t.includes("წერტილი")) {
           return true;
         }
@@ -2900,7 +3262,11 @@ async function clickChipInSection(
       function optionMatches(text: string, option: string): boolean {
         const t = norm(text);
         const o = norm(option);
+        if (flexExact.has(o)) return t === o;
         if (t === o) return true;
+        if (/პარკინგ/i.test(o) || /პარკინგ/i.test(t)) {
+          return t === o;
+        }
         if (t.startsWith(o) || o.startsWith(t)) return true;
         if (t.includes(o) && t.length <= o.length + 16) return true;
         const tm = t.match(/^(\d+)\+?$/);
@@ -2910,13 +3276,19 @@ async function clickChipInSection(
       }
 
       function findSectionRoot(label: string): Element | null {
-        const nodes = document.querySelectorAll("label, span, p, div, h2, h3, h4");
+        const nodes = document.querySelectorAll(
+          "h2, h3, h4, label, span, p, div"
+        );
         for (const el of nodes) {
           if (!labelsMatch(el.textContent || "", label)) continue;
           let node: Element | null = el;
-          for (let depth = 0; depth < 8 && node; depth++) {
+          for (let depth = 0; depth < 12 && node; depth++) {
             const row = chipRowIn(node);
             if (row) return row;
+            const flexRow = node.querySelector(
+              ".luk-flex.luk-flex-wrap.luk-gap-3"
+            );
+            if (flexRow) return flexRow;
             node = node.parentElement;
           }
         }
@@ -2931,7 +3303,7 @@ async function clickChipInSection(
       if (!root) return false;
 
       const candidates = root.querySelectorAll(
-        "motion.div,button,[role=button],motion.div[class*='rounded'],motion.div[class*='border'],div[class*='rounded'],label[class*='rounded'],span,motion.span,motion.p"
+        "motion.div,button,[role=button],motion.div[class*='rounded'],motion.div[class*='border'],div[class*='rounded'],div[class*='rounded-lg'],label[class*='rounded'],span,motion.span,motion.p"
       );
 
       for (const el of candidates) {
@@ -2948,7 +3320,7 @@ async function clickChipInSection(
       }
       return false;
     },
-    { sectionLabel, optionText: value }
+    { sectionLabel, optionText: value, flexChipExactLabels: [...FLEX_CHIP_EXACT_LABELS] }
   );
 
   if (marked) {
@@ -3035,6 +3407,9 @@ function preferenceChipMatches(chipText: string, target: string): boolean {
   const c = target.replace(/\s+/g, " ").trim();
   if (!t || !c) return false;
   if (t === c) return true;
+  if (/პარკინგ/i.test(c) || /პარკინგ/i.test(t)) {
+    return t === c;
+  }
   if (t.startsWith(c) || c.startsWith(t)) return true;
   if (t.includes(c) && t.length <= c.length + 16) return true;
   return false;
@@ -3093,7 +3468,7 @@ async function prefillBuildingStatusAndCondition(
 
   if (buildingStatus) {
     await scrollToFormField(page, "სტატუსი");
-    await prefillPause(page, 250);
+    await prefillPause(page, 80);
     if (
       !(await prefillSectionChipPlaywright(page, "სტატუსი", buildingStatus)) &&
       !(await prefillPreferenceField(page, "სტატუსი", buildingStatus))
@@ -3104,7 +3479,7 @@ async function prefillBuildingStatusAndCondition(
 
   if (condition) {
     await scrollToFormField(page, "მდგომარეობა");
-    await prefillPause(page, 250);
+    await prefillPause(page, 80);
     if (
       !(await prefillSectionChipPlaywright(page, "მდგომარეობა", condition)) &&
       !(await prefillPreferenceField(page, "მდგომარეობა", condition))
@@ -3128,6 +3503,10 @@ const CHIP_SECTION_ALIASES: Record<string, string[]> = {
 /** myhome.ge count chips (rooms, bathrooms) are often Framer Motion divs, not buttons. */
 const COUNT_CHIP_SELECTORS =
   "motion.div,button,[role=button],label[class*='rounded'],label[class*='border'],[class*='cursor-pointer'][class*='rounded'],[class*='cursor-pointer'][class*='border'],motion.div[class*='rounded']";
+
+/** Step 4 preference rows (div.luk-rounded-lg chips under h2). */
+const PREFERENCE_CHIP_SELECTORS =
+  `${COUNT_CHIP_SELECTORS},div[class*='rounded-lg'],div[class*='rounded']`;
 
 function getBathroomsValue(listing: MyhomeListing): string {
   return (
@@ -3379,10 +3758,10 @@ function buildChipPrefillTasks(listing: MyhomeListing): ChipClickTask[] {
   const tasks: ChipClickTask[] = [];
 
   for (const label of CHIP_STYLE_ROW_LABELS) {
+    if (FLEX_CHIP_ROW_CONFIGS[label]) continue;
     const v = getRawPreferenceValue(listing, label);
-    if (v && v !== "კი" && v !== "არა") {
-      tasks.push({ section: label, chip: v });
-    }
+    if (!v || v === "კი" || v === "არა") continue;
+    tasks.push({ section: label, chip: v });
   }
 
   for (const label of collectYesAmenityLabels(listing)) {
@@ -3411,7 +3790,8 @@ async function batchPrefillChips(page: Page, tasks: ChipClickTask[]): Promise<nu
   if (tasks.length === 0) return 0;
 
   const batchResult = await page.evaluate(
-    ({ taskList, sectionAliases, countChipSelectors }) => {
+    ({ taskList, sectionAliases, countChipSelectors, flexChipExactLabels }) => {
+    const flexExact = new Set(flexChipExactLabels);
     function norm(s: string) {
       return (s || "").replace(/\s*\*\s*$/, "").trim().replace(/\s+/g, " ");
     }
@@ -3419,7 +3799,11 @@ async function batchPrefillChips(page: Page, tasks: ChipClickTask[]): Promise<nu
     function chipTextMatches(text: string, chip: string): boolean {
       const t = norm(text);
       const c = norm(chip);
+      if (flexExact.has(c)) return t === c;
       if (t === c) return true;
+      if (/პარკინგ/i.test(c) || /პარკინგ/i.test(t)) {
+        return t === c;
+      }
       if (t.startsWith(c) || c.startsWith(t)) return true;
       if (t.includes(c) && t.length <= c.length + 40) return true;
       const tm = t.match(/^(\d+)\+?$/);
@@ -3444,19 +3828,27 @@ async function batchPrefillChips(page: Page, tasks: ChipClickTask[]): Promise<nu
       function chipRowIn(node: Element): Element | null {
         for (const child of Array.from(node.children)) {
           const chips = child.querySelectorAll(
-            "motion.div,button,[role=button],div[class*='rounded'],label[class*='rounded']"
+            "motion.div,button,[role=button],div[class*='rounded'],div[class*='rounded-lg'],label[class*='rounded']"
           );
           if (chips.length >= 2) return child;
         }
+        const flexRow = node.querySelector(".luk-flex.luk-flex-wrap.luk-gap-3");
+        if (flexRow) return flexRow;
         return null;
       }
 
-      for (const el of document.querySelectorAll("label,span,p,motion.div")) {
+      for (const el of document.querySelectorAll(
+        "h2,h3,h4,label,span,p,motion.div"
+      )) {
         if (!labelsMatch(el.textContent || "", label)) continue;
         let node: Element | null = el;
         for (let depth = 0; depth < 10 && node; depth++) {
           const row = chipRowIn(node);
           if (row) return row;
+          const flexRow = node.querySelector(
+            ".luk-flex.luk-flex-wrap.luk-gap-3"
+          );
+          if (flexRow) return flexRow;
           node = node.parentElement;
         }
       }
@@ -3490,9 +3882,11 @@ async function batchPrefillChips(page: Page, tasks: ChipClickTask[]): Promise<nu
         let node: Element | null = el;
         for (let depth = 0; depth < 14 && node; depth++) {
           const chips = node.querySelectorAll(
-            "button,[role=button],label[class*='rounded'],[class*='border']"
+            "button,[role=button],label[class*='rounded'],div[class*='rounded'],div[class*='rounded-lg'],[class*='border']"
           );
           if (chips.length >= 2) return node;
+          const flexRow = node.querySelector(".luk-flex.luk-flex-wrap.luk-gap-3");
+          if (flexRow) return node;
           node = node.parentElement;
         }
       }
@@ -3572,7 +3966,12 @@ async function batchPrefillChips(page: Page, tasks: ChipClickTask[]): Promise<nu
         if (!t) continue;
         if (!chipTextMatches(t, c)) continue;
 
-        const target = el as HTMLElement;
+        const target = (el.closest(
+          "motion.div[class*='rounded'], div[class*='rounded'], button, [role=button], label[class*='rounded']"
+        ) || el) as HTMLElement;
+        const targetText = norm(target.textContent || "");
+        if (flexExact.has(c) && targetText !== c) continue;
+
         if (/^H[1-6]$/i.test(target.tagName) || target.closest("h2,h3,h4")) continue;
 
         if (isChipSelected(target)) {
@@ -3640,7 +4039,8 @@ async function batchPrefillChips(page: Page, tasks: ChipClickTask[]): Promise<nu
     {
       taskList: tasks,
       sectionAliases: CHIP_SECTION_ALIASES,
-      countChipSelectors: COUNT_CHIP_SELECTORS,
+      countChipSelectors: PREFERENCE_CHIP_SELECTORS,
+      flexChipExactLabels: [...FLEX_CHIP_EXACT_LABELS],
     }
   );
 
@@ -3912,7 +4312,7 @@ async function prefillMainCountChips(
           body.includes("სვ")
         );
       },
-      { timeout: 8000 }
+      { timeout: 5000 }
     )
     .catch(() => {});
 
@@ -4265,10 +4665,10 @@ async function selectAutocompleteOption(
 ): Promise<boolean> {
   if (!value?.trim()) return false;
   const text = value.trim();
-  await prefillPause(page, 80);
+  await prefillPause(page, 40);
 
   const listbox = page.locator('[role="listbox"]:visible').first();
-  if (await listbox.isVisible({ timeout: 1500 }).catch(() => false)) {
+  if (await listbox.isVisible({ timeout: 1000 }).catch(() => false)) {
     const optionTexts = await listbox.locator('[role="option"]').allTextContents();
     let bestIdx = -1;
     let bestScore = 0;
@@ -4492,7 +4892,7 @@ async function commitAutocompleteInput(
   if (!val) return false;
 
   await input.click({ timeout: CHIP_CLICK_TIMEOUT_MS }).catch(() => {});
-  await prefillPause(page, 150);
+  await prefillPause(page, 60);
 
   let picked =
     (await selectAutocompleteOption(page, val, options)) ||
@@ -4500,16 +4900,16 @@ async function commitAutocompleteInput(
 
   if (!picked) {
     await page.keyboard.press("ArrowDown").catch(() => {});
-    await prefillPause(page, 80);
+    await prefillPause(page, 40);
     await page.keyboard.press("Enter").catch(() => {});
-    await prefillPause(page, 120);
+    await prefillPause(page, 50);
     picked = true;
   }
 
   await input.click({ timeout: CHIP_CLICK_TIMEOUT_MS }).catch(() => {});
-  await prefillPause(page, 120);
+  await prefillPause(page, 50);
   await page.keyboard.press("Tab").catch(() => {});
-  await prefillPause(page, 100);
+  await prefillPause(page, 40);
   await closeOpenDropdowns(page);
   return picked;
 }
@@ -4537,8 +4937,8 @@ async function fillLocationAutocompleteField(
   await input.click({ timeout: CHIP_CLICK_TIMEOUT_MS });
   await input.fill("");
   await page.keyboard.press("Control+A").catch(() => {});
-  await page.keyboard.type(val, { delay: 25 }).catch(() => {});
-  await prefillPause(page, 600);
+  await page.keyboard.type(val, { delay: 12 }).catch(() => {});
+  await waitForTypeaheadSuggestions(page);
   await commitAutocompleteInput(page, input, val, { pickFirst: true });
 }
 
@@ -4556,15 +4956,15 @@ async function commitStreetAutocompleteInput(
 
   if (!picked) {
     await page.keyboard.press("ArrowDown").catch(() => {});
-    await prefillPause(page, 100);
+    await prefillPause(page, 40);
     await page.keyboard.press("Enter").catch(() => {});
-    await prefillPause(page, 120);
+    await prefillPause(page, 50);
   }
 
   await input.click({ timeout: CHIP_CLICK_TIMEOUT_MS }).catch(() => {});
-  await prefillPause(page, 120);
+  await prefillPause(page, 50);
   await page.keyboard.press("Tab").catch(() => {});
-  await prefillPause(page, 100);
+  await prefillPause(page, 40);
   await closeOpenDropdowns(page);
 }
 
@@ -4583,8 +4983,8 @@ async function fillStreetAutocompleteField(page: Page, street: string): Promise<
     await input.click({ timeout: CHIP_CLICK_TIMEOUT_MS });
     await input.fill("");
     await page.keyboard.press("Control+A").catch(() => {});
-    await page.keyboard.type(query, { delay: 30 }).catch(() => {});
-    await prefillPause(page, 900);
+    await page.keyboard.type(query, { delay: 12 }).catch(() => {});
+    await waitForTypeaheadSuggestions(page);
 
     await commitStreetAutocompleteInput(page, input, street, query);
 
@@ -4663,9 +5063,9 @@ async function closeOpenDropdowns(page: Page): Promise<void> {
   await page
     .locator('[role="listbox"]:visible, [data-prefill-dropdown-open="1"]')
     .first()
-    .waitFor({ state: "hidden", timeout: 1200 })
+    .waitFor({ state: "hidden", timeout: 500 })
     .catch(() => {});
-  await prefillPause(page, 40);
+  await prefillPause(page, 20);
 }
 
 function listingLocation(listing: MyhomeListing) {
@@ -4733,17 +5133,32 @@ function buildPostExpandChipTasks(listing: MyhomeListing): ChipClickTask[] {
 
 async function applyAdditionalParametersPrefill(
   page: Page,
-  listing: MyhomeListing
+  listing: MyhomeListing,
+  options?: { skipStatusAndCondition?: boolean }
 ): Promise<void> {
   await expandCreateFormSections(page);
   await prefillMainAreaField(page, listing);
-  await prefillBuildingStatusAndCondition(page, listing);
+  if (!options?.skipStatusAndCondition) {
+    await prefillBuildingStatusAndCondition(page, listing);
+  }
   await page
     .locator("h2,h3,h4")
     .filter({ hasText: /ავეჯი/i })
     .first()
     .scrollIntoViewIfNeeded()
     .catch(() => {});
+  const constructionEarly = getFlexChipPrefillValue(listing, "სამშენებლო მასალა");
+  const parkingEarly = getParkingPrefillValue(listing);
+  if (constructionEarly || parkingEarly) {
+    await closeOpenDropdowns(page);
+    if (constructionEarly) {
+      await prefillFlexChipRowField(page, "სამშენებლო მასალა", constructionEarly);
+    }
+    if (parkingEarly) {
+      await prefillFlexChipRowField(page, "პარკირება", parkingEarly);
+    }
+  }
+
   await batchPrefillChips(page, buildPostExpandChipTasks(listing));
   await scrollToFormField(page, "საძინებელი");
   await prefillMainCountChips(page, listing);
@@ -4770,17 +5185,32 @@ async function applyAdditionalParametersPrefill(
   await prefillYardAreaFields(page, listing);
   await prefillCeilingHeightFields(page, listing);
 
+  const parkingChip = getParkingPrefillValue(listing);
+  const constructionMaterial = getFlexChipPrefillValue(
+    listing,
+    "სამშენებლო მასალა"
+  );
+  await closeOpenDropdowns(page);
+  if (parkingChip) {
+    await prefillParkingChipField(page, parkingChip);
+  }
+  if (constructionMaterial) {
+    await prefillFlexChipRowField(page, "სამშენებლო მასალა", constructionMaterial);
+  }
+
   for (const label of CHIP_STYLE_ROW_LABELS) {
     const value = getRawPreferenceValue(listing, label);
     if (!value || value === "კი" || value === "არა") continue;
-    await closeOpenDropdowns(page);
+    if (label === "პარკირება" && parkingChip) continue;
+    if (label === "სამშენებლო მასალა" && constructionMaterial) continue;
     await prefillPreferenceField(page, label, value);
   }
 
+  await closeOpenDropdowns(page);
   for (const nested of NESTED_LUK_TYPE_SECTIONS) {
     const value = getNestedSectionTypeValue(listing, nested.valueKeys);
     if (!value) continue;
-    await closeOpenDropdowns(page);
+    if (nested.section === "სათავსო" && isParkingChipValue(value)) continue;
     await prefillNestedSectionTypeDropdown(
       page,
       nested.section,
@@ -4794,11 +5224,11 @@ async function applyAdditionalParametersPrefill(
         nested.valueKeys
       );
       if (sectionArea) {
-        await prefillPause(page, 120);
+        await prefillPause(page, 50);
         await fillInputInNestedSection(page, nested.section, "ფართი", sectionArea);
       }
     }
-    await prefillPause(page, 150);
+    await prefillPause(page, 60);
   }
 
   const lukSelectPrefillOrder = ["ხედი", "შესასვლელი"] as const;
@@ -4810,7 +5240,6 @@ async function applyAdditionalParametersPrefill(
       PREFILL_LIST_FIELDS.find((f) => f.labels.includes(label))?.getValue(listing)?.trim() ||
       "";
     if (!value) continue;
-    await closeOpenDropdowns(page);
     await scrollToFormField(page, label);
     await prefillLukSelectByLabel(page, label, value);
   }
@@ -5067,13 +5496,13 @@ async function switchPriceFieldToUsd(
   state = await evaluatePriceRowCurrency(page, anchorSelector, "toggle");
   if (!state.isUsd) {
     await clickUsdTogglePlaywright(page, anchorSelector);
-    await prefillPause(page, 400);
+    await prefillPause(page, 120);
     state = await evaluatePriceRowCurrency(page, anchorSelector, "check");
   }
 
   if (!state.isUsd) {
     await clickUsdTogglePlaywright(page, anchorSelector);
-    await prefillPause(page, 400);
+    await prefillPause(page, 120);
     await evaluatePriceRowCurrency(page, anchorSelector, "toggle");
   }
 }
@@ -5365,6 +5794,12 @@ export async function parseListing(url: string): Promise<{
       furnitureLabels: [...FURNITURE_LABELS],
       preferenceLabels: [...PREFERENCE_PARAM_LABELS],
       labelCanonical: LABEL_CANONICAL,
+      flexChipFields: Object.fromEntries(
+        Object.entries(FLEX_CHIP_ROW_CONFIGS).map(([label, config]) => [
+          label,
+          [...config.chipLabels],
+        ])
+      ),
     };
 
     const data = await page.evaluate((opts) => {
@@ -5372,6 +5807,7 @@ export async function parseListing(url: string): Promise<{
       const furnitureLabels: string[] = opts.furnitureLabels;
       const preferenceLabels: string[] = opts.preferenceLabels;
       const labelCanonical: Record<string, string> = opts.labelCanonical;
+      const flexChipFields: Record<string, string[]> = opts.flexChipFields || {};
       const WHITELIST = new Set(additionalLabels);
       const PREFERENCE_LABELS = new Set(preferenceLabels);
 
@@ -5447,6 +5883,12 @@ export async function parseListing(url: string): Promise<{
               (v) => !isYesNo(v) && /\/\s*\d/.test(v) && !typeHint.test(v)
             );
             if (combined) return dedupeRepeated(combined);
+          }
+          const allowedChips = flexChipFields[canon];
+          if (allowedChips?.length) {
+            const chipHits = usable.filter((v) => allowedChips.includes(v));
+            if (chipHits.length === 1) return dedupeRepeated(chipHits[0]);
+            if (chipHits.length > 1) return "";
           }
           const pref = usable.find((v) => !isYesNo(v) && v.length > 1);
           return pref ? dedupeRepeated(pref) : "";
@@ -6088,6 +6530,104 @@ export async function parseListing(url: string): Promise<{
         const lobbyFlex = collectLobbyFromFlexRows(document.body);
         for (const [k, v] of Object.entries(lobbyFlex)) {
           mergeParamValue(params, k, v);
+        }
+
+        const collectFlexChipPreferenceFromRows = (
+          root: Element | Document,
+          label: string,
+          canon: string,
+          allowedChips: string[]
+        ) => {
+          const out: Record<string, string> = {};
+          const allowed = new Set(allowedChips);
+
+          function flexChipLooksSelected(el: Element): boolean {
+            const chip =
+              (el.closest("[class*='rounded']") as HTMLElement) || (el as HTMLElement);
+            const cls = chip.className?.toString() || "";
+            if (chip.getAttribute("aria-pressed") === "true") return true;
+            if (chip.getAttribute("aria-checked") === "true") return true;
+            if (/luk-bg-white/i.test(cls)) {
+              return /border-(primary|brand|blue|green)|ring-|shadow/i.test(cls);
+            }
+            if (
+              /border-(primary|brand|blue|green)|bg-(primary|brand|blue)|ring-/i.test(cls)
+            ) {
+              return true;
+            }
+            return false;
+          }
+
+          function directChipText(el: Element): string {
+            for (const node of [el, ...Array.from(el.querySelectorAll("span,p"))]) {
+              if (node.children.length > 1) continue;
+              const t = (node.textContent || "").replace(/\s+/g, " ").trim();
+              if (t && t.length <= 40) return t;
+            }
+            return (el.textContent || "").replace(/\s+/g, " ").trim();
+          }
+
+          const markers = root.querySelectorAll("h2,h3,h4,span,label,p,div");
+          outer: for (const el of markers) {
+            const t = (el.textContent || "").replace(/\s+/g, " ").trim();
+            if (t !== label) continue;
+            if (el.children.length > 4) continue;
+
+            let node: Element | null = el.parentElement;
+            for (let depth = 0; depth < 14 && node; depth++) {
+              const rows = node.querySelectorAll('[class*="luk-flex-wrap"]');
+              for (const row of rows) {
+                if (row.children.length < 2) continue;
+                for (const child of row.children) {
+                  const text = directChipText(child);
+                  if (!allowed.has(text)) continue;
+                  if (flexChipLooksSelected(child)) {
+                    out[canon] = dedupeRepeated(text);
+                    break outer;
+                  }
+                }
+              }
+              if (out[canon]) break;
+
+              for (const child of node.children) {
+                const ct = (child.textContent || "").replace(/\s+/g, " ").trim();
+                if (!ct || ct === t || isYesNo(ct)) continue;
+                if (!allowed.has(ct)) continue;
+                if (ct.length > 40) continue;
+                out[canon] = dedupeRepeated(ct);
+                break outer;
+              }
+              if (out[canon]) break;
+
+              const joined = (node.textContent || "").replace(/\s+/g, "");
+              const glued = joined.match(
+                new RegExp(`^${label.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}(.+)$`, "iu")
+              );
+              if (glued) {
+                const val = dedupeRepeated(glued[1]);
+                if (val && allowed.has(val)) {
+                  out[canon] = val;
+                  break outer;
+                }
+              }
+
+              node = node.parentElement;
+            }
+          }
+
+          return out;
+        };
+
+        for (const [label, chips] of Object.entries(flexChipFields)) {
+          const flexChip = collectFlexChipPreferenceFromRows(
+            document.body,
+            label,
+            label,
+            chips
+          );
+          for (const [k, v] of Object.entries(flexChip)) {
+            mergeParamValue(params, k, v);
+          }
         }
 
         const furnitureRoot = (() => {
@@ -7476,13 +8016,12 @@ export async function createMyhomePost(
     };
 
     await batchPrefillChips(page, buildEarlyPropertyChipTasks(listing));
-    await prefillPause(page, 500);
+    await prefillPause(page, 100);
     await prefillBuildingStatusAndCondition(page, listing);
 
     await fillLocationFields(page, listingLocation(listing));
 
     await switchPriceFieldToUsd(page, "#total_price");
-    await prefillPause(page);
     await prefillMainAreaField(page, listing);
 
     const bedroomsForForm = getBedroomsValue(listing);
@@ -7504,60 +8043,9 @@ export async function createMyhomePost(
       description: listing.description,
     });
 
-    await expandCreateFormSections(page);
-    await prefillPause(page, 120);
-    await prefillMainAreaField(page, listing);
-
-    await page
-      .waitForFunction(
-        () => {
-          const t = document.body?.innerText || "";
-          return (
-            t.includes("ოთახი") ||
-            t.includes("საძინებელი") ||
-            t.includes("სვ")
-          );
-        },
-        { timeout: 12000 }
-      )
-      .catch(() => {});
-
-    if (listing.rooms) {
-      await prefillCountChipPlaywright(page, CHIP_SECTION_ALIASES["ოთახი"], listing.rooms);
-    }
-    if (bedroomsForForm) {
-      await scrollToFormField(page, "საძინებელი");
-      let bedroomOk = await prefillCountChipPlaywright(
-        page,
-        CHIP_SECTION_ALIASES["საძინებელი"],
-        bedroomsForForm
-      );
-      if (!bedroomOk) {
-        bedroomOk = await prefillRowCountChip(
-          page,
-          CHIP_SECTION_ALIASES["საძინებელი"],
-          bedroomsForForm
-        );
-      }
-    }
-    if (bathroomsForForm) {
-      let bathOk = await prefillCountChipPlaywright(
-        page,
-        CHIP_SECTION_ALIASES["სველი წერტილი"],
-        bathroomsForForm
-      );
-      if (!bathOk) {
-        bathOk = await prefillRowCountChip(
-          page,
-          CHIP_SECTION_ALIASES["სველი წერტილი"],
-          bathroomsForForm
-        );
-      }
-    }
-
-    await prefillMainCountChips(page, listing);
-
-    await applyAdditionalParametersPrefill(page, listing);
+    await applyAdditionalParametersPrefill(page, listing, {
+      skipStatusAndCondition: true,
+    });
 
     if (!listingHasBalconyData(listing)) {
       await clearBalconyFormFields(page);
