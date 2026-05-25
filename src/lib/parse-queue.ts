@@ -1,5 +1,7 @@
 import { db } from "@/lib/db";
 import { parseListing } from "@/lib/myhome-parser";
+import { parseSsgeListing } from "@/lib/ssge-listing-parser";
+import { isValidSsgeUrl } from "@/lib/utils";
 
 interface ParseJob {
   listingId: string;
@@ -22,7 +24,9 @@ async function processNext() {
   const job = queue.shift()!;
 
   try {
-    const result = await parseListing(job.url);
+    const result = isValidSsgeUrl(job.url)
+      ? await parseSsgeListing(job.url)
+      : await parseListing(job.url);
 
     if (!result.success || !result.data) {
       await db.parsedListing.update({

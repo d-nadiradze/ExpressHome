@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { db } from "@/lib/db";
-import { isValidMyhomeUrl } from "@/lib/utils";
+import { isValidListingUrl } from "@/lib/utils";
 import { enqueueParseJob } from "@/lib/parse-queue";
 
 export async function POST(request: NextRequest) {
@@ -14,9 +14,9 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: "URL is required" }, { status: 400 });
     }
 
-    if (!isValidMyhomeUrl(url)) {
+    if (!isValidListingUrl(url)) {
       return NextResponse.json(
-        { error: "Invalid URL. Must be a myhome.ge link." },
+        { error: "Invalid URL. Must be a myhome.ge or ss.ge link." },
         { status: 400 }
       );
     }

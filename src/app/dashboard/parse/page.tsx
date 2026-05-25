@@ -18,6 +18,7 @@ interface ParsedListing {
   images: string[];
   rawData: Record<string, string>;
   postStatus: string;
+  ssgePostStatus: string;
 }
 
 type ParseStatus = "idle" | "queued" | "parsing" | "done" | "failed";
@@ -27,6 +28,7 @@ export default function ParsePage() {
   const [parseStatus, setParseStatus] = useState<ParseStatus>("idle");
   const [queuePosition, setQueuePosition] = useState<number | null>(null);
   const [publishing, setPublishing] = useState(false);
+  const [publishingSsge, setPublishingSsge] = useState(false);
   const [saving, setSaving] = useState(false);
   const [listing, setListing] = useState<ParsedListing | null>(null);
   const [editing, setEditing] = useState(false);
@@ -176,12 +178,37 @@ export default function ParsePage() {
         return;
       }
 
-      toast.success("Post published on myhome.ge!");
-      setListing((prev) => prev ? { ...prev, postStatus: "POSTED" } : null);
+      toast.success("myhome.ge form opened. Review and submit manually.");
     } catch {
       toast.error("Something went wrong");
     } finally {
       setPublishing(false);
+    }
+  }
+
+  async function handlePublishSsge() {
+    if (!listing) return;
+    setPublishingSsge(true);
+
+    try {
+      const res = await fetch("/api/ssge/create-post", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ listingId: listing.id }),
+      });
+
+      const data = await res.json();
+
+      if (!res.ok) {
+        toast.error(data.error || "Failed to publish post");
+        return;
+      }
+
+      toast.success("ss.ge form opened. Review and submit manually.");
+    } catch {
+      toast.error("Something went wrong");
+    } finally {
+      setPublishingSsge(false);
     }
   }
 
@@ -195,7 +222,7 @@ export default function ParsePage() {
       <div>
         <h1 className="text-2xl font-bold text-gray-900">Parse Listing</h1>
         <p className="text-gray-500 mt-1">
-          Paste a myhome.ge listing URL and we&apos;ll extract all the data automatically.
+          Paste a myhome.ge or ss.ge listing URL and we&apos;ll extract all the data automatically.
         </p>
       </div>
 
@@ -205,7 +232,7 @@ export default function ParsePage() {
           <input
             type="url"
             className="input flex-1"
-            placeholder="https://www.myhome.ge/pr/12345678/..."
+            placeholder="https://www.myhome.ge/pr/... or https://home.ss.ge/ka/..."
             value={url}
             onChange={(e) => setUrl(e.target.value)}
             required
@@ -229,7 +256,7 @@ export default function ParsePage() {
           </button>
         </form>
         <p className="text-xs text-gray-400 mt-2">
-          Example: https://www.myhome.ge/pr/24724106/iyideba-2-otaxiani-bina-saburtaloze/
+          Example: https://www.myhome.ge/pr/24724106/... or https://home.ss.ge/ka/udzravi-qoneba/...
         </p>
       </div>
 
@@ -251,7 +278,7 @@ export default function ParsePage() {
             ) : (
               <>
                 <p className="font-medium text-gray-900">Parsing listing...</p>
-                <p className="text-sm text-gray-500">Extracting data from myhome.ge (this takes 15-30 seconds)</p>
+                <p className="text-sm text-gray-500">Extracting data from listing (this takes 15-30 seconds)</p>
               </>
             )}
           </div>
@@ -476,37 +503,51 @@ export default function ParsePage() {
               View Original
             </a>
 
-            {listing.postStatus === "POSTED" ? (
-              <div className="btn-secondary opacity-75 cursor-default flex items-center gap-2 text-green-700 border-green-200">
-                <svg className="w-4 h-4" fill="currentColor" viewBox="0 0 20 20">
-                  <path fillRule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zm3.707-9.293a1 1 0 00-1.414-1.414L9 10.586 7.707 9.293a1 1 0 00-1.414 1.414l2 2a1 1 0 001.414 0l4-4z" clipRule="evenodd" />
-                </svg>
-                Already Posted
-              </div>
-            ) : (
-              <button
-                onClick={handlePublish}
-                className="btn-primary flex items-center gap-2"
-                disabled={publishing || editing}
-              >
-                {publishing ? (
-                  <>
-                    <svg className="animate-spin h-4 w-4" viewBox="0 0 24 24" fill="none">
-                      <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
-                      <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" />
-                    </svg>
-                    Publishing...
-                  </>
-                ) : (
-                  <>
-                    <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-8l-4-4m0 0L8 8m4-4v12" />
-                    </svg>
-                    Publish to myhome.ge
-                  </>
-                )}
-              </button>
-            )}
+            <button
+              onClick={handlePublish}
+              className="btn-primary flex items-center gap-2"
+              disabled={publishing || publishingSsge || editing}
+            >
+              {publishing ? (
+                <>
+                  <svg className="animate-spin h-4 w-4" viewBox="0 0 24 24" fill="none">
+                    <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
+                    <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" />
+                  </svg>
+                  Opening myhome.ge...
+                </>
+              ) : (
+                <>
+                  <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-8l-4-4m0 0L8 8m4-4v12" />
+                  </svg>
+                  Pre-fill on myhome.ge
+                </>
+              )}
+            </button>
+
+            <button
+              onClick={handlePublishSsge}
+              className="btn-primary !bg-indigo-600 hover:!bg-indigo-700 flex items-center gap-2"
+              disabled={publishing || publishingSsge || editing}
+            >
+              {publishingSsge ? (
+                <>
+                  <svg className="animate-spin h-4 w-4" viewBox="0 0 24 24" fill="none">
+                    <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
+                    <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" />
+                  </svg>
+                  Opening ss.ge...
+                </>
+              ) : (
+                <>
+                  <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-8l-4-4m0 0L8 8m4-4v12" />
+                  </svg>
+                  Pre-fill on ss.ge
+                </>
+              )}
+            </button>
           </div>
         </div>
       )}

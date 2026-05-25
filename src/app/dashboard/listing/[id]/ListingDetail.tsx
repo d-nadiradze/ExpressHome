@@ -36,6 +36,8 @@ interface Listing {
   rawData: Record<string, string> | null;
   postStatus: string;
   postUrl: string | null;
+  ssgePostStatus: string;
+  ssgePostUrl: string | null;
   sourceUrl: string;
   createdAt: string;
 }
@@ -88,11 +90,12 @@ export default function ListingDetail({ listing: initial }: { listing: Listing }
   const [newParamKey, setNewParamKey] = useState("");
   const [newParamValue, setNewParamValue] = useState("");
   const [saving, setSaving] = useState(false);
-  const [posting, setPosting] = useState(false);
+  const [postingMyhome, setPostingMyhome] = useState(false);
+  const [postingSsge, setPostingSsge] = useState(false);
 
-  async function handlePost() {
-    if (!confirm("A browser will open with the form pre-filled. You can review and submit manually.")) return;
-    setPosting(true);
+  async function handlePostMyhome() {
+    if (!confirm("A browser will open with the myhome.ge form pre-filled. You can review and submit manually.")) return;
+    setPostingMyhome(true);
     try {
       const res = await fetch("/api/myhome/create-post", {
         method: "POST",
@@ -101,9 +104,25 @@ export default function ListingDetail({ listing: initial }: { listing: Listing }
       });
       const data = await res.json();
       if (!res.ok) { toast.error(data.error || "Failed to open form"); return; }
-      toast.success("Browser opened with pre-filled form. Review and submit manually.");
+      toast.success("myhome.ge form opened. Review and submit manually.");
     } catch { toast.error("Something went wrong"); }
-    finally { setPosting(false); }
+    finally { setPostingMyhome(false); }
+  }
+
+  async function handlePostSsge() {
+    if (!confirm("A browser will open with the ss.ge form pre-filled. You can review and submit manually.")) return;
+    setPostingSsge(true);
+    try {
+      const res = await fetch("/api/ssge/create-post", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ listingId: listing.id }),
+      });
+      const data = await res.json();
+      if (!res.ok) { toast.error(data.error || "Failed to open form"); return; }
+      toast.success("ss.ge form opened. Review and submit manually.");
+    } catch { toast.error("Something went wrong"); }
+    finally { setPostingSsge(false); }
   }
 
   function startEditing() {
@@ -237,17 +256,17 @@ export default function ListingDetail({ listing: initial }: { listing: Listing }
               </button>
               {listing.postStatus !== "POSTED" && (
                 <button
-                  onClick={handlePost}
-                  disabled={posting}
+                  onClick={handlePostMyhome}
+                  disabled={postingMyhome || postingSsge}
                   className="text-sm text-white bg-green-600 hover:bg-green-700 px-3 py-1.5 rounded-md font-medium flex items-center gap-1.5 disabled:opacity-50 transition-colors"
                 >
-                  {posting ? (
+                  {postingMyhome ? (
                     <>
                       <svg className="w-4 h-4 animate-spin" fill="none" viewBox="0 0 24 24">
                         <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
                         <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z" />
                       </svg>
-                      Opening form...
+                      Opening myhome.ge...
                     </>
                   ) : (
                     <>
@@ -255,6 +274,30 @@ export default function ListingDetail({ listing: initial }: { listing: Listing }
                         <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M7 16a4 4 0 01-.88-7.903A5 5 0 1115.9 6L16 6a5 5 0 011 9.9M15 13l-3-3m0 0l-3 3m3-3v12" />
                       </svg>
                       Pre-fill on myhome.ge
+                    </>
+                  )}
+                </button>
+              )}
+              {listing.ssgePostStatus !== "POSTED" && (
+                <button
+                  onClick={handlePostSsge}
+                  disabled={postingMyhome || postingSsge}
+                  className="text-sm text-white bg-indigo-600 hover:bg-indigo-700 px-3 py-1.5 rounded-md font-medium flex items-center gap-1.5 disabled:opacity-50 transition-colors"
+                >
+                  {postingSsge ? (
+                    <>
+                      <svg className="w-4 h-4 animate-spin" fill="none" viewBox="0 0 24 24">
+                        <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
+                        <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z" />
+                      </svg>
+                      Opening ss.ge...
+                    </>
+                  ) : (
+                    <>
+                      <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M7 16a4 4 0 01-.88-7.903A5 5 0 1115.9 6L16 6a5 5 0 011 9.9M15 13l-3-3m0 0l-3 3m3-3v12" />
+                      </svg>
+                      Pre-fill on ss.ge
                     </>
                   )}
                 </button>
@@ -268,7 +311,10 @@ export default function ListingDetail({ listing: initial }: { listing: Listing }
               </button>
             </div>
           )}
-          <span className={`badge ${statusColors[listing.postStatus]}`}>{listing.postStatus}</span>
+          <div className="flex items-center gap-1.5">
+            <span className={`badge ${statusColors[listing.postStatus]}`} title="myhome.ge status">MH: {listing.postStatus}</span>
+            <span className={`badge ${statusColors[listing.ssgePostStatus]}`} title="ss.ge status">SS: {listing.ssgePostStatus}</span>
+          </div>
         </div>
       </div>
 
@@ -551,7 +597,12 @@ export default function ListingDetail({ listing: initial }: { listing: Listing }
           </a>
           {listing.postUrl && (
             <a href={listing.postUrl} target="_blank" rel="noopener noreferrer" className="btn-secondary text-sm flex items-center gap-2 text-green-700 border-green-200">
-              View Posted
+              View on myhome.ge
+            </a>
+          )}
+          {listing.ssgePostUrl && (
+            <a href={listing.ssgePostUrl} target="_blank" rel="noopener noreferrer" className="btn-secondary text-sm flex items-center gap-2 text-indigo-700 border-indigo-200">
+              View on ss.ge
             </a>
           )}
         </div>

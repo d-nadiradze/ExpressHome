@@ -23,3 +23,19 @@ export function isValidMyhomeUrl(url: string): boolean {
     return false;
   }
 }
+
+export function isValidSsgeUrl(url: string): boolean {
+  try {
+    const parsed = new URL(url);
+    return (
+      parsed.hostname.includes("ss.ge") &&
+      parsed.pathname.includes("/udzravi-qoneba/")
+    );
+  } catch {
+    return false;
+  }
+}
+
+export function isValidListingUrl(url: string): boolean {
+  return isValidMyhomeUrl(url) || isValidSsgeUrl(url);
+}
