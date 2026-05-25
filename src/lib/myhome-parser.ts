@@ -1,3 +1,4 @@
+import "@/lib/esbuild-shim";
 import {
   chromium,
   type Browser,
@@ -14,6 +15,7 @@ import {
   PREFILL_NUMERIC_LABELS,
   RAW_DATA_HANDLED_LABELS,
 } from "@/lib/additional-params";
+import { resolveImagesForPlaywright } from "@/lib/listing-images";
 
 export interface MyhomeListing {
   title: string;
@@ -58,30 +60,41 @@ let postSession: {
   context: BrowserContext;
 } | null = null;
 
-const PREFILL_PAUSE_MS = 40;
-const CHIP_CLICK_TIMEOUT_MS = 1500;
-const DROPDOWN_PAUSE_MS = 60;
-const LUK_DROPDOWN_PAUSE_MS = 400;
+const PREFILL_PAUSE_MS = 20;
+const CHIP_CLICK_TIMEOUT_MS = 1200;
+const DROPDOWN_PAUSE_MS = 40;
+const LUK_DROPDOWN_PAUSE_MS = 180;
+/** After typing in autocomplete — wait for suggestions instead of a fixed long sleep. */
+const TYPEAHEAD_SUGGESTION_TIMEOUT_MS = 2200;
+const LUK_CLICK_VERIFY_MS = 90;
 
 async function prefillPause(page: Page, ms = PREFILL_PAUSE_MS) {
   if (ms > 0) await page.waitForTimeout(ms);
 }
 
-/** Wait until a chip label exists (form section rendered). */
-async function waitForChipLabel(page: Page, label: string, timeout = 2000) {
-  await page
-    .waitForFunction(
-      (text) => {
-        for (const el of document.querySelectorAll("span, div, button, p")) {
-          if (el.children.length > 0) continue;
-          if (el.textContent?.trim() === text) return true;
-        }
-        return false;
-      },
-      label,
-      { timeout }
+/** Wait until autocomplete / luk list rows appear (or short fallback pause). */
+async function waitForTypeaheadSuggestions(page: Page): Promise<void> {
+  const ready = await page
+    .locator(
+      '[role="listbox"]:visible [role="option"], ul.options-list:visible li, [data-prefill-active-menu="1"] li'
     )
-    .catch(() => null);
+    .first()
+    .waitFor({ state: "visible", timeout: TYPEAHEAD_SUGGESTION_TIMEOUT_MS })
+    .then(() => true)
+    .catch(() => false);
+  if (!ready) await prefillPause(page, 60);
+}
+
+const BROWSER_EVALUATE_SHIM =
+  "globalThis.__name = globalThis.__name || function (t) { return t; };";
+
+/** esbuild keepNames adds __name calls; must exist in the browser before page.evaluate. */
+async function addBrowserEvaluateShim(context: BrowserContext): Promise<void> {
+  await context.addInitScript(BROWSER_EVALUATE_SHIM);
+}
+
+async function ensureBrowserEvaluateShim(page: Page): Promise<void> {
+  await page.evaluate(BROWSER_EVALUATE_SHIM);
 }
 
 function escapeRegExp(text: string): string {
@@ -104,14 +117,574 @@ const EXACT_LUK_FIELD_LABELS = new Set([
   "შესასვლელი",
 ]);
 
+/** statements.myhome.ge create form: <ul class="options-list luk-overflow-y-auto"> + <li> rows. */
+const LUK_OPTIONS_LIST_SELECTOR =
+  "ul.options-list, ul[class*='options-list']";
+const LUK_OPTION_ROW_SELECTOR = `${LUK_OPTIONS_LIST_SELECTOR} > li`;
+
+/** All known პროექტის ტიპი dropdown options with aliases (parsed value → exact option text). */
+const PROJECT_TYPE_ALIASES: Record<string, string[]> = {
+  "არასტანდარტული": ["არასტანდარტული"],
+  "თუხარელის": ["თუხარელის", "თუხარელი"],
+  "იტალიური ეზო": ["იტალიური ეზო"],
+  "ლენინგრადის": ["ლენინგრადის", "ლენინგრადი"],
+  "ყავლაშვილის": ["ყავლაშვილის", "ყავლაშვილი"],
+  "ჩეხური": ["ჩეხური"],
+  "ხრუშოვის": ["ხრუშოვის", "ხრუშოვი", "ხრუშოვკა"],
+  "საერთო საცხოვრებელი": ["საერთო საცხოვრებელი"],
+  "დუპლექსი": ["დუპლექსი", "დუპლექს"],
+  "ტრიპლექსი": ["ტრიპლექსი", "ტრიპლექს"],
+  "m2-ის კომპლექსი": ["m2-ის კომპლექსი", "m2 კომპლექსი", "m2-ს კომპლექსი"],
+  "OPTIMA m2-ისკან": ["OPTIMA m2-ისკან", "optima m2-ისკან", "ოპტიმა m2"],
+  "METRA PARK": ["METRA PARK", "metra park", "მეტრა პარკი"],
+};
+
+/** All known მისაღები dropdown options with aliases. */
+const MISAGEBI_ALIASES: Record<string, string[]> = {
+  "გამოყოფილი": ["გამოყოფილი", "გამოყოფილია"],
+  "სტუდიო": ["სტუდიო", "სტუდიოს", "სტუდიოს ტიპი", "სტუდიოს ტიპის"],
+};
+
+/** All known სათავსო dropdown options with aliases. */
+const SATAVSO_ALIASES: Record<string, string[]> = {
+  "სარდაფი": ["სარდაფი", "სარდაფის"],
+  "სხვენი": ["სხვენი", "სხვენის"],
+  "საკუჭნაო": ["საკუჭნაო", "საკუჭნაოს"],
+  "გარე სათავსო": ["გარე სათავსო"],
+  "საერთო სათავსო": ["საერთო სათავსო"],
+  "სარდაფი + სხვენი": ["სარდაფი + სხვენი", "სარდაფი+სხვენი", "სარდაფი და სხვენი"],
+};
+
+/** Step 4 single-choice rows: div.luk-flex-wrap chips under h2 headings. */
+type FlexChipRowConfig = {
+  chipLabels: readonly string[];
+  aliases: Record<string, string[]>;
+  /** Identify the correct chip row when several exist on the page. */
+  rowMarkers: RegExp[];
+};
+
+const FLEX_CHIP_ROW_CONFIGS: Record<string, FlexChipRowConfig> = {
+  "პარკირება": {
+    chipLabels: [
+      "ავტოფარეხი",
+      "პარკინგის ადგილი",
+      "ეზოს პარკინგი",
+      "მიწისქვეშა პარკინგი",
+      "ფასიანი ავტოსადგომი",
+      "პარკინგის გარეშე",
+    ],
+    aliases: {
+      "ავტოფარეხი": ["ავტოფარეხი", "ავტოფარეხის", "გარაჟი"],
+      "პარკინგის ადგილი": [
+        "პარკინგის ადგილი",
+        "პარკინგის ადგილის",
+        "პარკინგ ადგილი",
+      ],
+      "ეზოს პარკინგი": ["ეზოს პარკინგი", "ეზოში პარკინგი"],
+      "მიწისქვეშა პარკინგი": [
+        "მიწისქვეშა პარკინგი",
+        "მიწის ქვეშა პარკინგი",
+        "მიწისქვეშა",
+        "მიწის ქვეშა",
+      ],
+      "ფასიანი ავტოსადგომი": ["ფასიანი ავტოსადგომი", "ფასიანი ავტოსადგომის"],
+      "პარკინგის გარეშე": ["პარკინგის გარეშე", "პარკინგის გარეშეა", "პარკინგი არ არის"],
+    },
+    rowMarkers: [/ავტოფარეხი/, /პარკინგის გარეშე/],
+  },
+  "სამშენებლო მასალა": {
+    chipLabels: ["ბლოკი", "აგური", "ხის მასალა", "რკინა-ბეტონი", "კომბინირებული"],
+    aliases: {
+      "ბლოკი": ["ბლოკი", "ბლოკის"],
+      "აგური": ["აგური", "აგურის"],
+      "ხის მასალა": ["ხის მასალა", "ხის", "თეხვი"],
+      "რკინა-ბეტონი": ["რკინა-ბეტონი", "რკინ-ბეტონი", "რკინა ბეტონი"],
+      "კომბინირებული": ["კომბინირებული", "კომბინირებულია"],
+    },
+    rowMarkers: [/ბლოკი/, /აგური/, /კომბინირებული/],
+  },
+};
+
+const FLEX_CHIP_EXACT_LABELS = new Set<string>(
+  Object.values(FLEX_CHIP_ROW_CONFIGS).flatMap((config) => [...config.chipLabels])
+);
+
+function isFlexChipExactLabel(label: string): boolean {
+  return FLEX_CHIP_EXACT_LABELS.has(normFieldLabel(label));
+}
+
+function flexChipOptionVariants(sectionLabel: string, value: string): string[] {
+  const config = FLEX_CHIP_ROW_CONFIGS[sectionLabel];
+  if (!config) return [];
+  const raw = normFieldLabel(dedupeRepeatedLabelValue(value));
+  if (!raw) return [];
+  const fromAliases = resolveAliasVariants(raw, config.aliases);
+  if (fromAliases) return fromAliases;
+  if (config.chipLabels.includes(raw)) return [raw];
+  return [];
+}
+
+function canonicalFlexChipLabel(sectionLabel: string, value: string): string {
+  return flexChipOptionVariants(sectionLabel, value)[0] || "";
+}
+
+function isFlexChipRowValue(sectionLabel: string, value: string): boolean {
+  return flexChipOptionVariants(sectionLabel, value).length > 0;
+}
+
+function isParkingChipValue(value: string): boolean {
+  return isFlexChipRowValue("პარკირება", value);
+}
+
+function canonicalParkingChipLabel(value: string): string {
+  return canonicalFlexChipLabel("პარკირება", value);
+}
+
+function getParkingPrefillValue(listing: MyhomeListing): string {
+  return getFlexChipPrefillValue(listing, "პარკირება", ["სათავსო", "სათავსოს ტიპი"]);
+}
+
+function getFlexChipPrefillValue(
+  listing: MyhomeListing,
+  sectionLabel: string,
+  extraValueKeys: readonly string[] = []
+): string {
+  const config = FLEX_CHIP_ROW_CONFIGS[sectionLabel];
+  if (!config) return "";
+
+  const candidates: string[] = [];
+  const direct = getRawPreferenceValue(listing, sectionLabel)?.trim();
+  if (direct && direct !== "კი" && direct !== "არა") candidates.push(direct);
+
+  for (const key of extraValueKeys) {
+    const v = listing.rawData?.[key]?.trim();
+    if (v && v !== "კი" && v !== "არა") candidates.push(v);
+  }
+
+  for (const raw of candidates) {
+    const canon = canonicalFlexChipLabel(sectionLabel, raw);
+    if (canon) return canon;
+  }
+
+  const sorted = [...config.chipLabels].sort((a, b) => b.length - a.length);
+  for (const raw of candidates) {
+    const norm = normFieldLabel(dedupeRepeatedLabelValue(raw));
+    for (const chip of sorted) {
+      if (norm === chip || norm.includes(chip)) return chip;
+    }
+  }
+
+  return "";
+}
+
+function resolveAliasVariants(
+  raw: string,
+  aliasMap: Record<string, string[]>
+): string[] | null {
+  const lower = raw.toLowerCase();
+  for (const [option, aliases] of Object.entries(aliasMap)) {
+    for (const alias of aliases) {
+      if (alias.toLowerCase() === lower) {
+        const result = [option, ...aliases.filter((a) => a !== option)];
+        if (!result.includes(raw)) result.push(raw);
+        return [...new Set(result)];
+      }
+    }
+    if (option.toLowerCase() === lower) {
+      const result = [option, ...aliases];
+      if (!result.includes(raw)) result.push(raw);
+      return [...new Set(result)];
+    }
+  }
+  return null;
+}
+
 /** Dropdown option variants — prefer listing form (often genitive: თუხარელის). */
 function projectTypeOptionVariants(value: string): string[] {
   const raw = normFieldLabel(dedupeRepeatedLabelValue(value));
   if (!raw) return [];
+
+  const fromAliases = resolveAliasVariants(raw, PROJECT_TYPE_ALIASES);
+  if (fromAliases) return fromAliases;
+
   const ordered: string[] = [raw];
   if (/ის$/u.test(raw)) ordered.push(raw.replace(/ის$/u, "ი"));
   else if (/ი$/u.test(raw) && !/ის$/u.test(raw)) ordered.push(`${raw}ს`);
   return [...new Set(ordered)];
+}
+
+/** Drop alternate names in parentheses, e.g. "(არაგვის ქუჩა)". */
+function stripStreetParenthetical(raw: string): string {
+  return raw.replace(/\s*\([^)]*\)\s*/gu, " ").replace(/\s+/g, " ").trim();
+}
+
+const STREET_ADDRESS_TYPE_RE =
+  /ქ\.?|ქუჩა|გამზ|შესახვევი|ჩიხი|გამონაკლები/i;
+
+/** Cities for location autocomplete — districts (e.g. ჩუღურეთი) are excluded. */
+const KNOWN_CITIES_FOR_PREFILL = [
+  "თბილისი",
+  "ბათუმი",
+  "ქუთაისი",
+  "რუსთავი",
+  "ზუგდიდი",
+  "თელავი",
+  "გორი",
+  "ფოთი",
+  "ხაშური",
+  "ოზურგეთი",
+  "ქობულეთი",
+  "ბაკურიანი",
+  "მცხეთა",
+  "სიღნაღი",
+  "ბორჯომი",
+  "ზესტაფონი",
+  "თერჯოლა",
+  "სენაკი",
+  "გაგრა",
+  "გუდაური",
+  "ბოლნისი",
+  "ახალციხე",
+  "ონი",
+  "ჭიათურა",
+  "აბაშა",
+  "მარტვილი",
+  "წყალტუბო",
+  "სამტრედია",
+  "ხონი",
+  "ვანი",
+  "ბაღდათი",
+  "საჩხერე",
+  "ტყიბული",
+  "კასპი",
+  "ქარელი",
+  "დუშეთი",
+  "სტეფანწმინდა",
+  "ახმეტა",
+  "გურჯაანი",
+  "ყვარელი",
+  "ლაგოდეხი",
+  "დედოფლისწყარო",
+  "საგარეჯო",
+  "გარდაბანი",
+  "მარნეული",
+  "წალკა",
+  "თეთრიწყარო",
+  "დმანისი",
+  "ახალქალაქი",
+  "ნინოწმინდა",
+  "ამბროლაური",
+  "ლენტეხი",
+  "მესტია",
+  "ხობი",
+  "წალენჯიხა",
+  "ჩხოროწყუ",
+  "თიანეთი",
+  "ლანჩხუთი",
+  "ჩოხატაური",
+  "ხელვაჩაური",
+  "შუახევი",
+  "ქედა",
+  "ურეკი",
+  "გრიგოლეთი",
+  "შეკვეთილი",
+  "ანაკლია",
+  "წნორი",
+  "ახალსოფელი",
+  "კობულეთი",
+] as const;
+
+/** Match city name as a whole word, not a substring of a larger word. */
+function cityMatchesInText(text: string, city: string): boolean {
+  const re = new RegExp(`(?:^|[\\s,;.\\-/])${escapeRegExp(city)}(?:$|[\\s,;.\\-/])`, "u");
+  return re.test(text);
+}
+
+/** Location field: city only (თბილისი), never "თბილისი, ჩუღურეთი". */
+function cityForPrefill(city: string): string {
+  const s = city.replace(/\s+/g, " ").trim();
+  if (!s) return "";
+
+  for (const part of s.split(",").map((p) => p.trim())) {
+    if ((KNOWN_CITIES_FOR_PREFILL as readonly string[]).includes(part)) return part;
+  }
+  for (const c of KNOWN_CITIES_FOR_PREFILL) {
+    if (cityMatchesInText(s, c)) return c;
+  }
+  return s.split(",")[0]?.trim() || s;
+}
+
+const STREET_TYPE_WITH_NUMBER_RE =
+  /(\s+ქ\.?|\s+ქუჩა|\s+გამზ\.?)(\s*#?\s*\d|$)/iu;
+
+/** Microdistrict marker — require slash or dotted „მ. რ.“, not „მრ“ inside words like „ნომრის“. */
+const MICRODISTRICT_MARKER_RE =
+  /მ\/რ|(?:^|\s)მ\.\s*რ\.?(?:\s|$)|კვარტ|კორპ|უბან|დასახლ|მიკრორაიონ/i;
+
+/** Phone / CTA lines under the title (e.g. „558 188 ***ნომრის ნახვა“). */
+function isListingAddressNoise(text: string): boolean {
+  const s = text.replace(/\s+/g, " ").trim();
+  if (!s) return true;
+  if (/ნომრის\s*ნახვა|ნომერის\s*ნახვა|ნომრის\s*გამოჩ/i.test(s)) return true;
+  if (/\*{2,}/.test(s)) return true;
+  if (/^\d[\d\s*\-]{6,}/.test(s)) return true;
+  if (/ნახვა$/i.test(s) && /ნომრ|ნომერ|\*/i.test(s)) return true;
+  return false;
+}
+
+/** Microdistrict / quarter lines under title (no ქუჩა), e.g. „თემქა - XI მ/რ I კვარტ. 10“. */
+function isMicrodistrictOrBlockAddressLine(text: string): boolean {
+  const s = stripStreetParenthetical(text.replace(/\s+/g, " ").trim());
+  if (s.length < 4 || s.length > 120) return false;
+  if (isListingAddressNoise(s)) return false;
+  if (/^(ფართი|ოთახი|საძინებელი|სართული|ID\b)/iu.test(s)) return false;
+  if (/₾|\$|USD|€|მ²|m²|კვ\.\s*ფასი/i.test(s)) return false;
+  if (/^\d{5,}/.test(s)) return false;
+  if (/მეტრო|metro|სადგურ/i.test(s)) return false;
+  if (isStreetLineText(s)) return false;
+  if (MICRODISTRICT_MARKER_RE.test(s)) return true;
+  if (
+    /^[\u10A0-\u10FF][\u10A0-\u10FF\s\-–—.]+\s-\s+.+$/u.test(s) &&
+    /\d/.test(s)
+  ) {
+    return true;
+  }
+  return false;
+}
+
+/** Landmark / POI on the location pin when there is no ქუჩა line (e.g. „ლისის ტბა“). */
+function isPinLandmarkLine(text: string): boolean {
+  const s = text.replace(/\s+/g, " ").trim();
+  if (s.length < 3 || s.length > 90) return false;
+  if (isListingAddressNoise(s)) return false;
+  if (isStreetLineText(s) || isMicrodistrictOrBlockAddressLine(s)) return false;
+  if (
+    /[₾$]|მ²|m²|იპოთეკა|სესხი|ფასი|გადაფორმება|იყიდება|ქირავდება|ოთახიანი|მოითხოვე/i.test(
+      s
+    )
+  ) {
+    return false;
+  }
+  if (/^ID\b/i.test(s)) return false;
+  if (/^\d+(\.\d+)?\s*მ²/i.test(s)) return false;
+  if (/^\d+\s*\/\s*\d+/.test(s)) return false;
+  if (/^(ფართი|ოთახი|საძინებელი|სართული)$/iu.test(s)) return false;
+  if (/^\d+$/.test(s)) return false;
+  if (/მეტრო|metro|სადგურ/i.test(s)) return false;
+  if ((KNOWN_CITIES_FOR_PREFILL as readonly string[]).includes(s)) return false;
+  if (!/[\u10A0-\u10FF]{2,}/u.test(s)) return false;
+  return true;
+}
+
+/** True when text looks like a street / lane line (after stripping parentheticals). */
+function isStreetLineText(text: string): boolean {
+  const s = stripStreetParenthetical(text.replace(/\s+/g, " ").trim());
+  if (s.length < 3 || s.length > 90) return false;
+  if (isListingAddressNoise(s)) return false;
+  if (!STREET_ADDRESS_TYPE_RE.test(s)) return false;
+  if (/მეტრო|metro|სადგურ/i.test(s)) return false;
+  if (
+    /ფართი|საძინებელი|სართული|ოთახი/.test(s) &&
+    /\d/.test(s) &&
+    !/შესახვევი|ჩიხი/i.test(s)
+  ) {
+    return false;
+  }
+  return (
+    STREET_TYPE_WITH_NUMBER_RE.test(s) ||
+    /\s+(ქ\.?|ქუჩა|გამზ\.?)$/iu.test(s) ||
+    /\s+შესახვევი\s+\d+[ა-ჰa-z]?$/iu.test(s) ||
+    /\s+შესახვევი$/iu.test(s) ||
+    /\s+ჩიხი\s+\d+[ა-ჰa-z]?$/iu.test(s) ||
+    /\s+ჩიხი$/iu.test(s)
+  );
+}
+
+/** "მაჭავარიანი ალექსის ქ" → "ალექსი მაჭავარიანის ქ" (registry word order). */
+function streetNameReorderVariants(name: string): string[] {
+  const s = name.replace(/\s+/g, " ").trim();
+  const m = s.match(/^(\S+)\s+(\S+)ის\s+(ქ\.?|ქუჩა|ქ)$/iu);
+  if (!m) return [];
+  const surname = m[1];
+  const genitive = m[2];
+  if (!genitive.endsWith("ის")) return [];
+  const given = `${genitive.slice(0, -2)}ი`;
+  const tail = m[3].replace(/\.$/, "");
+  const suffix = tail === "ქუჩა" || tail === "ქ" ? "ქ" : tail;
+  return [`${given} ${surname}ის ${suffix}`];
+}
+
+/** Split listing address into street name + number (drop district / metro suffix). */
+function parseAddressPartsString(raw: string): { street: string; streetNumber: string } {
+  const text = stripStreetParenthetical(raw.replace(/\s+/g, " ").trim());
+  if (!text) return { street: "", streetNumber: "" };
+
+  const withNumber = [
+    /^(.+?)\s+ქუჩა\s*#\s*([\d][\d\s,\-–—]*(?:,\s*[\d][\d\s,\-–—]*)*)$/iu,
+    /^(.+?)\s+მ\.\s*ქ\.\s*(\d+[ა-ჰa-z]?)(?:\s+.+)?$/iu,
+    /^(.+?)\s+მ\.\s*ქუჩა\s*(\d+[ა-ჰa-z]?)(?:\s+.+)?$/iu,
+    /^(.+?)\s+გამზ\.?\s*(\d+[ა-ჰa-z]?)(?:\s+.+)?$/iu,
+    /^(.+?)\s+ქ\.\s*(\d+[ა-ჰa-z]?)(?:\s+.+)?$/iu,
+    /^(.+?)\s+ქუჩა\s*№?\s*(\d+[ა-ჰa-z]?)(?:\s+.+)?$/iu,
+    /^(.+?)\s+შესახვევი\s+(\d+[ა-ჰa-z]?)$/iu,
+    /^(.+?)\s+ჩიხი\s+(\d+[ა-ჰa-z]?)$/iu,
+  ];
+  for (const re of withNumber) {
+    const m = text.match(re);
+    if (m) {
+      let suffix = "ქ";
+      if (re.source.includes("ქუჩა")) suffix = "ქუჩა";
+      else if (re.source.includes("შესახვევი")) suffix = "შესახვევი";
+      else if (re.source.includes("ჩიხი")) suffix = "ჩიხი";
+      else if (re.source.includes("გამზ")) suffix = "გამზ";
+      return {
+        street: `${m[1].trim()} ${suffix}`,
+        streetNumber: m[2].trim(),
+      };
+    }
+  }
+
+  const streetOnly = text.match(
+    /^(.+?)\s+(ქ\.?|ქუჩა|გამზ\.?|შესახვევი|ჩიხი)$/iu
+  );
+  if (streetOnly) return { street: text, streetNumber: "" };
+
+  if (isStreetLineText(text)) {
+    const laneNum = text.match(/^(.+?)\s+შესახვევი\s+(\d+[ა-ჰa-z]?)$/iu);
+    if (laneNum) {
+      return {
+        street: `${laneNum[1].trim()} შესახვევი`,
+        streetNumber: laneNum[2].trim(),
+      };
+    }
+    return { street: text, streetNumber: "" };
+  }
+
+  return { street: "", streetNumber: "" };
+}
+
+/** Street field: name only (… ქ / ქუჩა), never building number or metro label. */
+function streetNameOnly(raw: string): string {
+  const text = stripStreetParenthetical(raw.replace(/\s+/g, " ").trim());
+  if (!text || isListingAddressNoise(text)) return "";
+
+  const { street } = parseAddressPartsString(text);
+  let name = street || text;
+
+  name = name
+    .replace(/\s+#\s*[\d][\d\s,\-–—]*(?:,\s*[\d][\d\s,\-–—]*)*\s*$/iu, "")
+    .replace(/\s+\d+[ა-ჰa-z]?\s*$/iu, "")
+    .replace(/\s+№\s*\d+[ა-ჰa-z]?\s*$/iu, "")
+    .trim();
+
+  const suffix = name.match(
+    /^(.+?)\s+(ქ\.?|ქუჩა|გამზ\.?|შესახვევი|ჩიხი)$/iu
+  );
+  if (suffix) {
+    const tail = suffix[2].replace(/\.$/, "");
+    const streetSuffix =
+      tail === "ქ" || tail === "ქუჩა" ? "ქ" : tail;
+    return `${suffix[1].trim()} ${streetSuffix}`;
+  }
+
+  if (/\s+ქუჩა\s*$/iu.test(name)) return name.replace(/\s+ქუჩა\s*$/iu, " ქ");
+  if (/\s+ქ\.?\s*$/iu.test(name)) return name.replace(/\s+ქ\.?\s*$/iu, " ქ");
+  if (/\s+შესახვევი\s*$/iu.test(name)) return name;
+  if (/\s+ჩიხი\s*$/iu.test(name)) return name;
+  return name;
+}
+
+function resolveStreetForPrefill(
+  street: string,
+  streetNumber: string
+): { street: string; streetNumber: string } {
+  const combined = street.trim();
+  if (!combined || isListingAddressNoise(combined)) {
+    return { street: "", streetNumber: streetNumber.trim() };
+  }
+
+  if (isMicrodistrictOrBlockAddressLine(combined)) {
+    return { street: combined, streetNumber: "" };
+  }
+  if (isPinLandmarkLine(combined)) {
+    return { street: combined, streetNumber: "" };
+  }
+
+  const parsed = parseAddressPartsString(combined);
+  const num = streetNumber.trim() || parsed.streetNumber;
+  const name = streetNameOnly(parsed.street || combined);
+  if (
+    !name ||
+    isListingAddressNoise(name) ||
+    (!isStreetLineText(combined) &&
+      !isMicrodistrictOrBlockAddressLine(combined) &&
+      !isPinLandmarkLine(combined) &&
+      !isStreetLineText(name) &&
+      !isMicrodistrictOrBlockAddressLine(name) &&
+      !isPinLandmarkLine(name))
+  ) {
+    return { street: "", streetNumber: num.trim() };
+  }
+
+  return { street: name, streetNumber: num.trim() };
+}
+
+/** Compare street names: ქუჩა ≈ ქ. ≈ ქ; ignore dots/spacing in abbreviations (ს.კედიას ≈ ს. კედიას). */
+function normalizeStreetKey(raw: string): string {
+  return raw
+    .toLowerCase()
+    .replace(/\./g, "")
+    .replace(/\s+/g, "")
+    .replace(/ქუჩა$/u, "ქ")
+    .replace(/ქ$/u, "ქ");
+}
+
+function streetMatchScore(want: string, option: string): number {
+  const a = normalizeStreetKey(want);
+  const b = normalizeStreetKey(option);
+  if (!a || !b) return 0;
+  if (a === b) return 1000;
+  if (b.startsWith(a) || a.startsWith(b)) return 900;
+  if (b.includes(a) || a.includes(b)) return Math.min(a.length, b.length) * 8;
+  let prefix = 0;
+  const max = Math.min(a.length, b.length);
+  while (prefix < max && a[prefix] === b[prefix]) prefix++;
+  return prefix * 15;
+}
+
+function streetAutocompleteQueries(street: string): string[] {
+  const s = street.replace(/\s+/g, " ").trim();
+  if (!s) return [];
+
+  const queries: string[] = [s];
+  if (isMicrodistrictOrBlockAddressLine(s) || isPinLandmarkLine(s)) {
+    if (isMicrodistrictOrBlockAddressLine(s)) {
+      const beforeDash = s.split(/\s-\s/)[0]?.trim();
+      if (beforeDash && beforeDash !== s) queries.push(beforeDash);
+      const noUnit = s.replace(/\s*(?:კვარტ\.?|კორპ\.?|№)\s*\d+\s*$/iu, "").trim();
+      if (noUnit && noUnit !== s) queries.push(noUnit);
+    }
+    return [...new Set(queries.filter((q) => q.length > 0))];
+  }
+  const withoutSuffix = s
+    .replace(/\s+(ქ\.?|ქუჩა|შესახვევი|ჩიხი)\s*$/iu, "")
+    .trim();
+  const spacedAbbr = withoutSuffix.replace(/\.(\S)/gu, ". $1").replace(/\s+/g, " ").trim();
+  const tightAbbr = withoutSuffix.replace(/\.\s+/g, ".").trim();
+  const noDots = withoutSuffix.replace(/\./g, " ").replace(/\s+/g, " ").trim();
+
+  for (const base of [withoutSuffix, spacedAbbr, tightAbbr, noDots]) {
+    if (!base) continue;
+    queries.push(base, `${base} ქ`, `${base} ქ.`, `${base} ქუჩა`);
+  }
+
+  for (const base of [s, withoutSuffix]) {
+    for (const alt of streetNameReorderVariants(base)) {
+      if (alt) queries.push(alt);
+    }
+  }
+
+  return [...new Set(queries.filter((q) => q.length > 0))];
 }
 
 /** Parsed rawData may use გათბობა; tolerate old typo key გათბომა. */
@@ -133,7 +706,15 @@ async function scrollToFormField(page: Page, label: string): Promise<void> {
     "აივანი",
     "ლოჯია",
     "ვერანდა",
+    "ეზო",
     "ჭერის სიმაღლე",
+    "სტატუსი",
+    "მდგომარეობა",
+    "სამშენებლო მასალა",
+    "პარკირება",
+    "გათბობა",
+    "ცხელი წყალი",
+    "კარ-ფანჯარა",
   ]);
   const locator = exactHeadings.has(label)
     ? page
@@ -144,7 +725,7 @@ async function scrollToFormField(page: Page, label: string): Promise<void> {
         .filter({ hasText: new RegExp(label.replace(/\./g, "\\."), "iu") });
 
   await locator.first().scrollIntoViewIfNeeded().catch(() => {});
-  await prefillPause(page, 30);
+  await prefillPause(page, 15);
 }
 
 /** Section heading → dropdown placeholder (…ტიპი) → option value. */
@@ -208,10 +789,10 @@ function getNestedSectionTypeValue(
   return "";
 }
 
-/** e.g. „2/12 მ²“ → count before /, area after. */
+/** e.g. „2/12 მ²“ → count before /, area after. Ignores yes/no and bare digits. */
 function parseBalconyCountAndArea(value: string): { count: string; area: string } {
   const v = value.trim();
-  if (!v) return { count: "", area: "" };
+  if (!v || v === "არა" || v === "კი") return { count: "", area: "" };
 
   const slash = v.match(/^(\d+)\s*\/\s*(\d+(?:[.,]\d+)?)\s*(?:მ²|m²)?\s*$/iu);
   if (slash) {
@@ -225,19 +806,128 @@ function parseBalconyCountAndArea(value: string): { count: string; area: string 
     return { count: "", area: normalizeAreaForInput(v) };
   }
 
-  if (/^\d+$/.test(v)) return { count: v, area: "" };
   return { count: "", area: "" };
+}
+
+function balconyEvidenceInMain(main: string): boolean {
+  const m = main.trim();
+  if (!m || m === "არა" || m === "კი") return false;
+  const parsed = parseBalconyCountAndArea(m);
+  if (parsed.area) return true;
+  return Boolean(parsed.count && /\d+\s*\/\s*\d/.test(m));
+}
+
+function balconyMainFieldRaw(listing: MyhomeListing): string {
+  const rd = listing.rawData || {};
+  const fromTile = rd["აივანი"]?.trim() || "";
+  if (balconyEvidenceInMain(fromTile)) return fromTile;
+
+  const fromColumn = listing.balconyArea?.trim() || "";
+  if (!fromColumn) return "";
+  if (/\d+\s*\/\s*\d/.test(fromColumn) || /მ²|m²/i.test(fromColumn)) {
+    return fromColumn;
+  }
+  return "";
+}
+
+function isStrayBalconyCountOnly(
+  count: string,
+  area: string,
+  header: string
+): boolean {
+  const digits = count.replace(/[^\d]/g, "");
+  if (!digits || digits === "0") return true;
+  if (digits !== "1") return false;
+  if (area.trim() && /\d/.test(area)) return false;
+  if (balconyEvidenceInMain(header)) return false;
+  return true;
+}
+
+function listingHasBalconyData(listing: MyhomeListing): boolean {
+  const rd = listing.rawData || {};
+  const header = rd["აივანი"]?.trim() || "";
+  if (header === "არა") return false;
+
+  if (balconyEvidenceInMain(balconyMainFieldRaw(listing))) return true;
+
+  const countDirect = rd["აივნის რაოდენობა"]?.trim() || "";
+  const areaDirect = rd["აივნის ფართი"]?.trim() || "";
+
+  if (areaDirect && /\d/.test(areaDirect)) return true;
+
+  const countDigits = countDirect.replace(/[^\d]/g, "");
+  if (!countDigits || countDigits === "0") return false;
+  if (isStrayBalconyCountOnly(countDirect, areaDirect, header)) return false;
+
+  return true;
+}
+
+function clearInvalidBalconyRawData(
+  rd: Record<string, string>,
+  listing?: MyhomeListing
+): void {
+  const header = rd["აივანი"]?.trim() || "";
+  const count = rd["აივნის რაოდენობა"]?.trim() || "";
+  const area = rd["აივნის ფართი"]?.trim() || "";
+
+  if (header === "არა") {
+    delete rd["აივანი"];
+    delete rd["აივნის რაოდენობა"];
+    delete rd["აივნის ფართი"];
+    if (listing) listing.balconyArea = "";
+    return;
+  }
+
+  if (
+    header === "კი" ||
+    /^(1|0)$/.test(header) ||
+    (header && !balconyEvidenceInMain(header))
+  ) {
+    delete rd["აივანი"];
+  }
+
+  if (isStrayBalconyCountOnly(count, area, header)) {
+    delete rd["აივნის რაოდენობა"];
+  }
+
+  const probe: MyhomeListing = {
+    ...(listing || ({} as MyhomeListing)),
+    rawData: rd,
+  };
+  if (!listingHasBalconyData(probe)) {
+    delete rd["აივნის რაოდენობა"];
+    delete rd["აივნის ფართი"];
+    if (listing) listing.balconyArea = "";
+  }
+}
+
+function sanitizeBalconyListing(listing: MyhomeListing): void {
+  if (!listing.rawData) listing.rawData = {};
+  clearInvalidBalconyRawData(listing.rawData, listing);
 }
 
 function applyBalconyParsedFields(listing: MyhomeListing): void {
   const rd = listing.rawData || {};
-  const countDirect = rd["აივნის რაოდენობა"]?.trim();
-  const areaDirect = rd["აივნის ფართი"]?.trim();
-  const fromMain = rd["აივანი"]?.trim() || listing.balconyArea?.trim() || "";
+  listing.rawData = rd;
+
+  sanitizeBalconyListing(listing);
+
+  if (!listingHasBalconyData(listing)) {
+    listing.balconyArea = "";
+    return;
+  }
+
+  const fromMain = balconyMainFieldRaw(listing);
   const { count, area } = parseBalconyCountAndArea(fromMain);
 
-  if (countDirect) rd["აივნის რაოდენობა"] = countDirect.replace(/[^\d]/g, "") || countDirect;
-  else if (count) rd["აივნის რაოდენობა"] = count;
+  const countDirect = rd["აივნის რაოდენობა"]?.trim();
+  const areaDirect = rd["აივნის ფართი"]?.trim();
+
+  if (countDirect) {
+    rd["აივნის რაოდენობა"] = countDirect.replace(/[^\d]/g, "") || countDirect;
+  } else if (count) {
+    rd["აივნის რაოდენობა"] = count;
+  }
 
   if (areaDirect) {
     rd["აივნის ფართი"] = normalizeAreaForInput(areaDirect);
@@ -246,32 +936,97 @@ function applyBalconyParsedFields(listing: MyhomeListing): void {
     rd["აივნის ფართი"] = area;
     listing.balconyArea = area;
   }
+
+  clearInvalidBalconyRawData(rd, listing);
 }
 
 function getBalconyCountValue(listing: MyhomeListing): string {
+  sanitizeBalconyListing(listing);
+  if (!listingHasBalconyData(listing)) return "";
+
   const direct = listing.rawData?.["აივნის რაოდენობა"]?.trim();
   if (direct) return direct.replace(/[^\d]/g, "") || direct;
-  const { count } = parseBalconyCountAndArea(
-    listing.rawData?.["აივანი"]?.trim() || listing.balconyArea || ""
-  );
+  const { count } = parseBalconyCountAndArea(balconyMainFieldRaw(listing));
   return count;
 }
 
 function getBalconyAreaValue(listing: MyhomeListing): string {
+  sanitizeBalconyListing(listing);
+  if (!listingHasBalconyData(listing)) return "";
+
   const direct = listing.rawData?.["აივნის ფართი"]?.trim();
   if (direct) return normalizeAreaForInput(direct);
-  const { area } = parseBalconyCountAndArea(listing.rawData?.["აივანი"]?.trim() || "");
+  const { area } = parseBalconyCountAndArea(balconyMainFieldRaw(listing));
   if (area) return area;
-  return listing.balconyArea ? normalizeAreaForInput(listing.balconyArea) : "";
+  const col = listing.balconyArea?.trim() || "";
+  if (col && listingHasBalconyData(listing)) {
+    return normalizeAreaForInput(col);
+  }
+  return "";
 }
 
+/** „2/5“ → floor 2, total 5; single „3“ → both 3 (myhome often omits total floors). */
+function parseFloorSpec(value: string): { floor: string; totalFloors: string } {
+  const v = value.trim();
+  if (!v) return { floor: "", totalFloors: "" };
+
+  const slash = v.match(/^(\d+)\s*\/\s*(\d+)$/);
+  if (slash) return { floor: slash[1], totalFloors: slash[2] };
+
+  const digits = v.replace(/[^\d]/g, "");
+  if (/^\d+$/.test(digits)) return { floor: digits, totalFloors: digits };
+
+  return { floor: "", totalFloors: "" };
+}
+
+function applyFloorParsedFields(listing: MyhomeListing): void {
+  const raw = listing.rawData?.["სართული"]?.trim();
+  if (raw) {
+    const parsed = parseFloorSpec(raw);
+    if (parsed.floor && !listing.floor?.trim()) listing.floor = parsed.floor;
+    if (parsed.totalFloors && !listing.totalFloors?.trim()) {
+      listing.totalFloors = parsed.totalFloors;
+    }
+  }
+
+  if (listing.floor?.trim() && !listing.totalFloors?.trim()) {
+    listing.totalFloors = listing.floor.trim();
+  }
+
+  if (listing.floor?.trim() && listing.rawData) {
+    listing.rawData["სართული"] = listing.rawData["სართული"] || listing.floor.trim();
+  }
+}
+
+function getTotalFloorsValue(listing: MyhomeListing): string {
+  applyFloorParsedFields(listing);
+  return listing.totalFloors?.trim() || listing.floor?.trim() || "";
+}
+
+async function prefillFloorFields(
+  page: Page,
+  listing: MyhomeListing
+): Promise<void> {
+  applyFloorParsedFields(listing);
+  const floor = listing.floor?.trim();
+  const totalFloors = getTotalFloorsValue(listing);
+  if (floor) await fillLabeledInput(page, "სართული", floor);
+  if (totalFloors) await fillLabeledInput(page, "სართულები სულ", totalFloors);
+}
+
+/** Create form: „აივანი“ = section; „აივნის რაოდენობა“ / „ფართი“ = inputs. Form defaults count to 1 — clear when not parsed. */
 async function prefillBalconyFields(
   page: Page,
   listing: MyhomeListing
 ): Promise<void> {
+  sanitizeBalconyListing(listing);
   const count = getBalconyCountValue(listing);
   const area = getBalconyAreaValue(listing);
-  if (!count && !area) return;
+
+  if (!count && !area) {
+    await clearBalconyFormFields(page);
+    return;
+  }
 
   await scrollToFormField(page, "აივანი");
   await prefillPause(page, 120);
@@ -283,6 +1038,61 @@ async function prefillBalconyFields(
   if (area) {
     await fillInputInNestedSection(page, "აივანი", "ფართი", area);
   }
+}
+
+/** Reset myhome default balcony count (often „1“) when listing has no balcony data. */
+async function clearBalconyFormFields(page: Page): Promise<void> {
+  await scrollToFormField(page, "აივანი").catch(() => {});
+  await page.evaluate(() => {
+    const inputSetter = Object.getOwnPropertyDescriptor(
+      window.HTMLInputElement.prototype,
+      "value"
+    )?.set;
+    if (!inputSetter) return;
+
+    function norm(s: string) {
+      return (s || "").replace(/\s*\*\s*$/, "").trim().replace(/\s+/g, " ");
+    }
+
+    function clearInput(input: HTMLInputElement) {
+      inputSetter!.call(input, "");
+      input.dispatchEvent(
+        new InputEvent("input", {
+          bubbles: true,
+          cancelable: true,
+          inputType: "deleteContentBackward",
+        })
+      );
+      input.dispatchEvent(new Event("change", { bubbles: true }));
+    }
+
+    function inputIsInBalconySection(input: Element): boolean {
+      if (input.getAttribute("data-prefill-main-area") === "1") return false;
+      let node: Element | null = input.parentElement;
+      while (node) {
+        if (/^H[234]$/.test(node.tagName)) {
+          const t = norm(node.textContent || "");
+          if (t === "აივანი") return true;
+        }
+        node = node.parentElement;
+      }
+      return false;
+    }
+
+    for (const lbl of document.querySelectorAll("label")) {
+      for (const span of lbl.querySelectorAll("span")) {
+        const t = norm(span.textContent || "");
+        if (t !== "აივნის რაოდენობა" && t !== "ფართი") continue;
+
+        const forAttr = lbl.getAttribute("for");
+        const input = forAttr
+          ? (document.getElementById(forAttr) as HTMLInputElement | null)
+          : (lbl.querySelector("input") as HTMLInputElement | null);
+        if (input && inputIsInBalconySection(input)) clearInput(input);
+      }
+    }
+  });
+  await prefillPause(page, 40);
 }
 
 /** e.g. „8 მ²“, „1/12 მ²“ → area (after / when slash present). */
@@ -368,6 +1178,35 @@ async function prefillVerandaFields(
   await scrollToFormField(page, "ვერანდა");
   await prefillPause(page, 120);
   await fillInputInNestedSection(page, "ვერანდა", "ფართი", area);
+}
+
+const YARD_AREA_KEY = "ეზოს ფართი";
+const YARD_SECTION_KEY = "ეზო";
+
+function applyYardAreaParsedFields(listing: MyhomeListing): void {
+  const rd = listing.rawData || {};
+  const direct = rd[YARD_AREA_KEY]?.trim();
+  if (!direct) return;
+  const parsed = parseSectionAreaValue(direct);
+  if (parsed) rd[YARD_AREA_KEY] = parsed;
+}
+
+function getYardAreaValue(listing: MyhomeListing): string {
+  const direct = listing.rawData?.[YARD_AREA_KEY]?.trim();
+  if (!direct) return "";
+  return normalizeAreaForInput(parseSectionAreaValue(direct) || direct);
+}
+
+async function prefillYardAreaFields(
+  page: Page,
+  listing: MyhomeListing
+): Promise<void> {
+  const area = getYardAreaValue(listing);
+  if (!area) return;
+
+  await scrollToFormField(page, YARD_SECTION_KEY);
+  await prefillPause(page, 120);
+  await fillInputInNestedSection(page, YARD_SECTION_KEY, "ფართი", area);
 }
 
 /** e.g. „100“, „100 სმ“, „3.2 მ“ → numeric value for form (keeps cm as-is). */
@@ -783,60 +1622,6 @@ async function fillInputInNestedSection(
   return false;
 }
 
-async function markLukSelectInSection(
-  page: Page,
-  sectionHeading: string
-): Promise<boolean> {
-  return page.evaluate((heading) => {
-    document
-      .querySelectorAll("[data-prefill-luk-field],[data-prefill-luk-trigger]")
-      .forEach((el) => {
-        el.removeAttribute("data-prefill-luk-field");
-        el.removeAttribute("data-prefill-luk-trigger");
-        if (el.getAttribute("data-prefill-field-label") === heading) {
-          el.removeAttribute("data-prefill-field-label");
-        }
-      });
-
-    function norm(s: string) {
-      return (s || "").replace(/\s*\*\s*$/, "").trim().replace(/\s+/g, " ");
-    }
-    function headingMatches(t: string) {
-      const n = norm(t);
-      if (heading === "სათავსო") return n === "სათავსო";
-      return n === heading;
-    }
-
-    for (const el of document.querySelectorAll("h2,h3,h4,label,span,p,motion.div,div")) {
-      if (!headingMatches(el.textContent || "")) continue;
-      if (
-        el.tagName !== "H2" &&
-        el.tagName !== "H3" &&
-        el.tagName !== "H4" &&
-        el.children.length > 4
-      ) {
-        continue;
-      }
-
-      let node: Element | null = el;
-      for (let depth = 0; depth < 20 && node; depth++) {
-        const selects = node.querySelectorAll(
-          ".luk-custom-select,[class*='luk-custom-select'],[role='combobox']"
-        );
-        if (selects.length > 0) {
-          const sel = selects[0];
-          sel.setAttribute("data-prefill-luk-field", heading);
-          sel.setAttribute("data-prefill-luk-trigger", "1");
-          sel.setAttribute("data-prefill-field-label", heading);
-          return true;
-        }
-        node = node.parentElement;
-      }
-    }
-    return false;
-  }, sectionHeading);
-}
-
 function nestedSectionHeadingPattern(sectionHeading: string): RegExp {
   return new RegExp(`^${escapeRegExp(sectionHeading)}\\s*\\*?$`, "u");
 }
@@ -925,24 +1710,24 @@ async function pickLukMenuVariants(
         await opt.scrollIntoViewIfNeeded().catch(() => {});
         await opt.dispatchEvent("mousedown");
         await opt.click({ force: true, timeout: CHIP_CLICK_TIMEOUT_MS });
-        await prefillPause(page, 220);
+        await prefillPause(page, LUK_CLICK_VERIFY_MS);
         if (await lukFieldShowsValue(page, sectionLabel, variants)) return true;
         if (await lukSelectSelectionApplied(page, sectionLabel, variants)) return true;
         await markLukFieldMenu(page);
       }
 
       const exact = menu.getByText(variant, { exact: true }).first();
-      if (await exact.isVisible({ timeout: 1000 }).catch(() => false)) {
+      if (await exact.isVisible({ timeout: 700 }).catch(() => false)) {
         await exact.dispatchEvent("mousedown");
         await exact.click({ force: true, timeout: CHIP_CLICK_TIMEOUT_MS });
-        await prefillPause(page, 220);
+        await prefillPause(page, LUK_CLICK_VERIFY_MS);
         if (await lukFieldShowsValue(page, sectionLabel, variants)) return true;
         if (await lukSelectSelectionApplied(page, sectionLabel, variants)) return true;
         await markLukFieldMenu(page);
       }
 
       if (await clickLukMenuOption(page, variant)) {
-        await prefillPause(page, 220);
+        await prefillPause(page, LUK_CLICK_VERIFY_MS);
         if (await lukFieldShowsValue(page, sectionLabel, variants)) return true;
         if (await lukSelectSelectionApplied(page, sectionLabel, variants)) return true;
         await markLukFieldMenu(page);
@@ -977,7 +1762,7 @@ async function clickLukOptionVariants(
     if (await inMenu.isVisible({ timeout: 1200 }).catch(() => false)) {
       await inMenu.dispatchEvent("mousedown");
       await inMenu.click({ force: true, timeout: CHIP_CLICK_TIMEOUT_MS });
-      await prefillPause(page, 280);
+      await prefillPause(page, LUK_CLICK_VERIFY_MS);
       if (await lukFieldShowsValue(page, sectionLabel, variants)) return true;
     }
 
@@ -990,7 +1775,7 @@ async function clickLukOptionVariants(
       if (box.y < menuTopY - 8 || box.y > menuBottomY) continue;
       await opt.dispatchEvent("mousedown");
       await opt.click({ force: true, timeout: CHIP_CLICK_TIMEOUT_MS });
-      await prefillPause(page, 280);
+      await prefillPause(page, LUK_CLICK_VERIFY_MS);
       if (await lukFieldShowsValue(page, sectionLabel, variants)) return true;
     }
   }
@@ -1007,9 +1792,10 @@ async function prefillNestedSectionTypeDropdown(
   if (!variants.length) return false;
 
   await scrollToFormField(page, sectionHeading);
-  await prefillPause(page, 120);
+  await prefillPause(page, 50);
 
   if (await lukFieldShowsValue(page, sectionHeading, variants)) return true;
+  if (await lukSelectSelectionApplied(page, sectionHeading, variants)) return true;
 
   await closeOpenDropdowns(page);
 
@@ -1020,10 +1806,7 @@ async function prefillNestedSectionTypeDropdown(
   );
 
   if (!(await select.isVisible({ timeout: 2500 }).catch(() => false))) {
-    return (
-      (await prefillLukDropdownField(page, sectionHeading, rawValue)) ||
-      (await prefillLukDropdownField(page, dropdownHint, rawValue))
-    );
+    return prefillLukDropdownField(page, sectionHeading, rawValue);
   }
 
   await select.evaluate(
@@ -1038,23 +1821,26 @@ async function prefillNestedSectionTypeDropdown(
   await openNestedSectionLukSelect(page, select);
   await waitForLukSelectOptions(page, 1);
   await prefillPause(page, LUK_DROPDOWN_PAUSE_MS);
+  await markActiveLukMenu(page);
+  await markOpenLukMenuScrollContainer(page);
 
   const rootBox = await select.boundingBox().catch(() => null);
   const menuTopY = rootBox ? rootBox.y + rootBox.height : 0;
   const menuBottomY = menuTopY + 480;
+  const activeMenu = page.locator("[data-prefill-active-menu='1']");
 
   if (await pickLukMenuVariants(page, sectionHeading, variants)) return true;
+
+  if (await tryPickLukVariants(page, sectionHeading, variants, activeMenu)) return true;
+
   if (await clickLukOptionVariants(page, sectionHeading, variants, menuTopY, menuBottomY)) {
     if (await lukFieldShowsValue(page, sectionHeading, variants)) return true;
     if (await lukSelectSelectionApplied(page, sectionHeading, variants)) return true;
   }
 
-  if (
-    (await prefillLukDropdownField(page, sectionHeading, rawValue)) ||
-    (await prefillLukDropdownField(page, dropdownHint, rawValue))
-  ) {
-    return true;
-  }
+  if (await scrollMenuAndClickOption(page, sectionHeading, variants)) return true;
+
+  if (await tryPickLukVariants(page, sectionHeading, variants)) return true;
 
   await closeOpenDropdowns(page);
   return false;
@@ -1070,7 +1856,7 @@ async function expandCreateFormSections(page: Page): Promise<void> {
     .first()
     .click({ timeout: CHIP_CLICK_TIMEOUT_MS })
     .catch(() => {});
-  await prefillPause(page, 120);
+  await prefillPause(page, 60);
 }
 
 async function markLukFieldTrigger(
@@ -1137,7 +1923,10 @@ async function lukFieldShowsValue(
         if (!t || /აირჩიეთ/i.test(t)) return false;
         return targets.some((target) => {
           const o = norm(target);
-          return t === o || t === o.replace(/ის$/u, "ი") || t === `${o}ს`;
+          if (t === o || t === o.replace(/ის$/u, "ი") || t === `${o}ს`) return true;
+          const tN = t.replace(/\s*\+\s*/g, "+").toLowerCase();
+          const oN = o.replace(/\s*\+\s*/g, "+").toLowerCase();
+          return tN === oN;
         });
       }
 
@@ -1199,6 +1988,12 @@ async function markLukFieldMenu(page: Page): Promise<boolean> {
       }
     }
 
+    for (const menu of document.querySelectorAll(
+      "ul.options-list, ul[class*='options-list']"
+    )) {
+      if (markMenu(menu)) return true;
+    }
+
     const tr = trigger.getBoundingClientRect();
     let best: Element | null = null;
     let bestScore = Infinity;
@@ -1222,7 +2017,11 @@ function optionTextMatchesVariant(text: string, variant: string): boolean {
   const t = (text || "").replace(/\s+/g, " ").trim();
   const o = variant.replace(/\s+/g, " ").trim();
   if (!t || !o) return false;
-  return t === o || t === o.replace(/ის$/u, "ი") || t === `${o}ს`;
+  if (t === o) return true;
+  if (t === o.replace(/ის$/u, "ი") || t === `${o}ს`) return true;
+  const tNorm = t.replace(/\s*\+\s*/g, "+").toLowerCase();
+  const oNorm = o.replace(/\s*\+\s*/g, "+").toLowerCase();
+  return tNorm === oNorm;
 }
 
 async function clickLukMenuOption(page: Page, variant: string): Promise<boolean> {
@@ -1238,7 +2037,10 @@ async function clickLukMenuOption(page: Page, variant: string): Promise<boolean>
     }
     function matches(t: string) {
       const o = norm(target);
-      return t === o || t === o.replace(/ის$/u, "ი") || t === `${o}ს`;
+      if (t === o || t === o.replace(/ის$/u, "ი") || t === `${o}ს`) return true;
+      const tN = t.replace(/\s*\+\s*/g, "+").toLowerCase();
+      const oN = o.replace(/\s*\+\s*/g, "+").toLowerCase();
+      return tN === oN;
     }
 
     const candidates: { el: Element; depth: number; len: number }[] = [];
@@ -1298,9 +2100,12 @@ async function prefillLukDropdownField(
       ? projectTypeOptionVariants(value)
       : dropdownOptionVariants(value, sectionLabel);
 
+  if (await lukFieldShowsValue(page, sectionLabel, variants)) return true;
+  if (await lukSelectSelectionApplied(page, sectionLabel, variants)) return true;
+
   await scrollToFormField(page, sectionLabel);
 
-  for (let attempt = 0; attempt < 3; attempt++) {
+  for (let attempt = 0; attempt < 2; attempt++) {
     await closeOpenDropdowns(page);
 
     const marked = await markLukFieldTrigger(page, sectionLabel);
@@ -1377,23 +2182,27 @@ async function prefillLukDropdownField(
   return false;
 }
 
-function projectTypeSearchPrefix(value: string): string {
-  const v = value.trim();
-  if (v.length <= 6) return v;
-  return v.slice(0, 8);
-}
-
-async function projectTypeSelectionApplied(
-  page: Page,
-  variants: string[]
-): Promise<boolean> {
-  return lukSelectSelectionApplied(page, "პროექტის ტიპი", variants);
-}
-
 function dropdownOptionVariants(value: string, sectionLabel: string): string[] {
   if (sectionLabel === "პროექტის ტიპი") return projectTypeOptionVariants(value);
   const raw = normFieldLabel(dedupeRepeatedLabelValue(value));
   if (!raw) return [];
+
+  if (FLEX_CHIP_ROW_CONFIGS[sectionLabel]) {
+    const fromFlex = flexChipOptionVariants(sectionLabel, raw);
+    if (fromFlex.length) return fromFlex;
+  }
+
+  if (sectionLabel === "მისაღები" || sectionLabel === "მისაღების ტიპი") {
+    const fromAliases = resolveAliasVariants(raw, MISAGEBI_ALIASES);
+    if (fromAliases) return fromAliases;
+  }
+  if (
+    sectionLabel === "სათავსო" ||
+    sectionLabel === "სათავსოს ტიპი"
+  ) {
+    const fromAliases = resolveAliasVariants(raw, SATAVSO_ALIASES);
+    if (fromAliases) return fromAliases;
+  }
 
   const ordered: string[] = [raw];
   if (/ის$/u.test(raw)) ordered.push(raw.replace(/ის$/u, "ი"));
@@ -1416,6 +2225,7 @@ function dropdownOptionVariants(value: string, sectionLabel: string): string[] {
     if (/სტუდიო/i.test(raw)) ordered.push("სტუდიო");
     if (/გამოყოფილ/i.test(raw)) ordered.push("გამოყოფილი");
     if (/ერთიან/i.test(raw)) ordered.push("ერთიანი", "ერთ - ოთახიანი");
+    if (/სარდაფი?\s*[\+და]+\s*სხვენი?/i.test(raw)) ordered.push("სარდაფი + სხვენი");
   }
 
   return [...new Set(ordered)];
@@ -1432,24 +2242,49 @@ async function lukSelectSelectionApplied(
       function norm(s: string) {
         return (s || "").replace(/\s+/g, " ").trim();
       }
+      function matchesValue(text: string) {
+        const t = norm(text);
+        if (!t || /აირჩიეთ/i.test(t)) return false;
+        return targets.some((target) => {
+          const o = norm(target);
+          if (t === o || t.includes(o)) return true;
+          return (
+            t.includes(o.replace(/ის$/u, "ი")) ||
+            t.includes(`${o}ს`)
+          );
+        });
+      }
+
       const trigger =
         document.querySelector(`[data-prefill-luk-field="${sectionLabel}"]`) ||
         document.querySelector(`[data-prefill-field-label="${sectionLabel}"]`);
-      if (!trigger) return false;
-      const valueEl =
-        trigger.querySelector(
-          "[class*='single-value'], [class*='singleValue'], [class*='placeholder']"
-        ) || trigger;
-      const t = norm(valueEl.textContent || "");
-      if (!t || /აირჩიეთ/i.test(t)) return false;
-      return targets.some((target) => {
-        const o = norm(target);
-        return (
-          t.includes(o) ||
-          t.includes(o.replace(/ის$/u, "ი")) ||
-          t.includes(`${o}ს`)
-        );
-      });
+      if (trigger) {
+        const valueEl =
+          trigger.querySelector(
+            "[class*='single-value'], [class*='singleValue'], [class*='placeholder']"
+          ) || trigger;
+        if (matchesValue(valueEl.textContent || "")) return true;
+        if (matchesValue(trigger.textContent || "")) return true;
+      }
+
+      for (const el of document.querySelectorAll("label, span, p")) {
+        const t = norm(el.textContent || "").replace(/\s*\*$/, "");
+        if (t !== norm(sectionLabel)) continue;
+        let node: Element | null = el.parentElement;
+        for (let depth = 0; depth < 8 && node; depth++) {
+          const input = node.querySelector("input, textarea");
+          if (input) {
+            const v = (input as HTMLInputElement).value || input.textContent || "";
+            if (matchesValue(v)) return true;
+          }
+          for (const chip of node.querySelectorAll("span, div")) {
+            const ct = norm(chip.textContent || "");
+            if (matchesValue(ct)) return true;
+          }
+          node = node.parentElement;
+        }
+      }
+      return false;
     },
     { sectionLabel, targets: variants }
   );
@@ -1459,10 +2294,6 @@ async function markLukSelectRoot(page: Page, sectionLabel: string): Promise<bool
   return page.evaluate((label) => {
     document.querySelectorAll("[data-prefill-luk-field]").forEach((el) => {
       el.removeAttribute("data-prefill-luk-field");
-    });
-    document.querySelectorAll("[data-prefill-field-label]").forEach((el) => {
-      if (el.getAttribute("data-prefill-luk-field")) return;
-      el.removeAttribute("data-prefill-field-label");
     });
 
     function norm(s: string) {
@@ -1477,9 +2308,12 @@ async function markLukSelectRoot(page: Page, sectionLabel: string): Promise<bool
 
     function findSelectNearLabel(labelEl: Element): Element | null {
       const findIn = (root: Element): Element | null =>
+        root.querySelector("input") ||
+        root.querySelector("button") ||
         root.querySelector(".luk-custom-select") ||
         root.querySelector("[class*='luk-custom-select']") ||
-        root.querySelector("[role='combobox']");
+        root.querySelector("[role='combobox']") ||
+        root.querySelector("[class*='cursor-pointer']");
 
       let sib: Element | null = labelEl.nextElementSibling;
       for (let i = 0; i < 6 && sib; i++) {
@@ -1509,7 +2343,7 @@ async function markLukSelectRoot(page: Page, sectionLabel: string): Promise<bool
       let node: Element | null = labelEl.parentElement;
       for (let depth = 0; depth < 14 && node; depth++) {
         for (const sel of node.querySelectorAll(
-          ".luk-custom-select, [class*='luk-custom-select'], [role='combobox']"
+          "input, .luk-custom-select, [class*='luk-custom-select'], [role='combobox'], [class*='cursor-pointer']"
         )) {
           const sr = sel.getBoundingClientRect();
           if (sr.width < 40 || sr.height < 10) continue;
@@ -1539,10 +2373,6 @@ async function markLukSelectRoot(page: Page, sectionLabel: string): Promise<bool
   }, sectionLabel);
 }
 
-async function markProjectTypeSelectRoot(page: Page): Promise<boolean> {
-  return markLukSelectRoot(page, "პროექტის ტიპი");
-}
-
 async function markLukSelectOption(page: Page, variants: string[]): Promise<boolean> {
   return page.evaluate((targets) => {
     document.querySelectorAll("[data-prefill-luk-option]").forEach((el) => {
@@ -1556,13 +2386,16 @@ async function markLukSelectOption(page: Page, variants: string[]): Promise<bool
       if (!t || t.length > 60) return false;
       return targets.some((target) => {
         const o = norm(target);
-        return t === o || t === o.replace(/ის$/u, "ი") || t === `${o}ს`;
+        if (t === o || t === o.replace(/ის$/u, "ი") || t === `${o}ს`) return true;
+        const tN = t.replace(/\s*\+\s*/g, "+").toLowerCase();
+        const oN = o.replace(/\s*\+\s*/g, "+").toLowerCase();
+        return tN === oN;
       });
     }
 
     const menus = Array.from(
       document.querySelectorAll(
-        '[role="listbox"], [class*="menu"], [class*="MenuList"], [class*="menu-list"]'
+        'ul.options-list, ul[class*="options-list"], [role="listbox"], [class*="menu"], [class*="MenuList"], [class*="menu-list"]'
       )
     ).filter((el) => {
       const style = window.getComputedStyle(el);
@@ -1574,7 +2407,7 @@ async function markLukSelectOption(page: Page, variants: string[]): Promise<bool
     const candidates: { el: Element; depth: number }[] = [];
     for (const menu of menus) {
       for (const el of menu.querySelectorAll(
-        '[role="option"], [class*="option"], div, span, li, p'
+        "li, [role='option'], [class*='option'], div, span, p"
       )) {
         const t = norm(el.textContent || "");
         if (!matches(t)) continue;
@@ -1603,33 +2436,240 @@ async function markLukSelectOption(page: Page, variants: string[]): Promise<bool
       pick.closest('[class*="option"]') ||
       pick.closest("li") ||
       pick;
+    clickTarget.scrollIntoView({ block: "nearest", inline: "nearest" });
     clickTarget.setAttribute("data-prefill-luk-option", "1");
     return true;
   }, variants);
 }
 
-async function markProjectTypeOption(page: Page, variants: string[]): Promise<boolean> {
-  return markLukSelectOption(page, variants);
-}
-
 async function clickMarkedLukOption(page: Page): Promise<boolean> {
   const opt = page.locator("[data-prefill-luk-option='1']").first();
-  if (!(await opt.isVisible({ timeout: 1500 }).catch(() => false))) return false;
+  if ((await opt.count()) === 0) return false;
 
   await opt.scrollIntoViewIfNeeded().catch(() => {});
   await opt.dispatchEvent("mousedown");
   const box = await opt.boundingBox().catch(() => null);
   if (box) {
-    await page.mouse.click(box.x + box.width / 2, box.y + box.height / 2);
+    await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2);
+    await page.mouse.down();
+    await page.mouse.up();
   } else {
-    await opt.click({ timeout: CHIP_CLICK_TIMEOUT_MS, force: true });
+    await opt.click({ force: true, timeout: CHIP_CLICK_TIMEOUT_MS });
   }
-  await opt.dispatchEvent("mouseup");
+  await prefillPause(page, 220);
   return true;
 }
 
-async function clickMarkedProjectTypeOption(page: Page): Promise<boolean> {
-  return clickMarkedLukOption(page);
+/** Tag the visible luk menu portal so Playwright clicks stay scoped to the open list. */
+async function markActiveLukMenu(page: Page): Promise<boolean> {
+  return page.evaluate(() => {
+    document.querySelectorAll("[data-prefill-active-menu]").forEach((el) => {
+      el.removeAttribute("data-prefill-active-menu");
+    });
+
+    function countRows(menu: Element) {
+      let n = 0;
+      for (const o of menu.querySelectorAll("li, [role='option'], [class*='option']")) {
+        const t = (o.textContent || "").replace(/\s+/g, " ").trim();
+        if (!t || t.length > 60 || /აირჩიეთ/i.test(t)) continue;
+        n++;
+      }
+      return n;
+    }
+
+    let best: Element | null = null;
+    let bestCount = 0;
+    const selectors = [
+      "ul.options-list",
+      'ul[class*="options-list"]',
+      '[class*="luk-custom-select__menu"]',
+      '[class*="menu-list"]',
+      '[role="listbox"]',
+    ];
+    for (const sel of selectors) {
+      for (const menu of document.querySelectorAll(sel)) {
+        const style = window.getComputedStyle(menu);
+        if (style.display === "none" || style.visibility === "hidden") continue;
+        const r = menu.getBoundingClientRect();
+        if (r.width < 40 || r.height < 12) continue;
+        const n = countRows(menu);
+        if (n > bestCount) {
+          bestCount = n;
+          best = menu;
+        }
+      }
+    }
+    if (!best) return false;
+    best.setAttribute("data-prefill-active-menu", "1");
+    return true;
+  });
+}
+
+/** Playwright click on an option row (React-select needs real pointer events, not .click() in evaluate). */
+async function playwrightClickLukVariants(
+  page: Page,
+  variants: string[],
+  menuLocator?: Locator
+): Promise<boolean> {
+  const menus: Locator[] = [];
+  if (menuLocator) {
+    menus.push(menuLocator);
+  } else {
+    const scrollMenu = page.locator("[data-prefill-scroll-menu='1']");
+    const activeMenu = page.locator("[data-prefill-active-menu='1']");
+    if ((await scrollMenu.count()) > 0) menus.push(scrollMenu);
+    if ((await activeMenu.count()) > 0) menus.push(activeMenu);
+    menus.push(
+      page.locator(LUK_OPTIONS_LIST_SELECTOR).last(),
+      page.locator("[class*='luk-custom-select__menu']").last(),
+      page.locator("[role='listbox']").last()
+    );
+  }
+
+  for (const variant of variants) {
+    const textRe = new RegExp(`^${escapeRegExp(variant)}$`, "u");
+    for (const menu of menus) {
+      if ((await menu.count()) === 0) continue;
+
+      const liOpt = menu.locator("li").filter({ hasText: textRe }).first();
+      const classOpt = menu
+        .locator('li, [role="option"], [class*="option"]')
+        .filter({ hasText: textRe })
+        .first();
+      const textOpt = menu.getByText(variant, { exact: true }).first();
+
+      for (const target of [liOpt, classOpt, textOpt]) {
+        if ((await target.count()) === 0) continue;
+        await target.scrollIntoViewIfNeeded().catch(() => {});
+        await target.dispatchEvent("mousedown");
+        const box = await target.boundingBox().catch(() => null);
+        if (box) {
+          await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2);
+          await page.mouse.down();
+          await page.mouse.up();
+        } else {
+          await target.click({ force: true, timeout: CHIP_CLICK_TIMEOUT_MS });
+        }
+        await prefillPause(page, 280);
+        return true;
+      }
+    }
+  }
+  return false;
+}
+
+async function tryPickLukVariants(
+  page: Page,
+  sectionLabel: string,
+  variants: string[],
+  menuLocator?: Locator
+): Promise<boolean> {
+  if (await playwrightClickLukVariants(page, variants, menuLocator)) {
+    if (await lukSelectSelectionApplied(page, sectionLabel, variants)) return true;
+    await page.keyboard.press("Enter").catch(() => {});
+    await prefillPause(page, 200);
+    if (await lukSelectSelectionApplied(page, sectionLabel, variants)) return true;
+  }
+  for (const variant of variants) {
+    if (await markLukSelectOption(page, [variant])) {
+      await clickMarkedLukOption(page);
+      await prefillPause(page, LUK_CLICK_VERIFY_MS);
+      if (await lukSelectSelectionApplied(page, sectionLabel, variants)) return true;
+      await page.keyboard.press("Enter").catch(() => {});
+      await prefillPause(page, 60);
+      if (await lukSelectSelectionApplied(page, sectionLabel, variants)) return true;
+    }
+  }
+  return false;
+}
+
+/** Mark the scrollable listbox inside the open luk menu (not the outer menu wrapper). */
+async function markOpenLukMenuScrollContainer(page: Page): Promise<boolean> {
+  return page.evaluate(() => {
+    document.querySelectorAll("[data-prefill-scroll-menu]").forEach((el) => {
+      el.removeAttribute("data-prefill-scroll-menu");
+    });
+
+    const candidates: { el: Element; overflow: number; options: number }[] = [];
+    for (const el of document.querySelectorAll(
+      'ul.options-list, ul[class*="options-list"], [class*="menu-list"], [class*="MenuList"], [role="listbox"]'
+    )) {
+      const style = window.getComputedStyle(el);
+      if (style.display === "none" || style.visibility === "hidden") continue;
+      const r = el.getBoundingClientRect();
+      if (r.width < 40 || r.height < 16) continue;
+      const overflow = el.scrollHeight - el.clientHeight;
+      let options = 0;
+      for (const li of el.querySelectorAll("li")) {
+        const t = (li.textContent || "").replace(/\s+/g, " ").trim();
+        if (t && t.length < 60 && !/აირჩიეთ/i.test(t)) options++;
+      }
+      if (overflow > 4 || options >= 3) {
+        candidates.push({ el, overflow: Math.max(overflow, options), options });
+      }
+    }
+
+    candidates.sort((a, b) => b.overflow - a.overflow || b.options - a.options);
+    const pick = candidates[0]?.el;
+    if (!pick) return false;
+    pick.setAttribute("data-prefill-scroll-menu", "1");
+    return true;
+  });
+}
+
+/** Primary picker for statements.myhome.ge <ul class="options-list"><li>…</li>. */
+async function pickFromLukOptionsList(
+  page: Page,
+  sectionLabel: string,
+  variants: string[]
+): Promise<boolean> {
+  const list = page.locator(LUK_OPTIONS_LIST_SELECTOR).filter({ visible: true }).last();
+  if ((await list.count()) === 0) return false;
+
+  await list.evaluate((el) => {
+    el.setAttribute("data-prefill-scroll-menu", "1");
+    el.setAttribute("data-prefill-active-menu", "1");
+  });
+
+  const scrollMeta = await list.evaluate((el) => ({
+    maxTop: Math.max(0, el.scrollHeight - el.clientHeight),
+    step: Math.max(el.clientHeight - 40, 36),
+  }));
+
+  const scrollTops: number[] = [0];
+  for (let top = scrollMeta.step; top < scrollMeta.maxTop; top += scrollMeta.step) {
+    scrollTops.push(top);
+  }
+  if (!scrollTops.includes(scrollMeta.maxTop)) scrollTops.push(scrollMeta.maxTop);
+
+  for (const top of scrollTops) {
+    await list.evaluate((el, offset) => {
+      el.scrollTop = offset;
+    }, top);
+    await prefillPause(page, 70);
+
+    for (const variant of variants) {
+      const textRe = new RegExp(`^\\s*${escapeRegExp(variant)}\\s*$`, "u");
+      const li = list.locator("li").filter({ hasText: textRe }).first();
+      if ((await li.count()) === 0) continue;
+
+      await li.scrollIntoViewIfNeeded().catch(() => {});
+      await li.dispatchEvent("mousedown");
+      const box = await li.boundingBox().catch(() => null);
+      if (box) {
+        await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2);
+        await page.mouse.down();
+        await page.mouse.up();
+      } else {
+        await li.click({ force: true, timeout: CHIP_CLICK_TIMEOUT_MS });
+      }
+      await prefillPause(page, LUK_CLICK_VERIFY_MS);
+
+      if (await lukSelectSelectionApplied(page, sectionLabel, variants)) return true;
+    }
+  }
+
+  return false;
 }
 
 async function waitForLukSelectOptions(page: Page, minCount = 1): Promise<void> {
@@ -1639,7 +2679,7 @@ async function waitForLukSelectOptions(page: Page, minCount = 1): Promise<void> 
         function countOptions(root: ParentNode) {
           let n = 0;
           for (const el of root.querySelectorAll(
-            '[role="option"], [class*="option"], [class*="menu-list"] > div, [class*="MenuList"] > div'
+            "ul.options-list > li, ul[class*='options-list'] > li, [role='option'], [class*='option']"
           )) {
             const t = (el.textContent || "").replace(/\s+/g, " ").trim();
             if (!t || t.length > 60) continue;
@@ -1650,7 +2690,7 @@ async function waitForLukSelectOptions(page: Page, minCount = 1): Promise<void> 
           return n;
         }
         for (const lb of document.querySelectorAll(
-          '[role="listbox"], [class*="menu"], [class*="MenuList"]'
+          'ul.options-list, ul[class*="options-list"], [role="listbox"], [class*="menu"]'
         )) {
           const style = window.getComputedStyle(lb);
           if (style.display === "none" || style.visibility === "hidden") continue;
@@ -1659,98 +2699,9 @@ async function waitForLukSelectOptions(page: Page, minCount = 1): Promise<void> 
         return countOptions(document.body) >= min;
       },
       minCount,
-      { timeout: 10000 }
+      { timeout: 5000 }
     )
     .catch(() => {});
-}
-
-async function waitForProjectTypeOptions(page: Page, minCount = 1): Promise<void> {
-  return waitForLukSelectOptions(page, minCount);
-}
-
-async function typeProjectTypeFilter(page: Page, text: string): Promise<void> {
-  const candidates = [
-    page.locator("[data-prefill-project-type-root='1'] input"),
-    page.locator("[class*='luk-custom-select'] input").filter({ visible: true }),
-    page.locator("[class*='menu'] input").filter({ visible: true }),
-    page.locator("input:focus"),
-  ];
-
-  for (const input of candidates) {
-    if (!(await input.isVisible({ timeout: 500 }).catch(() => false))) continue;
-    await input.click({ force: true });
-    await input.press("Control+a").catch(() => input.press("Meta+a"));
-    await input.pressSequentially(text, { delay: 50 });
-    return;
-  }
-
-  await page.keyboard.type(text, { delay: 50 });
-}
-
-async function selectProjectTypeOption(page: Page, variant: string): Promise<boolean> {
-  for (const v of projectTypeOptionVariants(variant)) {
-    const picked = await page.evaluate((optionText) => {
-      function norm(s: string) {
-        return (s || "").replace(/\s+/g, " ").trim();
-      }
-      const target = norm(optionText);
-      for (const el of document.querySelectorAll(
-        "[role='option'], [class*='option'], [class*='menu-list'] > div, li"
-      )) {
-        const t = norm(el.textContent || "");
-        if (t !== target && t !== target.replace(/ის$/u, "ი") && t !== `${target}ს`) {
-          continue;
-        }
-        const clickEl =
-          el.closest("[role='option']") ||
-          el.closest('[class*="option"]') ||
-          el;
-        (clickEl as HTMLElement).dispatchEvent(
-          new MouseEvent("mousedown", { bubbles: true })
-        );
-        (clickEl as HTMLElement).click();
-        return true;
-      }
-      return false;
-    }, v);
-
-    if (picked) return true;
-
-    const exact = page
-      .locator("[role='option'], [class*='option'], [class*='menu-list'] > div")
-      .filter({ hasText: new RegExp(`^${escapeRegExp(v)}$`, "u") })
-      .filter({ visible: true })
-      .first();
-    if (await exact.isVisible({ timeout: 1500 }).catch(() => false)) {
-      await exact.dispatchEvent("mousedown");
-      await exact.click({ timeout: CHIP_CLICK_TIMEOUT_MS, force: true });
-      return true;
-    }
-  }
-  return false;
-}
-
-async function openProjectTypeDropdown(page: Page): Promise<boolean> {
-  if (!(await markProjectTypeSelectRoot(page))) return false;
-
-  const selectRoot = page.locator("[data-prefill-project-type-root='1']").first();
-  await selectRoot.scrollIntoViewIfNeeded().catch(() => {});
-
-  const openers = [
-    selectRoot.locator("[class*='indicator']").first(),
-    selectRoot.locator("[class*='control']").first(),
-    selectRoot.locator("[class*='value-container']").first(),
-    selectRoot,
-  ];
-
-  for (const opener of openers) {
-    if (await opener.isVisible({ timeout: 400 }).catch(() => false)) {
-      await opener.click({ timeout: CHIP_CLICK_TIMEOUT_MS, force: true });
-      await prefillPause(page, 350);
-      return true;
-    }
-  }
-  return false;
 }
 
 /** Click visible menu row (full list loads on open — no filter typing). */
@@ -1805,14 +2756,6 @@ async function clickVisibleLukMenuItem(
   return false;
 }
 
-async function clickVisibleProjectTypeMenuItem(
-  page: Page,
-  variant: string,
-  menuTopY: number
-): Promise<boolean> {
-  return clickVisibleLukMenuItem(page, projectTypeOptionVariants(variant), menuTopY);
-}
-
 /** Luk select (პროექტის ტიპი, მისაღები, სათავსო, …) — open list, click exact option. */
 async function prefillLukSelectByLabel(
   page: Page,
@@ -1826,7 +2769,30 @@ async function prefillLukSelectByLabel(
   await prefillPause(page, 80);
 
   if (await lukSelectSelectionApplied(page, sectionLabel, variants)) return true;
-  if (!(await markLukSelectRoot(page, sectionLabel))) return false;
+
+  let marked = await markLukSelectRoot(page, sectionLabel);
+  if (!marked) {
+    marked = await page.evaluate((label) => {
+      function norm(s: string) {
+        return (s || "").replace(/\s*\*\s*$/, "").trim().replace(/\s+/g, " ");
+      }
+      for (const el of document.querySelectorAll("label, span, p")) {
+        if (norm(el.textContent || "") !== norm(label)) continue;
+        let node: Element | null = el.parentElement;
+        for (let depth = 0; depth < 10 && node; depth++) {
+          const input = node.querySelector("input");
+          if (input) {
+            input.setAttribute("data-prefill-luk-field", label);
+            input.setAttribute("data-prefill-field-label", label);
+            return true;
+          }
+          node = node.parentElement;
+        }
+      }
+      return false;
+    }, sectionLabel);
+  }
+  if (!marked) return false;
 
   const selectRoot = page.locator(`[data-prefill-luk-field="${sectionLabel}"]`).first();
   await selectRoot.scrollIntoViewIfNeeded().catch(() => {});
@@ -1837,42 +2803,88 @@ async function prefillLukSelectByLabel(
   await closeOpenDropdowns(page);
   await prefillPause(page, 60);
 
-  const opener = selectRoot
-    .locator("[class*='indicator'], [class*='control'], [class*='value-container']")
-    .first();
-  await opener.click({ timeout: CHIP_CLICK_TIMEOUT_MS, force: true }).catch(() =>
-    selectRoot.click({ timeout: CHIP_CLICK_TIMEOUT_MS, force: true })
-  );
+  const input = selectRoot.locator("input").first();
+  if (await input.isVisible({ timeout: 800 }).catch(() => false)) {
+    await input.click({ timeout: CHIP_CLICK_TIMEOUT_MS, force: true });
+  } else {
+    const opener = selectRoot
+      .locator("[class*='indicator'], [class*='control'], [class*='value-container']")
+      .first();
+    await opener.click({ timeout: CHIP_CLICK_TIMEOUT_MS, force: true }).catch(() =>
+      selectRoot.click({ timeout: CHIP_CLICK_TIMEOUT_MS, force: true })
+    );
+  }
 
   await waitForLukSelectOptions(page, 1);
-  await prefillPause(page, 250);
+  await prefillPause(page, 100);
+
+  if (await pickFromLukOptionsList(page, sectionLabel, variants)) return true;
+
+  await markActiveLukMenu(page);
+  await markOpenLukMenuScrollContainer(page);
+
+  const activeMenu = page.locator("[data-prefill-active-menu='1']");
+  const scrollMenu = page.locator("[data-prefill-scroll-menu='1']");
+
+  if (await pickFromLukOptionsList(page, sectionLabel, variants)) return true;
 
   if (await clickVisibleLukMenuItem(page, variants, menuTopY, menuBottomY)) {
     if (await lukSelectSelectionApplied(page, sectionLabel, variants)) return true;
   }
 
-  for (const variant of variants) {
-    if (await markLukSelectOption(page, [variant])) {
-      await clickMarkedLukOption(page);
-      await prefillPause(page, 300);
-      if (await lukSelectSelectionApplied(page, sectionLabel, variants)) return true;
-    }
-  }
+  if (await tryPickLukVariants(page, sectionLabel, variants, activeMenu)) return true;
 
-  for (const variant of variants) {
-    const menu = page
-      .locator("[class*='luk-custom-select__menu'], [class*='menu-list'], [role='listbox']")
-      .last();
-    const row = menu.getByText(variant, { exact: true }).first();
-    if (await row.isVisible({ timeout: 1000 }).catch(() => false)) {
-      await row.dispatchEvent("mousedown");
-      await row.click({ force: true, timeout: CHIP_CLICK_TIMEOUT_MS });
-      await prefillPause(page, 300);
-      if (await lukSelectSelectionApplied(page, sectionLabel, variants)) return true;
-    }
-  }
+  if (await scrollMenuAndClickOption(page, sectionLabel, variants)) return true;
+
+  if (await tryPickLukVariants(page, sectionLabel, variants)) return true;
 
   await closeOpenDropdowns(page);
+  return false;
+}
+
+/** Scroll the dropdown menu container down in steps to find and click off-screen options. */
+async function scrollMenuAndClickOption(
+  page: Page,
+  sectionLabel: string,
+  variants: string[]
+): Promise<boolean> {
+  if (await lukFieldShowsValue(page, sectionLabel, variants)) return true;
+
+  const hasScrollMenu = await markOpenLukMenuScrollContainer(page);
+
+  const scrollMeta = hasScrollMenu
+    ? await page.evaluate(() => {
+        const menu = document.querySelector("[data-prefill-scroll-menu='1']");
+        if (!menu) return null;
+        const maxTop = Math.max(0, menu.scrollHeight - menu.clientHeight);
+        const step = Math.max(menu.clientHeight - 24, 48);
+        return { maxTop, step };
+      })
+    : null;
+
+  const scrollTops: number[] = [0];
+  if (scrollMeta) {
+    for (let top = scrollMeta.step; top < scrollMeta.maxTop; top += scrollMeta.step) {
+      scrollTops.push(top);
+    }
+    if (!scrollTops.includes(scrollMeta.maxTop)) scrollTops.push(scrollMeta.maxTop);
+  }
+
+  const scrollMenu = page.locator("[data-prefill-scroll-menu='1']");
+
+  for (const top of scrollTops) {
+    if (hasScrollMenu) {
+      await page.evaluate((offset) => {
+        const menu = document.querySelector("[data-prefill-scroll-menu='1']");
+        if (menu) menu.scrollTop = offset;
+      }, top);
+      await prefillPause(page, 70);
+    }
+
+    if (await tryPickLukVariants(page, sectionLabel, variants, scrollMenu)) return true;
+    if (await tryPickLukVariants(page, sectionLabel, variants)) return true;
+  }
+
   return false;
 }
 
@@ -1882,6 +2894,203 @@ async function prefillProjectTypeField(page: Page, rawValue: string): Promise<bo
   return prefillLukSelectByLabel(page, "პროექტის ტიპი", rawValue);
 }
 
+/** Step 4 flex chip row — click leaf chip under h2, verify selection (not luk dropdown). */
+async function readFlexChipRowSelection(
+  page: Page,
+  sectionLabel: string
+): Promise<string> {
+  return page.evaluate((label) => {
+    function norm(s: string) {
+      return (s || "").replace(/\s*\*\s*$/, "").trim().replace(/\s+/g, " ");
+    }
+    function flexChipLooksSelected(el: Element): boolean {
+      const chip = (el.closest("[class*='rounded']") as HTMLElement) || (el as HTMLElement);
+      const cls = chip.className?.toString() || "";
+      if (chip.getAttribute("aria-pressed") === "true") return true;
+      if (chip.getAttribute("aria-checked") === "true") return true;
+      if (/luk-bg-white/i.test(cls)) {
+        return /border-(primary|brand|blue|green)|ring-|shadow/i.test(cls);
+      }
+      if (/border-(primary|brand|blue|green)|bg-(primary|brand|blue)|ring-/i.test(cls)) {
+        return true;
+      }
+      return false;
+    }
+    function directChipText(el: Element): string {
+      for (const node of [el, ...Array.from(el.querySelectorAll("span,p"))]) {
+        if (node.children.length > 1) continue;
+        const t = norm(node.textContent || "");
+        if (t && t.length <= 40) return t;
+      }
+      return norm(el.textContent || "");
+    }
+    function findChipRow(heading: Element): Element | null {
+      let node: Element | null = heading;
+      for (let d = 0; d < 16 && node; d++) {
+        for (const row of node.querySelectorAll('[class*="luk-flex-wrap"]')) {
+          if (row.children.length >= 2) return row;
+        }
+        node = node.parentElement;
+      }
+      return null;
+    }
+    function readSelectedFromRow(row: Element): string {
+      const children = Array.from(row.children);
+      const nonWhite = children.filter((c) => {
+        const cls = (c as HTMLElement).className?.toString() || "";
+        return !/luk-bg-white/i.test(cls);
+      });
+      if (nonWhite.length === 1) return directChipText(nonWhite[0]);
+      for (const child of children) {
+        if (flexChipLooksSelected(child)) return directChipText(child);
+      }
+      return "";
+    }
+
+    for (const heading of document.querySelectorAll("h2,h3,h4")) {
+      if (norm(heading.textContent || "") !== norm(label)) continue;
+      const row = findChipRow(heading);
+      if (!row) continue;
+      const selected = readSelectedFromRow(row);
+      if (selected) return selected;
+    }
+    return "";
+  }, sectionLabel);
+}
+
+async function clickFlexChipRowInPage(
+  page: Page,
+  sectionLabel: string,
+  chipLabel: string
+): Promise<boolean> {
+  return page.evaluate(
+    ({ sectionLabel, chipLabel }) => {
+      function norm(s: string) {
+        return (s || "").replace(/\s*\*\s*$/, "").trim().replace(/\s+/g, " ");
+      }
+      function flexChipLooksSelected(el: Element): boolean {
+        const chip = (el.closest("[class*='rounded']") as HTMLElement) || (el as HTMLElement);
+        const cls = chip.className?.toString() || "";
+        if (chip.getAttribute("aria-pressed") === "true") return true;
+        if (chip.getAttribute("aria-checked") === "true") return true;
+        if (/luk-bg-white/i.test(cls)) {
+          return /border-(primary|brand|blue|green)|ring-|shadow/i.test(cls);
+        }
+        if (/border-(primary|brand|blue|green)|bg-(primary|brand|blue)|ring-/i.test(cls)) {
+          return true;
+        }
+        return false;
+      }
+      function directChipText(el: Element): string {
+        for (const node of [el, ...Array.from(el.querySelectorAll("span,p"))]) {
+          if (node.children.length > 1) continue;
+          const t = norm(node.textContent || "");
+          if (t && t.length <= 40) return t;
+        }
+        return norm(el.textContent || "");
+      }
+      function findChipRow(heading: Element): Element | null {
+        let node: Element | null = heading;
+        for (let d = 0; d < 16 && node; d++) {
+          for (const row of node.querySelectorAll('[class*="luk-flex-wrap"]')) {
+            if (row.children.length >= 2) return row;
+          }
+          node = node.parentElement;
+        }
+        return null;
+      }
+      function activateChip(chip: HTMLElement): void {
+        chip.scrollIntoView({ block: "center", inline: "center" });
+        chip.dispatchEvent(new MouseEvent("mousedown", { bubbles: true, cancelable: true }));
+        chip.dispatchEvent(new MouseEvent("mouseup", { bubbles: true, cancelable: true }));
+        chip.click();
+      }
+
+      function readSelectedFromRow(row: Element): string {
+        const children = Array.from(row.children);
+        const nonWhite = children.filter((c) => {
+          const cls = (c as HTMLElement).className?.toString() || "";
+          return !/luk-bg-white/i.test(cls);
+        });
+        if (nonWhite.length === 1) return directChipText(nonWhite[0]);
+        for (const child of children) {
+          if (flexChipLooksSelected(child)) return directChipText(child);
+        }
+        return "";
+      }
+
+      const target = norm(chipLabel);
+      for (const heading of document.querySelectorAll("h2,h3,h4")) {
+        if (norm(heading.textContent || "") !== norm(sectionLabel)) continue;
+        const row = findChipRow(heading);
+        if (!row) continue;
+
+        for (const child of row.children) {
+          if (directChipText(child) !== target) continue;
+          activateChip(child as HTMLElement);
+          if (readSelectedFromRow(row) === target) return true;
+        }
+      }
+      return false;
+    },
+    { sectionLabel, chipLabel }
+  );
+}
+
+async function prefillFlexChipRowField(
+  page: Page,
+  sectionLabel: string,
+  rawValue: string
+): Promise<boolean> {
+  const chipLabel = canonicalFlexChipLabel(sectionLabel, rawValue) ||
+    getFlexChipPrefillValue(
+      { rawData: { [sectionLabel]: rawValue } } as MyhomeListing,
+      sectionLabel
+    );
+  if (!chipLabel || !FLEX_CHIP_ROW_CONFIGS[sectionLabel]) return false;
+
+  await scrollToFormField(page, sectionLabel);
+  await prefillPause(page, 60);
+
+  const current = await readFlexChipRowSelection(page, sectionLabel);
+  if (current === chipLabel) return true;
+
+  if (await clickFlexChipRowInPage(page, sectionLabel, chipLabel)) {
+    await prefillPause(page, 80);
+    if ((await readFlexChipRowSelection(page, sectionLabel)) === chipLabel) {
+      return true;
+    }
+  }
+
+  const sectionRe = new RegExp(
+    `^${escapeRegExp(sectionLabel)}(?:\\s*\\*)?$`,
+    "iu"
+  );
+  const heading = page.locator("h2,h3,h4").filter({ hasText: sectionRe }).first();
+  if (await heading.isVisible({ timeout: 800 }).catch(() => false)) {
+    const row = heading
+      .locator("xpath=following::*[contains(@class,'luk-flex-wrap')][1]")
+      .first();
+    const chip = row.getByText(chipLabel, { exact: true }).first();
+    if (await chip.isVisible({ timeout: 500 }).catch(() => false)) {
+      const box = await chip.boundingBox().catch(() => null);
+      if (box) {
+        await page.mouse.click(box.x + box.width / 2, box.y + box.height / 2);
+        await prefillPause(page, 80);
+        if ((await readFlexChipRowSelection(page, sectionLabel)) === chipLabel) {
+          return true;
+        }
+      }
+    }
+  }
+
+  return false;
+}
+
+async function prefillParkingChipField(page: Page, rawValue: string): Promise<boolean> {
+  return prefillFlexChipRowField(page, "პარკირება", rawValue);
+}
+
 /** Chip row or dropdown (გათბობა may be either on the create form). */
 async function prefillPreferenceField(
   page: Page,
@@ -1889,6 +3098,11 @@ async function prefillPreferenceField(
   value: string,
   placeholder?: string
 ): Promise<boolean> {
+  if (isFlexChipRowValue(sectionLabel, value)) {
+    if (await prefillFlexChipRowField(page, sectionLabel, value)) return true;
+    return false;
+  }
+
   await scrollToFormField(page, sectionLabel);
   await clickChipInSection(page, sectionLabel, value);
   await prefillPause(page, 80);
@@ -1897,8 +3111,15 @@ async function prefillPreferenceField(
       function norm(s: string) {
         return (s || "").replace(/\s+/g, " ").trim();
       }
-      for (const el of document.querySelectorAll("label, span, p, motion.div, div")) {
-        if (norm(el.textContent || "") !== norm(sectionLabel)) continue;
+      function headingMatches(text: string, label: string) {
+        const t = norm(text).replace(/\s*\*$/, "");
+        const l = norm(label);
+        return t === l;
+      }
+      for (const el of document.querySelectorAll(
+        "h2, h3, h4, label, span, p, motion.div, div"
+      )) {
+        if (!headingMatches(el.textContent || "", sectionLabel)) continue;
         let node: Element | null = el.parentElement;
         for (let depth = 0; depth < 12 && node; depth++) {
           for (const chip of node.querySelectorAll(
@@ -1922,6 +3143,32 @@ async function prefillPreferenceField(
   if (chipOk) return true;
 
   return prefillLukDropdownField(page, sectionLabel, value, placeholder);
+}
+
+/** True only for chips/controls inside the balcony block, not a shared form ancestor. */
+async function locatorIsExclusiveBalconyScope(loc: Locator): Promise<boolean> {
+  return loc
+    .evaluate((el) => {
+      function norm(s: string) {
+        return (s || "").replace(/\s*\*\s*$/, "").trim().replace(/\s+/g, " ");
+      }
+      let node: Element | null = el;
+      for (let depth = 0; depth < 16 && node; depth++) {
+        let hasBalconyCount = false;
+        let hasOtherCountSection = false;
+        for (const marker of node.querySelectorAll("label,span,p")) {
+          const t = norm(marker.textContent || "");
+          if (/^აივნის\s*რაოდენობა$/iu.test(t)) hasBalconyCount = true;
+          if (/^საძინებელი/i.test(t)) hasOtherCountSection = true;
+          if (/^ოთახ/i.test(t)) hasOtherCountSection = true;
+          if (t.includes("სვ") && t.includes("წერტილი")) hasOtherCountSection = true;
+        }
+        if (hasBalconyCount && !hasOtherCountSection) return true;
+        node = node.parentElement;
+      }
+      return false;
+    })
+    .catch(() => false);
 }
 
 /**
@@ -1954,6 +3201,7 @@ async function prefillCountChipPlaywright(
         for (let c = 0; c < chipCount; c++) {
           const chipEl = chips.nth(c);
           if (!(await chipEl.isVisible({ timeout: 300 }).catch(() => false))) continue;
+          if (await locatorIsExclusiveBalconyScope(chipEl)) continue;
           await chipEl.click({ timeout: CHIP_CLICK_TIMEOUT_MS, force: true });
           await prefillPause(page, 40);
           return true;
@@ -1969,15 +3217,6 @@ async function prefillCountChipPlaywright(
 }
 
 /** Open პროექტის ტიპი luk-select and pick option (e.g. თუხარელის). */
-async function selectProjectTypePlaywright(
-  page: Page,
-  rawValue: string
-): Promise<boolean> {
-  const value = dedupeRepeatedLabelValue(rawValue.trim());
-  if (!value) return false;
-  return prefillProjectTypeField(page, value);
-}
-
 // Click a chip inside a labeled section (სტატუსი, მდგომარეობა). Playwright click updates React state.
 async function clickChipInSection(
   page: Page,
@@ -1988,7 +3227,8 @@ async function clickChipInSection(
   if (!value) return;
 
   const marked = await page.evaluate(
-    ({ sectionLabel, optionText }) => {
+    ({ sectionLabel, optionText, flexChipExactLabels }) => {
+      const flexExact = new Set(flexChipExactLabels);
       function norm(s: string) {
         return s.replace(/\s*\*\s*$/, "").trim();
       }
@@ -1996,17 +3236,21 @@ async function clickChipInSection(
       function chipRowIn(node: Element): Element | null {
         for (const child of Array.from(node.children)) {
           const chips = child.querySelectorAll(
-            "motion.div,button,[role='button'],motion.div[class*='rounded'],div[class*='rounded'],label[class*='rounded']"
+            "motion.div,button,[role='button'],motion.div[class*='rounded'],div[class*='rounded'],div[class*='rounded-lg'],label[class*='rounded']"
           );
           if (chips.length >= 2) return child;
         }
+        const flexRow = node.querySelector(".luk-flex.luk-flex-wrap.luk-gap-3");
+        if (flexRow) return flexRow;
         return null;
       }
 
       function labelsMatch(text: string, label: string): boolean {
         const t = norm(text).replace(/\s+/g, " ");
         const l = norm(label);
-        if (t === l || t.startsWith(l)) return true;
+        if (t === l) return true;
+        if (l.length >= 12 && t.startsWith(l)) return true;
+        if (l.length < 12 && (t === l || t.startsWith(l))) return true;
         if (l.includes("სვ") && l.includes("წერტილი") && t.includes("სვ") && t.includes("წერტილი")) {
           return true;
         }
@@ -2018,7 +3262,13 @@ async function clickChipInSection(
       function optionMatches(text: string, option: string): boolean {
         const t = norm(text);
         const o = norm(option);
+        if (flexExact.has(o)) return t === o;
         if (t === o) return true;
+        if (/პარკინგ/i.test(o) || /პარკინგ/i.test(t)) {
+          return t === o;
+        }
+        if (t.startsWith(o) || o.startsWith(t)) return true;
+        if (t.includes(o) && t.length <= o.length + 16) return true;
         const tm = t.match(/^(\d+)\+?$/);
         const om = o.match(/^(\d+)\+?$/);
         if (tm && om && tm[1] === om[1]) return true;
@@ -2026,13 +3276,19 @@ async function clickChipInSection(
       }
 
       function findSectionRoot(label: string): Element | null {
-        const nodes = document.querySelectorAll("label, span, p, div, h2, h3, h4");
+        const nodes = document.querySelectorAll(
+          "h2, h3, h4, label, span, p, div"
+        );
         for (const el of nodes) {
           if (!labelsMatch(el.textContent || "", label)) continue;
           let node: Element | null = el;
-          for (let depth = 0; depth < 8 && node; depth++) {
+          for (let depth = 0; depth < 12 && node; depth++) {
             const row = chipRowIn(node);
             if (row) return row;
+            const flexRow = node.querySelector(
+              ".luk-flex.luk-flex-wrap.luk-gap-3"
+            );
+            if (flexRow) return flexRow;
             node = node.parentElement;
           }
         }
@@ -2047,7 +3303,7 @@ async function clickChipInSection(
       if (!root) return false;
 
       const candidates = root.querySelectorAll(
-        "motion.div,button,[role=button],motion.div[class*='rounded'],motion.div[class*='border'],div[class*='rounded'],label[class*='rounded'],span,motion.span,motion.p"
+        "motion.div,button,[role=button],motion.div[class*='rounded'],motion.div[class*='border'],div[class*='rounded'],div[class*='rounded-lg'],label[class*='rounded'],span,motion.span,motion.p"
       );
 
       for (const el of candidates) {
@@ -2064,7 +3320,7 @@ async function clickChipInSection(
       }
       return false;
     },
-    { sectionLabel, optionText: value }
+    { sectionLabel, optionText: value, flexChipExactLabels: [...FLEX_CHIP_EXACT_LABELS] }
   );
 
   if (marked) {
@@ -2111,120 +3367,6 @@ async function clickChipInSectionLabels(
 }
 
 /** Click a chip by label inside a parent section (e.g. სხვა პარამეტრები → ინტერნეტი). */
-async function clickChipInNamedSection(
-  page: Page,
-  parentSectionLabel: string,
-  chipLabel: string
-): Promise<void> {
-  const value = chipLabel.trim();
-  if (!value) return;
-
-  const marked = await page.evaluate(
-    ({ parentSectionLabel, chipLabel }) => {
-      function norm(s: string) {
-        return s.replace(/\s*\*\s*$/, "").trim();
-      }
-
-      function isSelected(el: Element): boolean {
-        const chip =
-          el.closest("button") ||
-          el.closest("[role='button']") ||
-          el.closest("label") ||
-          el;
-        if (chip.getAttribute("aria-pressed") === "true") return true;
-        if (chip.getAttribute("aria-checked") === "true") return true;
-        const cls = chip.className?.toString() || "";
-        return /active|selected|checked|bg-primary|border-primary|ring/i.test(cls);
-      }
-
-      function sectionMatches(heading: string, target: string): boolean {
-        const h = norm(heading);
-        const t = norm(target);
-        if (!h || !t) return false;
-        if (h === t) return true;
-        if (h.startsWith(t) || t.startsWith(h)) return true;
-        if (h.includes(t) || t.includes(h)) return true;
-        return false;
-      }
-
-      function chipTextMatches(text: string, target: string): boolean {
-        const t = norm(text);
-        const c = norm(target);
-        if (t === c) return true;
-        return t.includes(c) && t.length <= c.length + 24;
-      }
-
-      let sectionHost: Element | null = null;
-      for (const el of document.querySelectorAll("label, span, p, div, h2, h3, h4")) {
-        const t = norm(el.textContent || "");
-        if (!sectionMatches(t, parentSectionLabel)) continue;
-        if (t.length > parentSectionLabel.length + 50) continue;
-
-        let node: Element | null = el;
-        for (let depth = 0; depth < 10 && node; depth++) {
-          const chipCount = node.querySelectorAll(
-            "button, [role='button'], label[class*='rounded'], div[class*='rounded']"
-          ).length;
-          if (chipCount >= 2) {
-            sectionHost = node;
-            break;
-          }
-          node = node.parentElement;
-        }
-        if (sectionHost) break;
-      }
-      if (!sectionHost) return false;
-
-      document.querySelectorAll("[data-prefill-target]").forEach((el) => {
-        el.removeAttribute("data-prefill-target");
-      });
-
-      for (const el of sectionHost.querySelectorAll(
-        "button, [role='button'], label[class*='rounded'], div[class*='rounded'], span, div"
-      )) {
-        if (el.children.length > 5) continue;
-        if (!chipTextMatches(el.textContent || "", chipLabel)) continue;
-        if (isSelected(el)) return "skip";
-        const chip =
-          el.closest("button") ||
-          el.closest("[role='button']") ||
-          el.closest("label[class*='rounded']") ||
-          el.closest("[class*='cursor-pointer']") ||
-          el;
-        chip.setAttribute("data-prefill-target", "1");
-        return true;
-      }
-      return false;
-    },
-    { parentSectionLabel, chipLabel: value }
-  );
-
-  if (marked === "skip") return;
-  if (marked) {
-    const clicked = await page.evaluate(() => {
-      const el = document.querySelector(
-        "[data-prefill-target='1']"
-      ) as HTMLElement | null;
-      if (!el) return false;
-      el.click();
-      el.removeAttribute("data-prefill-target");
-      return true;
-    });
-    if (!clicked) {
-      await page
-        .locator("[data-prefill-target='1']")
-        .first()
-        .click({ timeout: CHIP_CLICK_TIMEOUT_MS })
-        .catch(() => {});
-    }
-    await page.evaluate(() => {
-      document.querySelectorAll("[data-prefill-target]").forEach((el) => {
-        el.removeAttribute("data-prefill-target");
-      });
-    });
-  }
-}
-
 type ChipClickTask = { section: string; chip: string };
 
 /** Known chip-row fields on create form (label row → pick one chip). */
@@ -2236,7 +3378,20 @@ const CHIP_STYLE_ROW_LABELS = [
   "კარ-ფანჯარა",
 ] as const;
 
-function buildEarlyFormChipTasks(listing: MyhomeListing): ChipClickTask[] {
+function getBuildingStatusValue(listing: MyhomeListing): string {
+  return dedupeRepeatedLabelValue(
+    listing.buildingStatus || listing.rawData?.["სტატუსი"] || ""
+  );
+}
+
+function getConditionValue(listing: MyhomeListing): string {
+  return dedupeRepeatedLabelValue(
+    listing.condition || listing.rawData?.["მდგომარეობა"] || ""
+  );
+}
+
+/** Property + deal only — status/condition chips depend on property type being set first. */
+function buildEarlyPropertyChipTasks(listing: MyhomeListing): ChipClickTask[] {
   const tasks: ChipClickTask[] = [];
   if (listing.propertyType) {
     tasks.push({ section: "უძრავი ქონების ტიპი", chip: listing.propertyType });
@@ -2244,12 +3399,94 @@ function buildEarlyFormChipTasks(listing: MyhomeListing): ChipClickTask[] {
   if (listing.dealType) {
     tasks.push({ section: "გარიგების ტიპი", chip: listing.dealType });
   }
-  const buildingStatus =
-    listing.buildingStatus || listing.rawData?.["სტატუსი"] || "";
-  const condition = listing.condition || listing.rawData?.["მდგომარეობა"] || "";
-  if (buildingStatus) tasks.push({ section: "სტატუსი", chip: buildingStatus });
-  if (condition) tasks.push({ section: "მდგომარეობა", chip: condition });
   return tasks;
+}
+
+function preferenceChipMatches(chipText: string, target: string): boolean {
+  const t = chipText.replace(/\s+/g, " ").trim();
+  const c = target.replace(/\s+/g, " ").trim();
+  if (!t || !c) return false;
+  if (t === c) return true;
+  if (/პარკინგ/i.test(c) || /პარკინგ/i.test(t)) {
+    return t === c;
+  }
+  if (t.startsWith(c) || c.startsWith(t)) return true;
+  if (t.includes(c) && t.length <= c.length + 16) return true;
+  return false;
+}
+
+async function prefillSectionChipPlaywright(
+  page: Page,
+  sectionLabel: string,
+  chipValue: string
+): Promise<boolean> {
+  const value = dedupeRepeatedLabelValue(chipValue.trim());
+  if (!value) return false;
+
+  const sectionRe = new RegExp(`^${escapeRegExp(sectionLabel)}(?:\\s*\\*)?$`, "iu");
+  const labelEls = page.locator("label, span, p, h2, h3, h4, div, motion.div").filter({
+    hasText: sectionRe,
+  });
+  const labelCount = await labelEls.count();
+
+  for (let i = 0; i < labelCount; i++) {
+    const labelEl = labelEls.nth(i);
+    if (!(await labelEl.isVisible({ timeout: 800 }).catch(() => false))) continue;
+
+    let scope = labelEl;
+    for (let depth = 0; depth < 12; depth++) {
+      const chips = scope.locator(
+        "motion.div, button, [role=button], label[class*='rounded'], div[class*='rounded'], div[class*='cursor-pointer']"
+      );
+      const chipCount = await chips.count();
+      for (let c = 0; c < chipCount; c++) {
+        const chipEl = chips.nth(c);
+        const text = ((await chipEl.innerText().catch(() => "")) || "")
+          .replace(/\s+/g, " ")
+          .trim();
+        if (!preferenceChipMatches(text, value)) continue;
+        if (!(await chipEl.isVisible({ timeout: 400 }).catch(() => false))) continue;
+        await chipEl.scrollIntoViewIfNeeded().catch(() => {});
+        await chipEl.click({ timeout: CHIP_CLICK_TIMEOUT_MS, force: true });
+        await prefillPause(page, 100);
+        return true;
+      }
+      const parent = scope.locator("xpath=..");
+      if ((await parent.count()) === 0) break;
+      scope = parent;
+    }
+  }
+  return false;
+}
+
+async function prefillBuildingStatusAndCondition(
+  page: Page,
+  listing: MyhomeListing
+): Promise<void> {
+  const buildingStatus = getBuildingStatusValue(listing);
+  const condition = getConditionValue(listing);
+
+  if (buildingStatus) {
+    await scrollToFormField(page, "სტატუსი");
+    await prefillPause(page, 80);
+    if (
+      !(await prefillSectionChipPlaywright(page, "სტატუსი", buildingStatus)) &&
+      !(await prefillPreferenceField(page, "სტატუსი", buildingStatus))
+    ) {
+      await batchPrefillChips(page, [{ section: "სტატუსი", chip: buildingStatus }]);
+    }
+  }
+
+  if (condition) {
+    await scrollToFormField(page, "მდგომარეობა");
+    await prefillPause(page, 80);
+    if (
+      !(await prefillSectionChipPlaywright(page, "მდგომარეობა", condition)) &&
+      !(await prefillPreferenceField(page, "მდგომარეობა", condition))
+    ) {
+      await batchPrefillChips(page, [{ section: "მდგომარეობა", chip: condition }]);
+    }
+  }
 }
 
 const CHIP_SECTION_ALIASES: Record<string, string[]> = {
@@ -2266,6 +3503,10 @@ const CHIP_SECTION_ALIASES: Record<string, string[]> = {
 /** myhome.ge count chips (rooms, bathrooms) are often Framer Motion divs, not buttons. */
 const COUNT_CHIP_SELECTORS =
   "motion.div,button,[role=button],label[class*='rounded'],label[class*='border'],[class*='cursor-pointer'][class*='rounded'],[class*='cursor-pointer'][class*='border'],motion.div[class*='rounded']";
+
+/** Step 4 preference rows (div.luk-rounded-lg chips under h2). */
+const PREFERENCE_CHIP_SELECTORS =
+  `${COUNT_CHIP_SELECTORS},div[class*='rounded-lg'],div[class*='rounded']`;
 
 function getBathroomsValue(listing: MyhomeListing): string {
   return (
@@ -2285,6 +3526,163 @@ function getBedroomsValue(listing: MyhomeListing): string {
     listing.rawData?.["საძინებლები"] ||
     ""
   ).trim();
+}
+
+function getAreaValue(listing: MyhomeListing): string {
+  const raw =
+    listing.area?.trim() || listing.rawData?.["ფართი"]?.trim() || "";
+  return raw ? normalizeAreaForInput(raw) : "";
+}
+
+async function inputUnderFeatureSection(loc: Locator): Promise<boolean> {
+  return loc.evaluate((el) => {
+    const BLOCK = /^(აივანი|ლოჯია|ვერანდა|ეზო|მისაღები|სათავსო|ავეჯი)/iu;
+    let node = el.parentElement;
+    while (node) {
+      if (/^H[234]$/.test(node.tagName)) {
+        const t = (node.textContent || "").replace(/\s*\*\s*$/, "").trim();
+        if (BLOCK.test(t) || /^აივნის\s*რაოდენობა$/iu.test(t)) return true;
+      }
+      node = node.parentElement;
+    }
+    return false;
+  });
+}
+
+async function fillMainAreaInputPlaywright(
+  page: Page,
+  area: string
+): Promise<boolean> {
+  await page.waitForSelector("#total_price", { timeout: 12000 }).catch(() => {});
+
+  const marked = await page.evaluate(() => {
+    document.querySelectorAll("[data-prefill-main-area]").forEach((el) => {
+      el.removeAttribute("data-prefill-main-area");
+    });
+    const BLOCK = /^(აივანი|ლოჯია|ვერანდა|ეზო|მისაღები|სათავსო|ავეჯი)/iu;
+    function norm(s: string) {
+      return (s || "").replace(/\s*\*\s*$/, "").trim().replace(/\s+/g, " ");
+    }
+    function underFeature(el: Element): boolean {
+      let node: Element | null = el.parentElement;
+      while (node) {
+        if (/^H[234]$/.test(node.tagName)) {
+          const t = norm(node.textContent || "");
+          if (BLOCK.test(t) || /^აივნის\s*რაოდენობა$/iu.test(t)) return true;
+        }
+        node = node.parentElement;
+      }
+      return false;
+    }
+    function labelMatchesArea(lbl: Element): boolean {
+      const t = norm(lbl.textContent || "");
+      if (t === "ფართი" || t.startsWith("ფართი ")) return true;
+      for (const span of lbl.querySelectorAll("span")) {
+        const st = norm(span.textContent || "");
+        if (st === "ფართი" || st.startsWith("ფართი ")) return true;
+      }
+      return false;
+    }
+    function markFromLabel(lbl: Element): boolean {
+      if (!labelMatchesArea(lbl) || underFeature(lbl)) return false;
+      const forAttr = lbl.getAttribute("for");
+      const input = forAttr
+        ? document.getElementById(forAttr)
+        : lbl.querySelector("input");
+      if (!input || underFeature(input)) return false;
+      input.setAttribute("data-prefill-main-area", "1");
+      return true;
+    }
+
+    const price = document.getElementById("total_price");
+    if (price) {
+      let block: Element | null = price.parentElement;
+      for (let depth = 0; depth < 10 && block; depth++) {
+        for (const lbl of block.querySelectorAll("label")) {
+          if (markFromLabel(lbl)) return true;
+        }
+        block = block.parentElement;
+      }
+    }
+    for (const lbl of document.querySelectorAll("label")) {
+      if (markFromLabel(lbl)) return true;
+    }
+    return false;
+  });
+
+  if (marked) {
+    const markedInput = page.locator("[data-prefill-main-area='1']").first();
+    if (await markedInput.isVisible({ timeout: 2000 }).catch(() => false)) {
+      await markedInput.scrollIntoViewIfNeeded().catch(() => {});
+      await markedInput.click({ timeout: CHIP_CLICK_TIMEOUT_MS });
+      await markedInput.fill(area);
+      await prefillPause(page, 80);
+      const current = (await markedInput.inputValue().catch(() => ""))
+        .replace(",", ".")
+        .trim();
+      if (current === area) {
+        await markedInput.evaluate((el) => {
+          el.setAttribute("data-prefill-main-area", "1");
+        });
+        return true;
+      }
+    }
+  }
+
+  const candidates: Locator[] = [
+    page
+      .locator("label")
+      .filter({ has: page.getByText(/^ფართი\s*\*?$/u) })
+      .locator("input")
+      .first(),
+    page.getByLabel(/^ფართი\s*\*?$/u).first(),
+  ];
+
+  for (const candidate of candidates) {
+    if ((await candidate.count()) === 0) continue;
+    const input = candidate.first();
+    if (!(await input.isVisible({ timeout: 1000 }).catch(() => false))) continue;
+    if (await inputUnderFeatureSection(input)) continue;
+
+    await input.scrollIntoViewIfNeeded().catch(() => {});
+    await input.click({ timeout: CHIP_CLICK_TIMEOUT_MS });
+    await input.fill("");
+    await input.fill(area);
+    await prefillPause(page, 80);
+
+    const current = (await input.inputValue().catch(() => "")).replace(",", ".").trim();
+    if (current === area) {
+      await input.evaluate((el) => {
+        el.setAttribute("data-prefill-main-area", "1");
+      });
+      return true;
+    }
+
+    await input.evaluate(
+      (el, val) => {
+        const setter = Object.getOwnPropertyDescriptor(
+          window.HTMLInputElement.prototype,
+          "value"
+        )?.set;
+        if (!setter) return;
+        setter.call(el, val);
+        el.dispatchEvent(
+          new InputEvent("input", { bubbles: true, cancelable: true, inputType: "insertText", data: val })
+        );
+        el.dispatchEvent(new Event("change", { bubbles: true }));
+      },
+      area
+    );
+    const after = (await input.inputValue().catch(() => "")).replace(",", ".").trim();
+    if (after === area) {
+      await input.evaluate((el) => {
+        el.setAttribute("data-prefill-main-area", "1");
+      });
+      return true;
+    }
+  }
+
+  return false;
 }
 
 function getProjectTypeValue(listing: MyhomeListing): string {
@@ -2360,10 +3758,10 @@ function buildChipPrefillTasks(listing: MyhomeListing): ChipClickTask[] {
   const tasks: ChipClickTask[] = [];
 
   for (const label of CHIP_STYLE_ROW_LABELS) {
+    if (FLEX_CHIP_ROW_CONFIGS[label]) continue;
     const v = getRawPreferenceValue(listing, label);
-    if (v && v !== "კი" && v !== "არა") {
-      tasks.push({ section: label, chip: v });
-    }
+    if (!v || v === "კი" || v === "არა") continue;
+    tasks.push({ section: label, chip: v });
   }
 
   for (const label of collectYesAmenityLabels(listing)) {
@@ -2384,14 +3782,6 @@ function buildChipPrefillTasks(listing: MyhomeListing): ChipClickTask[] {
   return tasks;
 }
 
-function buildAllChipPrefillTasks(listing: MyhomeListing): ChipClickTask[] {
-  return [
-    ...buildEarlyFormChipTasks(listing),
-    ...buildExpandedFormChipTasks(listing),
-    ...buildChipPrefillTasks(listing),
-  ];
-}
-
 /**
  * Batch-click chips on create form (property features, building features, furniture, chip rows).
  * One DOM scan + native clicks — avoids 6×N Playwright timeouts.
@@ -2400,7 +3790,8 @@ async function batchPrefillChips(page: Page, tasks: ChipClickTask[]): Promise<nu
   if (tasks.length === 0) return 0;
 
   const batchResult = await page.evaluate(
-    ({ taskList, sectionAliases, countChipSelectors }) => {
+    ({ taskList, sectionAliases, countChipSelectors, flexChipExactLabels }) => {
+    const flexExact = new Set(flexChipExactLabels);
     function norm(s: string) {
       return (s || "").replace(/\s*\*\s*$/, "").trim().replace(/\s+/g, " ");
     }
@@ -2408,7 +3799,12 @@ async function batchPrefillChips(page: Page, tasks: ChipClickTask[]): Promise<nu
     function chipTextMatches(text: string, chip: string): boolean {
       const t = norm(text);
       const c = norm(chip);
+      if (flexExact.has(c)) return t === c;
       if (t === c) return true;
+      if (/პარკინგ/i.test(c) || /პარკინგ/i.test(t)) {
+        return t === c;
+      }
+      if (t.startsWith(c) || c.startsWith(t)) return true;
       if (t.includes(c) && t.length <= c.length + 40) return true;
       const tm = t.match(/^(\d+)\+?$/);
       const cm = c.match(/^(\d+)\+?$/);
@@ -2432,19 +3828,27 @@ async function batchPrefillChips(page: Page, tasks: ChipClickTask[]): Promise<nu
       function chipRowIn(node: Element): Element | null {
         for (const child of Array.from(node.children)) {
           const chips = child.querySelectorAll(
-            "motion.div,button,[role=button],div[class*='rounded'],label[class*='rounded']"
+            "motion.div,button,[role=button],div[class*='rounded'],div[class*='rounded-lg'],label[class*='rounded']"
           );
           if (chips.length >= 2) return child;
         }
+        const flexRow = node.querySelector(".luk-flex.luk-flex-wrap.luk-gap-3");
+        if (flexRow) return flexRow;
         return null;
       }
 
-      for (const el of document.querySelectorAll("label,span,p,motion.div")) {
+      for (const el of document.querySelectorAll(
+        "h2,h3,h4,label,span,p,motion.div"
+      )) {
         if (!labelsMatch(el.textContent || "", label)) continue;
         let node: Element | null = el;
         for (let depth = 0; depth < 10 && node; depth++) {
           const row = chipRowIn(node);
           if (row) return row;
+          const flexRow = node.querySelector(
+            ".luk-flex.luk-flex-wrap.luk-gap-3"
+          );
+          if (flexRow) return flexRow;
           node = node.parentElement;
         }
       }
@@ -2478,9 +3882,11 @@ async function batchPrefillChips(page: Page, tasks: ChipClickTask[]): Promise<nu
         let node: Element | null = el;
         for (let depth = 0; depth < 14 && node; depth++) {
           const chips = node.querySelectorAll(
-            "button,[role=button],label[class*='rounded'],[class*='border']"
+            "button,[role=button],label[class*='rounded'],div[class*='rounded'],div[class*='rounded-lg'],[class*='border']"
           );
           if (chips.length >= 2) return node;
+          const flexRow = node.querySelector(".luk-flex.luk-flex-wrap.luk-gap-3");
+          if (flexRow) return node;
           node = node.parentElement;
         }
       }
@@ -2560,7 +3966,12 @@ async function batchPrefillChips(page: Page, tasks: ChipClickTask[]): Promise<nu
         if (!t) continue;
         if (!chipTextMatches(t, c)) continue;
 
-        const target = el as HTMLElement;
+        const target = (el.closest(
+          "motion.div[class*='rounded'], div[class*='rounded'], button, [role=button], label[class*='rounded']"
+        ) || el) as HTMLElement;
+        const targetText = norm(target.textContent || "");
+        if (flexExact.has(c) && targetText !== c) continue;
+
         if (/^H[1-6]$/i.test(target.tagName) || target.closest("h2,h3,h4")) continue;
 
         if (isChipSelected(target)) {
@@ -2628,7 +4039,8 @@ async function batchPrefillChips(page: Page, tasks: ChipClickTask[]): Promise<nu
     {
       taskList: tasks,
       sectionAliases: CHIP_SECTION_ALIASES,
-      countChipSelectors: COUNT_CHIP_SELECTORS,
+      countChipSelectors: PREFERENCE_CHIP_SELECTORS,
+      flexChipExactLabels: [...FLEX_CHIP_EXACT_LABELS],
     }
   );
 
@@ -2781,12 +4193,31 @@ async function prefillRowCountChip(
             el.closest("button,[role=button]") ||
             el.parentElement ||
             el) as HTMLElement;
+          if (chipInExclusiveBalconyBlock(target)) continue;
 
           document.querySelectorAll("[data-prefill-count-chip]").forEach((n) => {
             n.removeAttribute("data-prefill-count-chip");
           });
           target.setAttribute("data-prefill-count-chip", "1");
           return true;
+        }
+        return false;
+      }
+
+      function chipInExclusiveBalconyBlock(chip: Element): boolean {
+        let node: Element | null = chip;
+        for (let depth = 0; depth < 16 && node; depth++) {
+          let hasBalconyCount = false;
+          let hasOtherCountSection = false;
+          for (const marker of node.querySelectorAll("label,span,p")) {
+            const t = norm(marker.textContent || "");
+            if (/^აივნის\s*რაოდენობა$/iu.test(t)) hasBalconyCount = true;
+            if (/^საძინებელი/i.test(t)) hasOtherCountSection = true;
+            if (/^ოთახ/i.test(t)) hasOtherCountSection = true;
+            if (t.includes("სვ") && t.includes("წერტილი")) hasOtherCountSection = true;
+          }
+          if (hasBalconyCount && !hasOtherCountSection) return true;
+          node = node.parentElement;
         }
         return false;
       }
@@ -2875,9 +4306,13 @@ async function prefillMainCountChips(
     .waitForFunction(
       () => {
         const body = document.body?.innerText || "";
-        return body.includes("ოთახი") || body.includes("სვ");
+        return (
+          body.includes("ოთახი") ||
+          body.includes("საძინებელი") ||
+          body.includes("სვ")
+        );
       },
-      { timeout: 8000 }
+      { timeout: 5000 }
     )
     .catch(() => {});
 
@@ -2925,9 +4360,6 @@ async function prefillMainCountChips(
         CHIP_SECTION_ALIASES["სველი წერტილი"],
         normalizeCountChipValue(bathrooms)
       );
-    }
-    for (const label of CHIP_SECTION_ALIASES["სველი წერტილი"]) {
-      await fillLabeledInput(page, label, normalizeNumericParam(bathrooms));
     }
   }
 }
@@ -3058,7 +4490,41 @@ async function fillInputByLabelEvaluate(
       )?.set;
       if (!inputSetter) return;
 
+      function inputInBalconySection(input: Element): boolean {
+        let node: Element | null = input.parentElement;
+        while (node) {
+          if (/^H[234]$/.test(node.tagName)) {
+            const t = norm(node.textContent || "");
+            if (t === "აივანი" || /^აივნის\s*რაოდენობა$/iu.test(t)) return true;
+          }
+          node = node.parentElement;
+        }
+        return false;
+      }
+
+      function isNestedFeatureAreaInput(input: Element): boolean {
+        const BLOCK = /^(აივანი|ლოჯია|ვერანდა|ეზო|მისაღები|სათავსო|ავეჯი)/iu;
+        let node: Element | null = input.parentElement;
+        while (node) {
+          if (/^H[234]$/.test(node.tagName)) {
+            const t = norm(node.textContent || "");
+            if (BLOCK.test(t) || /^აივნის\s*რაოდენობა$/iu.test(t)) return true;
+          }
+          node = node.parentElement;
+        }
+        return false;
+      }
+
+      function isWetPointLabel(text: string): boolean {
+        const t = norm(text);
+        return t.includes("სვ") && t.includes("წერტილი");
+      }
+
       function fillInput(input: HTMLInputElement): boolean {
+        if (inputInBalconySection(input)) return false;
+        if (norm(labelText) === "ფართი" && isNestedFeatureAreaInput(input)) {
+          return false;
+        }
         input.focus();
         inputSetter!.call(input, val);
         input.dispatchEvent(
@@ -3075,6 +4541,19 @@ async function fillInputByLabelEvaluate(
       }
 
       for (const lbl of document.querySelectorAll("label")) {
+        if (inputInBalconySection(lbl)) continue;
+        if (norm(labelText) === "ფართი" && isNestedFeatureAreaInput(lbl)) continue;
+        const lblNorm = norm(lbl.textContent || "");
+        if (
+          norm(labelText) === "ფართი" &&
+          (lblNorm === "ფართი" || lblNorm.startsWith("ფართი "))
+        ) {
+          const forAttr = lbl.getAttribute("for");
+          const input = forAttr
+            ? (document.getElementById(forAttr) as HTMLInputElement | null)
+            : (lbl.querySelector("input") as HTMLInputElement | null);
+          if (input && fillInput(input)) return;
+        }
         for (const span of lbl.querySelectorAll("span")) {
           if (norm(span.textContent || "") !== norm(labelText)) continue;
           const forAttr = lbl.getAttribute("for");
@@ -3085,11 +4564,15 @@ async function fillInputByLabelEvaluate(
         }
       }
 
+      if (isWetPointLabel(labelText)) return;
+
       for (const el of document.querySelectorAll("span, label, p")) {
         if (norm(el.textContent || "") !== norm(labelText)) continue;
         if (el.children.length > 3) continue;
+        if (inputInBalconySection(el)) continue;
         let node: Element | null = el.parentElement;
         for (let depth = 0; depth < 12 && node; depth++) {
+          if (inputInBalconySection(node)) break;
           const input = node.querySelector("input") as HTMLInputElement | null;
           if (input && fillInput(input)) return;
           node = node.parentElement;
@@ -3105,42 +4588,407 @@ async function fillLabeledInput(page: Page, label: string, value: string): Promi
   await fillInputByLabelEvaluate(page, label, value.trim());
 }
 
-async function selectAutocompleteOption(page: Page, value: string): Promise<void> {
-  if (!value?.trim()) return;
-  const text = value.trim();
-  await prefillPause(page, 80);
+/** Main listing area (m²) — not balcony / loggia / veranda / yard sub-fields. */
+async function prefillMainAreaField(
+  page: Page,
+  listing: MyhomeListing
+): Promise<void> {
+  const area = getAreaValue(listing);
+  if (!area) return;
 
-  const picked = await page.evaluate((optionText) => {
+  await scrollToFormField(page, "ფართი");
+
+  if (await fillMainAreaInputPlaywright(page, area)) return;
+
+  await fillLabeledInput(page, "ფართი", area);
+  if (await fillMainAreaInputPlaywright(page, area)) return;
+
+  await page.evaluate((val) => {
+    const BLOCK = /^(აივანი|ლოჯია|ვერანდა|ეზო|მისაღები|სათავსო|ავეჯი)/iu;
     function norm(s: string) {
-      return s.replace(/\s+/g, " ").trim();
+      return (s || "").replace(/\s*\*\s*$/, "").trim().replace(/\s+/g, " ");
     }
-    const target = norm(optionText);
-    for (const el of document.querySelectorAll(
-      "[role='option'], [class*='option'], li, [class*='menu-item']"
-    )) {
-      const t = norm(el.textContent || "");
-      if (t !== target && !t.includes(target)) continue;
-      (el as HTMLElement).click();
+    function underFeature(el: Element): boolean {
+      let node: Element | null = el.parentElement;
+      while (node) {
+        if (/^H[234]$/.test(node.tagName)) {
+          const t = norm(node.textContent || "");
+          if (BLOCK.test(t) || /^აივნის\s*რაოდენობა$/iu.test(t)) return true;
+        }
+        node = node.parentElement;
+      }
+      return false;
+    }
+    const setter = Object.getOwnPropertyDescriptor(
+      window.HTMLInputElement.prototype,
+      "value"
+    )?.set;
+    if (!setter) return;
+
+    function setVal(input: HTMLInputElement) {
+      setter!.call(input, val);
+      input.dispatchEvent(
+        new InputEvent("input", { bubbles: true, cancelable: true, inputType: "insertText", data: val })
+      );
+      input.dispatchEvent(new Event("change", { bubbles: true }));
+    }
+
+    function labelMatchesArea(lbl: Element | null): boolean {
+      if (!lbl) return false;
+      const t = norm(lbl.textContent || "");
+      if (t === "ფართი" || t.startsWith("ფართი ")) return true;
+      for (const span of lbl.querySelectorAll("span")) {
+        const st = norm(span.textContent || "");
+        if (st === "ფართი" || st.startsWith("ფართი ")) return true;
+      }
+      return false;
+    }
+
+    for (const lbl of document.querySelectorAll("label")) {
+      if (!labelMatchesArea(lbl) || underFeature(lbl)) continue;
+      const forAttr = lbl.getAttribute("for");
+      const input = forAttr
+        ? (document.getElementById(forAttr) as HTMLInputElement | null)
+        : (lbl.querySelector("input") as HTMLInputElement | null);
+      if (input && !underFeature(input)) {
+        setVal(input);
+        return;
+      }
+    }
+  }, area);
+}
+
+async function selectAutocompleteOption(
+  page: Page,
+  value: string,
+  options?: { pickFirst?: boolean }
+): Promise<boolean> {
+  if (!value?.trim()) return false;
+  const text = value.trim();
+  await prefillPause(page, 40);
+
+  const listbox = page.locator('[role="listbox"]:visible').first();
+  if (await listbox.isVisible({ timeout: 1000 }).catch(() => false)) {
+    const optionTexts = await listbox.locator('[role="option"]').allTextContents();
+    let bestIdx = -1;
+    let bestScore = 0;
+    for (let i = 0; i < optionTexts.length; i++) {
+      const opt = (optionTexts[i] || "").replace(/\s+/g, " ").trim();
+      if (!opt) continue;
+      const sc = streetMatchScore(text, opt);
+      if (sc > bestScore) {
+        bestScore = sc;
+        bestIdx = i;
+      }
+    }
+    const minScore = 40;
+    if (bestIdx >= 0 && bestScore >= minScore) {
+      await listbox
+        .locator('[role="option"]')
+        .nth(bestIdx)
+        .click({ timeout: CHIP_CLICK_TIMEOUT_MS });
       return true;
     }
-    return false;
-  }, text);
+    if (options?.pickFirst) {
+      const first = listbox.locator('[role="option"]').first();
+      if (await first.isVisible({ timeout: 800 }).catch(() => false)) {
+        await first.click({ timeout: CHIP_CLICK_TIMEOUT_MS });
+        return true;
+      }
+    }
+  }
 
-  if (picked) return;
+  const picked = await page.evaluate(
+    ({ optionText, pickFirst }) => {
+      function norm(s: string) {
+        return s.replace(/\s+/g, " ").trim();
+      }
+      function normalizeKey(raw: string) {
+        return raw
+          .toLowerCase()
+          .replace(/\./g, "")
+          .replace(/\s+/g, "")
+          .replace(/ქუჩა$/u, "ქ")
+          .replace(/ქ$/u, "ქ");
+      }
+      function score(want: string, opt: string) {
+        const a = normalizeKey(want);
+        const b = normalizeKey(opt);
+        if (!a || !b) return 0;
+        if (a === b) return 1000;
+        if (b.startsWith(a) || a.startsWith(b)) return 900;
+        if (b.includes(a) || a.includes(b)) return Math.min(a.length, b.length) * 8;
+        let prefix = 0;
+        const max = Math.min(a.length, b.length);
+        while (prefix < max && a[prefix] === b[prefix]) prefix++;
+        return prefix * 15;
+      }
 
-  const options = page.locator(
-    "[role='option'], [class*='option'], li, [class*='menu-item']"
+      const target = norm(optionText);
+      const optionsEls = [
+        ...document.querySelectorAll(
+          "[role='listbox'] [role='option'], [role='option'], [class*='option'], li, [class*='menu-item']"
+        ),
+      ];
+
+      let best: HTMLElement | null = null;
+      let bestScore = 0;
+      for (const el of optionsEls) {
+        const t = norm(el.textContent || "");
+        if (!t || t.length > 80) continue;
+        const sc = Math.max(
+          score(optionText, t),
+          t === target || t.includes(target) || target.includes(t) ? 500 : 0
+        );
+        if (sc > bestScore) {
+          bestScore = sc;
+          best = el as HTMLElement;
+        }
+      }
+      if (best && bestScore >= 40) {
+        best.click();
+        return true;
+      }
+      if (pickFirst && optionsEls[0]) {
+        (optionsEls[0] as HTMLElement).click();
+        return true;
+      }
+      return false;
+    },
+    { optionText: text, pickFirst: !!options?.pickFirst }
   );
-  const exact = options
-    .filter({ hasText: new RegExp(`^${escapeRegExp(text)}$`, "u") })
+
+  if (picked) return true;
+
+  const optionLoc = page.locator(
+    "[role='listbox']:visible [role='option'], [role='option'], [class*='option'], li, [class*='menu-item']"
+  );
+  const exact = optionLoc
+    .filter({ hasText: new RegExp(`^${escapeRegExp(text)}`, "u") })
     .first();
-  if (await exact.isVisible({ timeout: 800 }).catch(() => false)) {
+  if (await exact.isVisible({ timeout: 1200 }).catch(() => false)) {
     await exact.click({ timeout: CHIP_CLICK_TIMEOUT_MS });
+    return true;
+  }
+  const partial = optionLoc.filter({ hasText: text }).first();
+  if (await partial.isVisible({ timeout: 1200 }).catch(() => false)) {
+    await partial.click({ timeout: CHIP_CLICK_TIMEOUT_MS });
+    return true;
+  }
+  if (options?.pickFirst) {
+    const any = optionLoc.first();
+    if (await any.isVisible({ timeout: 600 }).catch(() => false)) {
+      await any.click({ timeout: CHIP_CLICK_TIMEOUT_MS });
+      return true;
+    }
+  }
+  return false;
+}
+
+/** Pick the closest street from the open autocomplete list (ქუჩა ≈ ქ.). */
+async function selectBestStreetAutocompleteOption(
+  page: Page,
+  street: string
+): Promise<boolean> {
+  const want = street.trim();
+  if (!want) return false;
+
+  const listbox = page.locator('[role="listbox"]:visible').first();
+  if (!(await listbox.isVisible({ timeout: 2500 }).catch(() => false))) return false;
+
+  const optionTexts = await listbox.locator('[role="option"]').allTextContents();
+  if (optionTexts.length === 0) return false;
+
+  let bestIdx = 0;
+  let bestScore = -1;
+  for (let i = 0; i < optionTexts.length; i++) {
+    const opt = (optionTexts[i] || "").replace(/\s+/g, " ").trim();
+    if (!opt) continue;
+    const sc = streetMatchScore(want, opt);
+    if (sc > bestScore) {
+      bestScore = sc;
+      bestIdx = i;
+    }
+  }
+
+  const minScore = optionTexts.length === 1 ? 1 : 40;
+  if (bestScore < minScore) return false;
+
+  await listbox
+    .locator('[role="option"]')
+    .nth(bestIdx)
+    .click({ timeout: CHIP_CLICK_TIMEOUT_MS });
+  await prefillPause(page, 200);
+  return true;
+}
+
+async function isAutocompleteFieldValid(page: Page, label: string): Promise<boolean> {
+  return page.evaluate((labelText) => {
+    function norm(s: string) {
+      return (s || "").replace(/\s*\*\s*$/, "").trim().replace(/\s+/g, " ");
+    }
+
+    let input: HTMLInputElement | null = null;
+    for (const lbl of document.querySelectorAll("label")) {
+      for (const span of lbl.querySelectorAll("span")) {
+        if (norm(span.textContent || "") !== norm(labelText)) continue;
+        const forAttr = lbl.getAttribute("for");
+        input = forAttr
+          ? (document.getElementById(forAttr) as HTMLInputElement | null)
+          : (lbl.querySelector("input") as HTMLInputElement | null);
+        if (input) break;
+      }
+      if (input) break;
+    }
+
+    if (!input) return false;
+    if (input.getAttribute("aria-invalid") === "true") return false;
+
+    let node: Element | null = input.parentElement;
+    for (let depth = 0; depth < 8 && node; depth++) {
+      const txt = (node.textContent || "").replace(/\s+/g, " ");
+      if (/სავალდებულო\s*ველი/i.test(txt) && txt.length < 120) return false;
+      node = node.parentElement;
+    }
+
+    return (input.value || "").trim().length > 0;
+  }, label);
+}
+
+async function locatorForLabeledInput(page: Page, label: string): Promise<Locator | null> {
+  const labelRe = new RegExp(`^${escapeRegExp(label)}(?:\\s*\\*)?$`, "iu");
+  const candidates = [
+    page
+      .locator("label")
+      .filter({ has: page.locator("span").filter({ hasText: labelRe }) })
+      .locator("input")
+      .first(),
+    page
+      .locator("div, motion.div")
+      .filter({ has: page.getByText(labelRe, { exact: true }) })
+      .locator("input")
+      .first(),
+    page
+      .locator("label, span, p")
+      .filter({ hasText: labelRe })
+      .locator("xpath=ancestor::*[.//input][1]//input")
+      .first(),
+  ];
+
+  for (const loc of candidates) {
+    if (await loc.isVisible({ timeout: 600 }).catch(() => false)) return loc;
+  }
+  return null;
+}
+
+/** Pick a listbox option so React stores a valid autocomplete value (not free text). */
+async function commitAutocompleteInput(
+  page: Page,
+  input: Locator,
+  value: string,
+  options?: { pickFirst?: boolean }
+): Promise<boolean> {
+  const val = value.trim();
+  if (!val) return false;
+
+  await input.click({ timeout: CHIP_CLICK_TIMEOUT_MS }).catch(() => {});
+  await prefillPause(page, 60);
+
+  let picked =
+    (await selectAutocompleteOption(page, val, options)) ||
+    (await selectAutocompleteOption(page, val, { pickFirst: true }));
+
+  if (!picked) {
+    await page.keyboard.press("ArrowDown").catch(() => {});
+    await prefillPause(page, 40);
+    await page.keyboard.press("Enter").catch(() => {});
+    await prefillPause(page, 50);
+    picked = true;
+  }
+
+  await input.click({ timeout: CHIP_CLICK_TIMEOUT_MS }).catch(() => {});
+  await prefillPause(page, 50);
+  await page.keyboard.press("Tab").catch(() => {});
+  await prefillPause(page, 40);
+  await closeOpenDropdowns(page);
+  return picked;
+}
+
+async function fillLocationAutocompleteField(
+  page: Page,
+  label: string,
+  value: string
+): Promise<void> {
+  const val = value.trim();
+  if (!val) return;
+
+  const input = await locatorForLabeledInput(page, label);
+  if (!input) {
+    await fillLabeledInput(page, label, val);
+    await selectAutocompleteOption(page, val);
     return;
   }
-  const partial = options.filter({ hasText: text }).first();
-  if (await partial.isVisible({ timeout: 800 }).catch(() => false)) {
-    await partial.click({ timeout: CHIP_CLICK_TIMEOUT_MS });
+
+  const currentValue = await input.inputValue().catch(() => "");
+  if (currentValue.trim() && currentValue.trim().toLowerCase() === val.toLowerCase()) return;
+  if (await isAutocompleteFieldValid(page, label) && currentValue.trim()) return;
+
+  await input.scrollIntoViewIfNeeded().catch(() => {});
+  await input.click({ timeout: CHIP_CLICK_TIMEOUT_MS });
+  await input.fill("");
+  await page.keyboard.press("Control+A").catch(() => {});
+  await page.keyboard.type(val, { delay: 12 }).catch(() => {});
+  await waitForTypeaheadSuggestions(page);
+  await commitAutocompleteInput(page, input, val, { pickFirst: true });
+}
+
+async function commitStreetAutocompleteInput(
+  page: Page,
+  input: Locator,
+  street: string,
+  query: string
+): Promise<void> {
+  const picked =
+    (await selectBestStreetAutocompleteOption(page, street)) ||
+    (await selectBestStreetAutocompleteOption(page, query)) ||
+    (await selectAutocompleteOption(page, query, { pickFirst: false })) ||
+    (await selectAutocompleteOption(page, query, { pickFirst: true }));
+
+  if (!picked) {
+    await page.keyboard.press("ArrowDown").catch(() => {});
+    await prefillPause(page, 40);
+    await page.keyboard.press("Enter").catch(() => {});
+    await prefillPause(page, 50);
+  }
+
+  await input.click({ timeout: CHIP_CLICK_TIMEOUT_MS }).catch(() => {});
+  await prefillPause(page, 50);
+  await page.keyboard.press("Tab").catch(() => {});
+  await prefillPause(page, 40);
+  await closeOpenDropdowns(page);
+}
+
+async function fillStreetAutocompleteField(page: Page, street: string): Promise<void> {
+  const queries = streetAutocompleteQueries(street);
+  if (queries.length === 0) return;
+
+  const input = await locatorForLabeledInput(page, "ქუჩა");
+  if (!input) {
+    await fillLocationAutocompleteField(page, "ქუჩა", queries[0]);
+    return;
+  }
+
+  for (const query of queries) {
+    await input.scrollIntoViewIfNeeded().catch(() => {});
+    await input.click({ timeout: CHIP_CLICK_TIMEOUT_MS });
+    await input.fill("");
+    await page.keyboard.press("Control+A").catch(() => {});
+    await page.keyboard.type(query, { delay: 12 }).catch(() => {});
+    await waitForTypeaheadSuggestions(page);
+
+    await commitStreetAutocompleteInput(page, input, street, query);
+
+    if (await isAutocompleteFieldValid(page, "ქუჩა")) return;
   }
 }
 
@@ -3149,8 +4997,12 @@ async function fillLocationFields(
   listing: Pick<MyhomeListing, "city" | "street" | "streetNumber" | "cadastralCode">
 ): Promise<void> {
   const city = listing.city?.trim() || "";
-  const street = listing.street?.trim() || "";
-  const streetNumber = listing.streetNumber?.trim() || "";
+  const resolved = resolveStreetForPrefill(
+    listing.street || "",
+    listing.streetNumber || ""
+  );
+  const street = resolved.street;
+  const streetNumber = resolved.streetNumber;
   const cadastralCode = listing.cadastralCode?.trim() || "";
 
   await page.evaluate(() => {
@@ -3162,17 +5014,16 @@ async function fillLocationFields(
       }
     }
   });
-  if (city) {
-    await fillLabeledInput(page, "მდებარეობა", city);
-    await selectAutocompleteOption(page, city);
+  const cityQuery = cityForPrefill(city);
+  if (cityQuery) {
+    await fillLocationAutocompleteField(page, "მდებარეობა", cityQuery);
   }
 
   if (street) {
-    await fillLabeledInput(page, "ქუჩა", street);
-    await selectAutocompleteOption(page, street);
+    await fillStreetAutocompleteField(page, street);
   }
 
-  if (streetNumber) {
+  if (streetNumber && !isMicrodistrictOrBlockAddressLine(street)) {
     await fillLabeledInput(page, "ქუჩის ნომერი", streetNumber);
   }
 
@@ -3212,191 +5063,20 @@ async function closeOpenDropdowns(page: Page): Promise<void> {
   await page
     .locator('[role="listbox"]:visible, [data-prefill-dropdown-open="1"]')
     .first()
-    .waitFor({ state: "hidden", timeout: 1200 })
+    .waitFor({ state: "hidden", timeout: 500 })
     .catch(() => {});
-  await prefillPause(page, 40);
-}
-
-/** Click an option in myhome.ge luk-custom-select or ARIA listbox menus. */
-async function clickOpenDropdownOption(
-  page: Page,
-  value: string,
-  matchVariants?: string[]
-): Promise<boolean> {
-  const variants = matchVariants?.length ? matchVariants : [value];
-  const clicked = await page.evaluate((targets) => {
-    function norm(s: string) {
-      return s.replace(/\s*\*\s*$/, "").trim();
-    }
-
-    function matchesTarget(t: string): boolean {
-      return targets.some(
-        (target) =>
-          t === target ||
-          t.includes(target) ||
-          target.includes(t) ||
-          t.replace(/ის$/u, "ი") === target ||
-          target.replace(/ის$/u, "ი") === t
-      );
-    }
-
-    function isVisible(el: Element): boolean {
-      const style = window.getComputedStyle(el);
-      if (style.display === "none" || style.visibility === "hidden") return false;
-      const r = el.getBoundingClientRect();
-      return r.width > 2 && r.height > 2;
-    }
-
-    function tryClick(el: Element): boolean {
-      if (!isVisible(el)) return false;
-      (el as HTMLElement).click();
-      return true;
-    }
-
-    const roots: Element[] = [];
-    document
-      .querySelectorAll(
-        '[data-prefill-dropdown-open="1"], [role="listbox"], [class*="luk-custom-select"][class*="open"], [class*="luk-custom-select--open"], [class*="luk-select"], [class*="dropdown-menu"], [class*="select-dropdown"]'
-      )
-      .forEach((el) => {
-        if (isVisible(el)) roots.push(el);
-      });
-
-    document.querySelectorAll("body > div, body > ul").forEach((el) => {
-      const style = window.getComputedStyle(el);
-      if (style.display === "none") return;
-      const z = parseInt(style.zIndex || "0", 10);
-      if (z < 100 && style.position !== "fixed") return;
-      const r = el.getBoundingClientRect();
-      if (r.height < 24 || r.width < 40) return;
-      const t = el.textContent || "";
-      const minLen = Math.min(...targets.map((target) => target.length));
-      if (t.length > 400 || t.length < minLen) return;
-      if (!targets.some((target) => t.includes(target))) return;
-      const itemCount = el.querySelectorAll("li, [class*='item'], [role='option']").length;
-      if (itemCount < 1) return;
-      roots.push(el);
-    });
-
-    const tryInRoot = (root: Element): boolean => {
-      for (const el of root.querySelectorAll("li, div, span, button, a, p")) {
-        if (el.children.length > 4) continue;
-        const t = norm(el.textContent || "");
-        if (!matchesTarget(t) || t.length > 80) continue;
-        if (tryClick(el)) return true;
-      }
-      return false;
-    };
-
-    for (const root of roots) {
-      if (tryInRoot(root)) return true;
-    }
-    return false;
-  }, variants);
-
-  if (clicked) return true;
-
-  const optionLoc = page.locator(
-    "[role='listbox'] [role='option'], [role='option'], [class*='option'], [class*='menu-item'], [class*='luk-custom-select'] li, [class*='luk-custom-select'] div"
-  );
-
-  for (const variant of variants) {
-    const exact = optionLoc
-      .filter({ hasText: new RegExp(`^${escapeRegExp(variant)}$`, "u") })
-      .filter({ visible: true })
-      .first();
-    if (await exact.isVisible({ timeout: 800 }).catch(() => false)) {
-      await exact.click({ timeout: CHIP_CLICK_TIMEOUT_MS });
-      return true;
-    }
-
-    const partial = optionLoc.filter({ hasText: variant }).filter({ visible: true }).first();
-    if (await partial.isVisible({ timeout: 800 }).catch(() => false)) {
-      await partial.click({ timeout: CHIP_CLICK_TIMEOUT_MS });
-      return true;
-    }
-
-    const byText = page.getByText(variant, { exact: true }).filter({ visible: true }).last();
-    if (await byText.isVisible({ timeout: 800 }).catch(() => false)) {
-      await byText.click();
-      return true;
-    }
-  }
-
-  return false;
-}
-
-async function listFieldAlreadySet(
-  page: Page,
-  sectionLabel: string,
-  value: string
-): Promise<boolean> {
-  return page.evaluate(
-    ({ sectionLabel, value }) => {
-      function norm(s: string) {
-        return s.replace(/\s*\*\s*$/, "").trim();
-      }
-
-      function findFieldContainer(label: string): Element | null {
-        const nodes = document.querySelectorAll("label, span, p, div, h2, h3, h4");
-        for (const el of nodes) {
-          const t = norm(el.textContent || "").replace(/\s+/g, " ");
-          if (t !== label && !t.startsWith(label)) continue;
-          let node: Element | null = el;
-          for (let depth = 0; depth < 10 && node; depth++) {
-            if (
-              node.querySelector(
-                ".luk-custom-select, [role='combobox'], select, [aria-haspopup='listbox']"
-              )
-            ) {
-              return node;
-            }
-            node = node.parentElement;
-          }
-        }
-        return null;
-      }
-
-      const root = findFieldContainer(sectionLabel);
-      if (!root) return false;
-
-      const custom =
-        root.querySelector(".luk-custom-select") ||
-        root.querySelector("[role='combobox']");
-      if (custom && norm(custom.textContent || "").includes(value)) return true;
-
-      const sel = root.querySelector("select") as HTMLSelectElement | null;
-      const selected = sel?.selectedOptions?.[0]?.textContent?.trim() || "";
-      return selected.includes(value);
-    },
-    { sectionLabel, value }
-  );
-}
-
-async function selectListOptionInSection(
-  page: Page,
-  sectionLabel: string,
-  optionText: string,
-  placeholder?: string,
-  options?: { closeDropdowns?: boolean }
-): Promise<void> {
-  const value = optionText.trim();
-  if (!value) return;
-  const closeDropdowns = options?.closeDropdowns !== false;
-  if (closeDropdowns) await closeOpenDropdowns(page);
-  if (await listFieldAlreadySet(page, sectionLabel, value)) return;
-  const ok =
-    (await prefillLukSelectByLabel(page, sectionLabel, value)) ||
-    (await prefillLukDropdownField(page, sectionLabel, value, placeholder));
-  if (!ok) throw new Error(`Could not select "${value}" for ${sectionLabel}`);
-  if (closeDropdowns) await closeOpenDropdowns(page);
+  await prefillPause(page, 20);
 }
 
 function listingLocation(listing: MyhomeListing) {
+  const resolved = resolveStreetForPrefill(
+    listing.street || listing.rawData?.["ქუჩა"] || "",
+    listing.streetNumber || listing.rawData?.["ქუჩის ნომერი"] || ""
+  );
   return {
     city: listing.city || listing.rawData?.["მდებარეობა"] || "",
-    street: listing.street || listing.rawData?.["ქუჩა"] || "",
-    streetNumber: listing.streetNumber || listing.rawData?.["ქუჩის ნომერი"] || "",
+    street: resolved.street,
+    streetNumber: resolved.streetNumber,
     cadastralCode: listing.cadastralCode || listing.rawData?.["საკადასტრო კოდი"] || "",
   };
 }
@@ -3453,15 +5133,32 @@ function buildPostExpandChipTasks(listing: MyhomeListing): ChipClickTask[] {
 
 async function applyAdditionalParametersPrefill(
   page: Page,
-  listing: MyhomeListing
+  listing: MyhomeListing,
+  options?: { skipStatusAndCondition?: boolean }
 ): Promise<void> {
   await expandCreateFormSections(page);
+  await prefillMainAreaField(page, listing);
+  if (!options?.skipStatusAndCondition) {
+    await prefillBuildingStatusAndCondition(page, listing);
+  }
   await page
     .locator("h2,h3,h4")
     .filter({ hasText: /ავეჯი/i })
     .first()
     .scrollIntoViewIfNeeded()
     .catch(() => {});
+  const constructionEarly = getFlexChipPrefillValue(listing, "სამშენებლო მასალა");
+  const parkingEarly = getParkingPrefillValue(listing);
+  if (constructionEarly || parkingEarly) {
+    await closeOpenDropdowns(page);
+    if (constructionEarly) {
+      await prefillFlexChipRowField(page, "სამშენებლო მასალა", constructionEarly);
+    }
+    if (parkingEarly) {
+      await prefillFlexChipRowField(page, "პარკირება", parkingEarly);
+    }
+  }
+
   await batchPrefillChips(page, buildPostExpandChipTasks(listing));
   await scrollToFormField(page, "საძინებელი");
   await prefillMainCountChips(page, listing);
@@ -3480,22 +5177,40 @@ async function applyAdditionalParametersPrefill(
     }
   }
 
+  await prefillFloorFields(page, listing);
+
   await prefillBalconyFields(page, listing);
   await prefillLoggiaFields(page, listing);
   await prefillVerandaFields(page, listing);
+  await prefillYardAreaFields(page, listing);
   await prefillCeilingHeightFields(page, listing);
+
+  const parkingChip = getParkingPrefillValue(listing);
+  const constructionMaterial = getFlexChipPrefillValue(
+    listing,
+    "სამშენებლო მასალა"
+  );
+  await closeOpenDropdowns(page);
+  if (parkingChip) {
+    await prefillParkingChipField(page, parkingChip);
+  }
+  if (constructionMaterial) {
+    await prefillFlexChipRowField(page, "სამშენებლო მასალა", constructionMaterial);
+  }
 
   for (const label of CHIP_STYLE_ROW_LABELS) {
     const value = getRawPreferenceValue(listing, label);
     if (!value || value === "კი" || value === "არა") continue;
-    await closeOpenDropdowns(page);
+    if (label === "პარკირება" && parkingChip) continue;
+    if (label === "სამშენებლო მასალა" && constructionMaterial) continue;
     await prefillPreferenceField(page, label, value);
   }
 
+  await closeOpenDropdowns(page);
   for (const nested of NESTED_LUK_TYPE_SECTIONS) {
     const value = getNestedSectionTypeValue(listing, nested.valueKeys);
     if (!value) continue;
-    await closeOpenDropdowns(page);
+    if (nested.section === "სათავსო" && isParkingChipValue(value)) continue;
     await prefillNestedSectionTypeDropdown(
       page,
       nested.section,
@@ -3509,11 +5224,11 @@ async function applyAdditionalParametersPrefill(
         nested.valueKeys
       );
       if (sectionArea) {
-        await prefillPause(page, 120);
+        await prefillPause(page, 50);
         await fillInputInNestedSection(page, nested.section, "ფართი", sectionArea);
       }
     }
-    await prefillPause(page, 150);
+    await prefillPause(page, 60);
   }
 
   const lukSelectPrefillOrder = ["ხედი", "შესასვლელი"] as const;
@@ -3525,7 +5240,6 @@ async function applyAdditionalParametersPrefill(
       PREFILL_LIST_FIELDS.find((f) => f.labels.includes(label))?.getValue(listing)?.trim() ||
       "";
     if (!value) continue;
-    await closeOpenDropdowns(page);
     await scrollToFormField(page, label);
     await prefillLukSelectByLabel(page, label, value);
   }
@@ -3682,6 +5396,7 @@ async function evaluatePriceRowCurrency(
       }
 
       function priceRowShowsUsd() {
+        if (!anchor) return false;
         const root = findPriceRow(anchor);
         if (!root) return false;
 
@@ -3705,6 +5420,7 @@ async function evaluatePriceRowCurrency(
       }
 
       function clickUsdInPriceRow() {
+        if (!anchor) return false;
         const root = findPriceRow(anchor);
         if (!root) return false;
 
@@ -3780,13 +5496,13 @@ async function switchPriceFieldToUsd(
   state = await evaluatePriceRowCurrency(page, anchorSelector, "toggle");
   if (!state.isUsd) {
     await clickUsdTogglePlaywright(page, anchorSelector);
-    await prefillPause(page, 400);
+    await prefillPause(page, 120);
     state = await evaluatePriceRowCurrency(page, anchorSelector, "check");
   }
 
   if (!state.isUsd) {
     await clickUsdTogglePlaywright(page, anchorSelector);
-    await prefillPause(page, 400);
+    await prefillPause(page, 120);
     await evaluatePriceRowCurrency(page, anchorSelector, "toggle");
   }
 }
@@ -3932,6 +5648,93 @@ export async function loginToMyhome(credentials: MyhomeCredentials): Promise<{
   }
 }
 
+/** Location pin line under title (arrow-only evaluate — safe under tsx keepNames). */
+async function extractPinStreetRaw(page: Page): Promise<string> {
+  return page.evaluate(() => {
+    const strip = (raw: string) =>
+      raw.replace(/\s*\([^)]*\)\s*/gu, " ").replace(/\s+/g, " ").trim();
+    const isStreetCore = (core: string) => {
+      if (core.length < 3 || core.length > 120) return false;
+      if (/მეტრო|metro|სადგურ/i.test(core)) return false;
+      if (/მ\/რ|(?:^|\s)მ\.\s*რ\.?(?:\s|$)|კვარტ|კორპ/i.test(core) && core.length >= 4)
+        return true;
+      if (/ნომრის\s*ნახვა|ნომერის\s*ნახვა|\*{2,}/i.test(core)) return false;
+      if (!/ქ\.?|ქუჩა|გამზ|შესახვევი|ჩიხი/i.test(core)) return false;
+      return (
+        /(\s+ქ\.?|\s+ქუჩა|\s+გამზ\.?)(\s*#?\s*\d|$)/iu.test(core) ||
+        /\s+(ქ\.?|ქუჩა|გამზ\.?)$/iu.test(core) ||
+        /\s+შესახვევი\s+\d+[ა-ჰa-z]?$/iu.test(core) ||
+        /\s+შესახვევი$/iu.test(core) ||
+        /\s+ჩიხი\s+\d+[ა-ჰa-z]?$/iu.test(core) ||
+        /\s+ჩიხი$/iu.test(core)
+      );
+    };
+    const isPinLandmarkCore = (core: string): boolean => {
+      if (core.length < 3 || core.length > 90) return false;
+      if (/ნომრის\s*ნახვა|ნომერის\s*ნახვა|\*{2,}/i.test(core)) return false;
+      if (/[₾$]|მ²|m²|იპოთეკა|ფასი|ოთახიანი/i.test(core)) return false;
+      if (/^\d+(\.\d+)?\s*მ²/i.test(core)) return false;
+      if (/^\d+\s*\/\s*\d+/.test(core)) return false;
+      if (/ქ\.?|ქუჩა|გამზ|შესახვევი|ჩიხი/i.test(core)) return false;
+      if (/მ\/რ|(?:^|\s)მ\.\s*რ\.?(?:\s|$)|კვარტ|კორპ/i.test(core)) return false;
+      if (!/[\u10A0-\u10FF]{2,}/u.test(core)) return false;
+      return true;
+    };
+    const isPinRow = (row: Element) =>
+      Boolean(
+        row.querySelector('svg[width="13"][height="15"]') ||
+          row.querySelector('svg[viewBox="0 0 13 15"]')
+      );
+
+    for (const svg of document.querySelectorAll(
+      'svg[width="13"][height="15"], svg[viewBox="0 0 13 15"]'
+    )) {
+      const row = svg.closest(
+        "[class*='gap-2'], [class*='items-center'], motion.div, div, a, p, span"
+      );
+      if (!row || !isPinRow(row)) continue;
+      for (const el of row.querySelectorAll("span, a, p")) {
+        if (el.children.length > 0) continue;
+        const raw = (el.textContent || "").replace(/\s+/g, " ").trim();
+        if (!raw) continue;
+        const core = strip(raw);
+        if (isStreetCore(core)) return raw;
+        if (isPinLandmarkCore(core)) return raw;
+      }
+    }
+    return "";
+  });
+}
+
+function applyPinStreetToListing(listing: MyhomeListing, pinRaw: string): void {
+  const raw = pinRaw.replace(/\s+/g, " ").trim();
+  if (
+    !raw ||
+    (!isStreetLineText(raw) &&
+      !isMicrodistrictOrBlockAddressLine(raw) &&
+      !isPinLandmarkLine(raw))
+  ) {
+    return;
+  }
+
+  const resolved = resolveStreetForPrefill(
+    listing.street || listing.rawData?.["ქუჩა"] || raw,
+    listing.streetNumber || listing.rawData?.["ქუჩის ნომერი"] || ""
+  );
+  if (!resolved.street) return;
+
+  listing.street = resolved.street;
+  listing.streetNumber = resolved.streetNumber;
+  if (!listing.address) listing.address = resolved.street;
+  if (!listing.rawData) listing.rawData = {};
+  listing.rawData["ქუჩა"] = resolved.street;
+  if (resolved.streetNumber) {
+    listing.rawData["ქუჩის ნომერი"] = resolved.streetNumber;
+  } else {
+    delete listing.rawData["ქუჩის ნომერი"];
+  }
+}
+
 // Parse a myhome.ge listing page
 export async function parseListing(url: string): Promise<{
   success: boolean;
@@ -3943,6 +5746,12 @@ export async function parseListing(url: string): Promise<{
     userAgent:
       "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
     locale: "ka-GE",
+  });
+  await addBrowserEvaluateShim(context);
+  await context.route("**/*", (route) => {
+    const type = route.request().resourceType();
+    if (type === "media" || type === "font") route.abort();
+    else route.continue();
   });
   const page = await context.newPage();
 
@@ -3978,11 +5787,19 @@ export async function parseListing(url: string): Promise<{
       .scrollIntoViewIfNeeded()
       .catch(() => {});
 
+    const pinStreetRaw = await extractPinStreetRaw(page);
+
     const parseParams = {
       additionalLabels: [...ADDITIONAL_PARAM_LABELS],
       furnitureLabels: [...FURNITURE_LABELS],
       preferenceLabels: [...PREFERENCE_PARAM_LABELS],
       labelCanonical: LABEL_CANONICAL,
+      flexChipFields: Object.fromEntries(
+        Object.entries(FLEX_CHIP_ROW_CONFIGS).map(([label, config]) => [
+          label,
+          [...config.chipLabels],
+        ])
+      ),
     };
 
     const data = await page.evaluate((opts) => {
@@ -3990,6 +5807,7 @@ export async function parseListing(url: string): Promise<{
       const furnitureLabels: string[] = opts.furnitureLabels;
       const preferenceLabels: string[] = opts.preferenceLabels;
       const labelCanonical: Record<string, string> = opts.labelCanonical;
+      const flexChipFields: Record<string, string[]> = opts.flexChipFields || {};
       const WHITELIST = new Set(additionalLabels);
       const PREFERENCE_LABELS = new Set(preferenceLabels);
 
@@ -4047,6 +5865,10 @@ export async function parseListing(url: string): Promise<{
           const withArea = usable.find((v) => /მ²|m²|\d+\s*\/\s*\d/i.test(v));
           if (withArea) return withArea;
         }
+        if (canon === "ეზოს ფართი" || canon === "ეზო") {
+          const withArea = usable.find((v) => /მ²|m²|\d/.test(v));
+          if (withArea) return withArea;
+        }
         if (canon === "ჭერის სიმაღლე") {
           const withHeight = usable.find(
             (v) => /\d/.test(v) && !isYesNo(v) && !/მ²|m²/i.test(v)
@@ -4061,6 +5883,12 @@ export async function parseListing(url: string): Promise<{
               (v) => !isYesNo(v) && /\/\s*\d/.test(v) && !typeHint.test(v)
             );
             if (combined) return dedupeRepeated(combined);
+          }
+          const allowedChips = flexChipFields[canon];
+          if (allowedChips?.length) {
+            const chipHits = usable.filter((v) => allowedChips.includes(v));
+            if (chipHits.length === 1) return dedupeRepeated(chipHits[0]);
+            if (chipHits.length > 1) return "";
           }
           const pref = usable.find((v) => !isYesNo(v) && v.length > 1);
           return pref ? dedupeRepeated(pref) : "";
@@ -4182,6 +6010,57 @@ export async function parseListing(url: string): Promise<{
         return out;
       };
 
+      const collectFloorFromFlexRows = (root: Element | Document) => {
+        const out: { floor: string; totalFloors: string; raw: string } = {
+          floor: "",
+          totalFloors: "",
+          raw: "",
+        };
+
+        function setParts(f: string, tf: string) {
+          if (!f) return;
+          out.floor = f;
+          out.totalFloors = tf || f;
+          out.raw = tf && tf !== f ? `${f}/${tf}` : f;
+        }
+
+        root.querySelectorAll("span,label,p,motion.div,div").forEach((el) => {
+          const t = (el.textContent || "").replace(/\s+/g, " ").trim();
+          if (t !== "სართული") return;
+          if (el.children.length > 2) return;
+
+          const parent = el.parentElement;
+          if (!parent) return;
+
+          const joined = (parent.textContent || "").replace(/\s+/g, "");
+          const slash = joined.match(/^სართული(\d+)\/(\d+)$/iu);
+          if (slash) {
+            setParts(slash[1], slash[2]);
+            return;
+          }
+
+          const single = joined.match(/^სართული(\d+)$/iu);
+          if (single) {
+            setParts(single[1], single[1]);
+            return;
+          }
+
+          const children = Array.from(parent.children);
+          const idx = children.indexOf(el);
+          if (idx >= 0 && children[idx + 1]) {
+            const val = (children[idx + 1].textContent || "").trim();
+            const fm = val.match(/^(\d+)\s*\/\s*(\d+)$/);
+            if (fm) {
+              setParts(fm[1], fm[2]);
+              return;
+            }
+            if (/^\d+$/.test(val)) setParts(val, val);
+          }
+        });
+
+        return out;
+      };
+
       const collectProjectTypeFromFlexRows = (root: Element | Document) => {
         const out: Record<string, string> = {};
         const canon = "პროექტის ტიპი";
@@ -4266,8 +6145,68 @@ export async function parseListing(url: string): Promise<{
           mergeParamValue(params, k, v);
         }
 
+        const floorFlexParams = collectFloorFromFlexRows(document.body);
+        if (floorFlexParams.raw) {
+          mergeParamValue(params, "სართული", floorFlexParams.raw);
+        }
+
         const projectTypeFlex = collectProjectTypeFromFlexRows(document.body);
         for (const [k, v] of Object.entries(projectTypeFlex)) {
+          mergeParamValue(params, k, v);
+        }
+
+        const collectGluedPreferenceFromFlexRows = (
+          root: Element | Document,
+          label: string,
+          canon: string
+        ) => {
+          const out: Record<string, string> = {};
+
+          root.querySelectorAll("span,label,p,motion.div,motion.div,motion.div,motion.div,motion.div,motion.div,div").forEach((el) => {
+            const t = (el.textContent || "").replace(/\s+/g, " ").trim();
+            if (t !== label) return;
+            if (el.children.length > 3) return;
+
+            const parent = el.parentElement;
+            if (!parent) return;
+
+            const joined = (parent.textContent || "").replace(/\s+/g, "");
+            let glued: RegExpMatchArray | null = null;
+            if (label === "სტატუსი") glued = joined.match(/^სტატუსი(.+)$/iu);
+            else if (label === "მდგომარეობა") glued = joined.match(/^მდგომარეობა(.+)$/iu);
+            if (glued) {
+              const val = dedupeRepeated(glued[1]);
+              if (val && !isYesNo(val)) out[canon] = val;
+              return;
+            }
+
+            for (const child of parent.children) {
+              const ct = (child.textContent || "").replace(/\s+/g, " ").trim();
+              if (!ct || ct === t || isYesNo(ct)) continue;
+              if (ct.length > 80) continue;
+              out[canon] = dedupeRepeated(ct);
+              return;
+            }
+          });
+
+          return out;
+        };
+
+        const statusFlex = collectGluedPreferenceFromFlexRows(
+          document.body,
+          "სტატუსი",
+          "სტატუსი"
+        );
+        for (const [k, v] of Object.entries(statusFlex)) {
+          mergeParamValue(params, k, v);
+        }
+
+        const conditionFlex = collectGluedPreferenceFromFlexRows(
+          document.body,
+          "მდგომარეობა",
+          "მდგომარეობა"
+        );
+        for (const [k, v] of Object.entries(conditionFlex)) {
           mergeParamValue(params, k, v);
         }
 
@@ -4419,6 +6358,44 @@ export async function parseListing(url: string): Promise<{
           mergeParamValue(params, k, v);
         }
 
+        const collectYardAreaFromFlexRows = (root: Element | Document) => {
+          const out: Record<string, string> = {};
+
+          root.querySelectorAll("span,label,p,motion.div,div").forEach((el) => {
+            const t = (el.textContent || "").replace(/\s+/g, " ").trim();
+            if (t !== "ეზოს ფართი") return;
+            if (el.tagName !== "DIV" && el.children.length > 3) return;
+
+            const parent = el.parentElement;
+            if (!parent) return;
+
+            const joined = (parent.textContent || "").replace(/\s+/g, "");
+            const glued = joined.match(/^ეზოსფართი(\d+(?:[.,]\d+)?)\s*(?:მ²|m²)?$/iu);
+            if (glued) {
+              out["ეზოს ფართი"] = glued[1].replace(",", ".");
+              return;
+            }
+
+            for (const child of parent.children) {
+              const ct = (child.textContent || "").replace(/\s+/g, " ").trim();
+              if (!ct || ct === t) continue;
+              if (ct.length > 40) continue;
+              const areaOnly = ct.match(/^(\d+(?:[.,]\d+)?)\s*(?:მ²|m²)?$/iu);
+              if (areaOnly) {
+                out["ეზოს ფართი"] = areaOnly[1].replace(",", ".");
+                return;
+              }
+            }
+          });
+
+          return out;
+        };
+
+        const yardFlex = collectYardAreaFromFlexRows(document.body);
+        for (const [k, v] of Object.entries(yardFlex)) {
+          mergeParamValue(params, k, v);
+        }
+
         const collectCeilingHeightFromFlexRows = (root: Element | Document) => {
           const out: Record<string, string> = {};
 
@@ -4555,6 +6532,104 @@ export async function parseListing(url: string): Promise<{
           mergeParamValue(params, k, v);
         }
 
+        const collectFlexChipPreferenceFromRows = (
+          root: Element | Document,
+          label: string,
+          canon: string,
+          allowedChips: string[]
+        ) => {
+          const out: Record<string, string> = {};
+          const allowed = new Set(allowedChips);
+
+          function flexChipLooksSelected(el: Element): boolean {
+            const chip =
+              (el.closest("[class*='rounded']") as HTMLElement) || (el as HTMLElement);
+            const cls = chip.className?.toString() || "";
+            if (chip.getAttribute("aria-pressed") === "true") return true;
+            if (chip.getAttribute("aria-checked") === "true") return true;
+            if (/luk-bg-white/i.test(cls)) {
+              return /border-(primary|brand|blue|green)|ring-|shadow/i.test(cls);
+            }
+            if (
+              /border-(primary|brand|blue|green)|bg-(primary|brand|blue)|ring-/i.test(cls)
+            ) {
+              return true;
+            }
+            return false;
+          }
+
+          function directChipText(el: Element): string {
+            for (const node of [el, ...Array.from(el.querySelectorAll("span,p"))]) {
+              if (node.children.length > 1) continue;
+              const t = (node.textContent || "").replace(/\s+/g, " ").trim();
+              if (t && t.length <= 40) return t;
+            }
+            return (el.textContent || "").replace(/\s+/g, " ").trim();
+          }
+
+          const markers = root.querySelectorAll("h2,h3,h4,span,label,p,div");
+          outer: for (const el of markers) {
+            const t = (el.textContent || "").replace(/\s+/g, " ").trim();
+            if (t !== label) continue;
+            if (el.children.length > 4) continue;
+
+            let node: Element | null = el.parentElement;
+            for (let depth = 0; depth < 14 && node; depth++) {
+              const rows = node.querySelectorAll('[class*="luk-flex-wrap"]');
+              for (const row of rows) {
+                if (row.children.length < 2) continue;
+                for (const child of row.children) {
+                  const text = directChipText(child);
+                  if (!allowed.has(text)) continue;
+                  if (flexChipLooksSelected(child)) {
+                    out[canon] = dedupeRepeated(text);
+                    break outer;
+                  }
+                }
+              }
+              if (out[canon]) break;
+
+              for (const child of node.children) {
+                const ct = (child.textContent || "").replace(/\s+/g, " ").trim();
+                if (!ct || ct === t || isYesNo(ct)) continue;
+                if (!allowed.has(ct)) continue;
+                if (ct.length > 40) continue;
+                out[canon] = dedupeRepeated(ct);
+                break outer;
+              }
+              if (out[canon]) break;
+
+              const joined = (node.textContent || "").replace(/\s+/g, "");
+              const glued = joined.match(
+                new RegExp(`^${label.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}(.+)$`, "iu")
+              );
+              if (glued) {
+                const val = dedupeRepeated(glued[1]);
+                if (val && allowed.has(val)) {
+                  out[canon] = val;
+                  break outer;
+                }
+              }
+
+              node = node.parentElement;
+            }
+          }
+
+          return out;
+        };
+
+        for (const [label, chips] of Object.entries(flexChipFields)) {
+          const flexChip = collectFlexChipPreferenceFromRows(
+            document.body,
+            label,
+            label,
+            chips
+          );
+          for (const [k, v] of Object.entries(flexChip)) {
+            mergeParamValue(params, k, v);
+          }
+        }
+
         const furnitureRoot = (() => {
           for (const title of ["ავეჯი და ტექნიკა", "ავეჯი"]) {
             const root = findSectionRoot(title);
@@ -4643,6 +6718,16 @@ export async function parseListing(url: string): Promise<{
           }
         }
         splitVerandaAreaFields(params);
+
+        function splitYardAreaFields(out: Record<string, string>) {
+          const raw = out["ეზოს ფართი"];
+          if (!raw) return;
+          if (/მ²|m²/i.test(raw) || /^\d+(?:[.,]\d+)?\s*$/.test(raw.trim())) {
+            const m = raw.match(/(\d+(?:[.,]\d+)?)/);
+            if (m) out["ეზოს ფართი"] = m[1].replace(",", ".");
+          }
+        }
+        splitYardAreaFields(params);
 
         return params;
       };
@@ -4761,113 +6846,19 @@ export async function parseListing(url: string): Promise<{
 
       // --- Address / street (pin line under title, e.g. "ფარავნის ქ") ---
       const ADDRESS_NOISE =
-        /[₾$]|მ²|იპოთეკა|სესხი|ფასი|გადაფორმება|იყიდება|ქირავდება|გირავდება|ოთახიანი|მოითხოვე|დღეს\s+\d/i;
+        /[₾$]|მ²|იპოთეკა|სესხი|ფასი|გადაფორმება|იყიდება|ქირავდება|გირავდება|ოთახიანი|მოითხოვე|დღეს\s+\d|ნომრის\s*ნახვა|ნომერის\s*ნახვა|\*{2,}/i;
 
-      function isStreetLine(text: string): boolean {
+      const isListingAddressNoise = (text: string) => {
         const s = text.replace(/\s+/g, " ").trim();
-        if (s.length < 3 || s.length > 70) return false;
-        if (ADDRESS_NOISE.test(s)) return false;
-        if (/ფართი|საძინებელი|სართული|ოთახი/.test(s) && /\d/.test(s)) return false;
-        return /(\s+ქ\.?|\s+ქუჩა|\s+გამზ\.?)(\s+\d|$)/iu.test(s) || /\s+ქ\.?$/iu.test(s);
-      }
+        if (!s) return true;
+        if (/ნომრის\s*ნახვა|ნომერის\s*ნახვა|ნომრის\s*გამოჩ/i.test(s)) return true;
+        if (/\*{2,}/.test(s)) return true;
+        if (/^\d[\d\s*\-]{6,}/.test(s)) return true;
+        if (/ნახვა$/i.test(s) && /ნომრ|ნომერ|\*/i.test(s)) return true;
+        return false;
+      };
 
-      function isStreetNumber(value: string): boolean {
-        const n = value.replace(/^№\s*/, "").trim();
-        return /^\d+[ა-ჰa-z]?$/iu.test(n) && n.length <= 10;
-      }
-
-      function parseAddressParts(raw: string) {
-        const text = raw.replace(/\s+/g, " ").trim();
-        const withNumber = [
-          /^(.+?)\s+მ\.\s*ქ\.\s*(\d+[ა-ჰa-z]?)$/iu,
-          /^(.+?)\s+მ\.\s*ქუჩა\s*(\d+[ა-ჰa-z]?)$/iu,
-          /^(.+?)\s+გამზ\.?\s*(\d+[ა-ჰa-z]?)$/iu,
-          /^(.+?)\s+ქ\.\s*(\d+[ა-ჰa-z]?)$/iu,
-          /^(.+?)\s+ქუჩა\s*№?\s*(\d+[ა-ჰa-z]?)$/iu,
-        ];
-        for (const re of withNumber) {
-          const m = text.match(re);
-          if (m) {
-            return {
-              street: `${m[1].trim()} ${text.includes("ქუჩა") ? "ქუჩა" : "ქ"}`,
-              streetNumber: m[2].trim(),
-            };
-          }
-        }
-        const streetOnly = text.match(/^(.+?)\s+(ქ\.?|ქუჩა)$/iu);
-        if (streetOnly) {
-          return { street: text, streetNumber: "" };
-        }
-        if (isStreetLine(text)) {
-          return { street: text, streetNumber: "" };
-        }
-        return { street: "", streetNumber: "" };
-      }
-
-      function extractStreetNearTitle(): string {
-        const h1 = document.querySelector("h1");
-        if (!h1) return "";
-
-        const scanRoots: Element[] = [h1.parentElement, h1.parentElement?.parentElement].filter(
-          (el): el is Element => !!el
-        );
-
-        for (const root of scanRoots) {
-          for (const el of root.querySelectorAll("a, span, p, div")) {
-            if (el.children.length > 3) continue;
-            const t = el.textContent?.trim() || "";
-            if (isStreetLine(t)) return t;
-          }
-        }
-        return "";
-      }
-
-      function collectAddressCandidates(): string[] {
-        const candidates: string[] = [];
-        const push = (t: string) => {
-          const s = t.replace(/\s+/g, " ").trim();
-          if (!isStreetLine(s)) return;
-          if (candidates.includes(s)) return;
-          candidates.push(s);
-        };
-
-        const nearTitle = extractStreetNearTitle();
-        if (nearTitle) push(nearTitle);
-
-        document.querySelectorAll("a, span, p").forEach((el) => {
-          if (el.children.length > 2) return;
-          const t = el.textContent?.trim() || "";
-          push(t);
-        });
-
-        return candidates;
-      }
-
-      let address = "";
-      let city = "";
-      let street = "";
-      let streetNumber = "";
-
-      street = extractStreetNearTitle();
-
-      if (!street) {
-        for (const cand of collectAddressCandidates()) {
-          const parts = parseAddressParts(cand);
-          if (parts.street) {
-            address = cand;
-            street = parts.street;
-            streetNumber = parts.streetNumber;
-            break;
-          }
-        }
-      } else {
-        address = street;
-        const parts = parseAddressParts(street);
-        street = parts.street || street;
-        streetNumber = parts.streetNumber;
-      }
-
-      const cities = [
+      const KNOWN_CITIES = [
         "თბილისი",
         "ბათუმი",
         "ქუთაისი",
@@ -4882,14 +6873,466 @@ export async function parseListing(url: string): Promise<{
         "ბაკურიანი",
         "მცხეთა",
         "სიღნაღი",
+        "ბორჯომი",
+        "ზესტაფონი",
+        "თერჯოლა",
+        "სენაკი",
+        "გაგრა",
+        "გუდაური",
+        "ბოლნისი",
+        "ახალციხე",
+        "ონი",
+        "ჭიათურა",
+        "აბაშა",
+        "მარტვილი",
+        "წყალტუბო",
+        "სამტრედია",
+        "ხონი",
+        "ვანი",
+        "ბაღდათი",
+        "საჩხერე",
+        "ტყიბული",
+        "კასპი",
+        "ქარელი",
+        "დუშეთი",
+        "სტეფანწმინდა",
+        "ახმეტა",
+        "გურჯაანი",
+        "ყვარელი",
+        "ლაგოდეხი",
+        "დედოფლისწყარო",
+        "საგარეჯო",
+        "გარდაბანი",
+        "მარნეული",
+        "წალკა",
+        "თეთრიწყარო",
+        "დმანისი",
+        "ახალქალაქი",
+        "ნინოწმინდა",
+        "ამბროლაური",
+        "ლენტეხი",
+        "მესტია",
+        "ხობი",
+        "წალენჯიხა",
+        "ჩხოროწყუ",
+        "თიანეთი",
+        "ლანჩხუთი",
+        "ჩოხატაური",
+        "ხელვაჩაური",
+        "შუახევი",
+        "ქედა",
+        "ურეკი",
+        "გრიგოლეთი",
+        "შეკვეთილი",
+        "ანაკლია",
+        "წნორი",
+        "ახალსოფელი",
+        "კობულეთი",
       ];
-      const pageText = document.body.textContent || "";
-      for (const c of cities) {
-        if (pageText.includes(c)) {
-          city = c;
-          break;
-        }
+
+      function isMetroOrStationLine(text: string): boolean {
+        const s = text.replace(/\s+/g, " ").trim();
+        if (!s) return true;
+        if (/მეტრო|metro|სადგურ/i.test(s)) return true;
+        if (!/ქ\.?|ქუჩა|გამზ|შესახვევი|ჩიხი/i.test(s)) return true;
+        return false;
       }
+
+      function stripStreetParenthetical(raw: string): string {
+        return raw.replace(/\s*\([^)]*\)\s*/gu, " ").replace(/\s+/g, " ").trim();
+      }
+
+      function isStreetLine(text: string): boolean {
+        const s = text.replace(/\s+/g, " ").trim();
+        if (s.length < 3 || s.length > 90) return false;
+        if (isListingAddressNoise(s)) return false;
+        if (ADDRESS_NOISE.test(s)) return false;
+        if (isMetroOrStationLine(s)) return false;
+        if (/ფართი|საძინებელი|სართული|ოთახი/.test(s) && /\d/.test(s)) return false;
+        const core = stripStreetParenthetical(s);
+        if (!/ქ\.?|ქუჩა|გამზ|შესახვევი|ჩიხი/i.test(core)) return false;
+        return (
+          /(\s+ქ\.?|\s+ქუჩა|\s+გამზ\.?)(\s*#?\s*\d|$)/iu.test(core) ||
+          /\s+(ქ\.?|ქუჩა|გამზ\.?)$/iu.test(core) ||
+          /\s+შესახვევი\s+\d+[ა-ჰa-z]?$/iu.test(core) ||
+          /\s+შესახვევი$/iu.test(core) ||
+          /\s+ჩიხი\s+\d+[ა-ჰa-z]?$/iu.test(core) ||
+          /\s+ჩიხი$/iu.test(core)
+        );
+      }
+
+      function isMicrodistrictAddressLine(text: string): boolean {
+        const s = stripStreetParenthetical(text.replace(/\s+/g, " ").trim());
+        if (s.length < 4 || s.length > 120) return false;
+        if (isListingAddressNoise(s)) return false;
+        if (/^(ფართი|ოთახი|საძინებელი|სართული|ID\b)/iu.test(s)) return false;
+        if (/₾|\$|USD|€|მ²|m²|კვ\.\s*ფასი/i.test(s)) return false;
+        if (/^\d{5,}/.test(s)) return false;
+        if (/მეტრო|metro|სადგურ/i.test(s)) return false;
+        if (isStreetLine(s)) return false;
+        if (
+          /მ\/რ|(?:^|\s)მ\.\s*რ\.?(?:\s|$)|კვარტ|კორპ|უბან|დასახლ|მიკრორაიონ/i.test(s)
+        ) {
+          return true;
+        }
+        if (
+          /^[\u10A0-\u10FF][\u10A0-\u10FF\s\-–—.]+\s-\s+.+$/u.test(s) &&
+          /\d/.test(s)
+        ) {
+          return true;
+        }
+        return false;
+      }
+
+      function isPinLandmarkLine(text: string): boolean {
+        const s = text.replace(/\s+/g, " ").trim();
+        if (s.length < 3 || s.length > 90) return false;
+        if (isListingAddressNoise(s)) return false;
+        if (isStreetLine(s) || isMicrodistrictAddressLine(s)) return false;
+        if (
+          /[₾$]|მ²|m²|იპოთეკა|სესხი|ფასი|გადაფორმება|იყიდება|ქირავდება|ოთახიანი|მოითხოვე/i.test(
+            s
+          )
+        ) {
+          return false;
+        }
+        if (/^ID\b/i.test(s)) return false;
+        if (/^\d+(\.\d+)?\s*მ²/i.test(s)) return false;
+        if (/^\d+\s*\/\s*\d+/.test(s)) return false;
+        if (/^(ფართი|ოთახი|საძინებელი|სართული)$/iu.test(s)) return false;
+        if (/^\d+$/.test(s)) return false;
+        if (/მეტრო|metro|სადგურ/i.test(s)) return false;
+        if (KNOWN_CITIES.includes(s)) return false;
+        if (!/[\u10A0-\u10FF]{2,}/u.test(s)) return false;
+        return true;
+      }
+
+      function normalizeStreetNameOnly(raw: string): string {
+        const text = stripStreetParenthetical(raw.replace(/\s+/g, " ").trim());
+        if (!text) return "";
+        const parts = parseAddressParts(text);
+        let name = parts.street || text;
+        name = name
+          .replace(/\s+#\s*[\d][\d\s,\-–—]*(?:,\s*[\d][\d\s,\-–—]*)*\s*$/iu, "")
+          .replace(/\s+\d+[ა-ჰa-z]?\s*$/iu, "")
+          .replace(/\s+№\s*\d+[ა-ჰa-z]?\s*$/iu, "")
+          .trim();
+        const suffix = name.match(
+          /^(.+?)\s+(ქ\.?|ქუჩა|გამზ\.?|შესახვევი|ჩიხი)$/iu
+        );
+        if (suffix) {
+          const tail = suffix[2].replace(/\.$/, "");
+          const streetSuffix =
+            tail === "ქ" || tail === "ქუჩა" ? "ქ" : tail;
+          return `${suffix[1].trim()} ${streetSuffix}`;
+        }
+        return name;
+      }
+
+      function isLocationPinRow(row: Element): boolean {
+        if (row.querySelector('svg[width="16"][height="17"]')) return false;
+        if (row.querySelector('svg[viewBox="0 0 16 17"]')) return false;
+        return !!(
+          row.querySelector('svg[width="13"][height="15"]') ||
+          row.querySelector('svg[viewBox="0 0 13 15"]')
+        );
+      }
+
+      function isStreetNumber(value: string): boolean {
+        const n = value.replace(/^#?\s*/, "").replace(/^№\s*/, "").trim();
+        return /^[\d][\d\s,\-–—]*[ა-ჰa-z]?$/iu.test(n) && n.length <= 40;
+      }
+
+      function parseAddressParts(raw: string) {
+        const text = stripStreetParenthetical(raw.replace(/\s+/g, " ").trim());
+        const withNumber = [
+          /^(.+?)\s+ქუჩა\s*#\s*([\d][\d\s,\-–—]*(?:,\s*[\d][\d\s,\-–—]*)*)$/iu,
+          /^(.+?)\s+მ\.\s*ქ\.\s*(\d+[ა-ჰa-z]?)(?:\s+.+)?$/iu,
+          /^(.+?)\s+მ\.\s*ქუჩა\s*(\d+[ა-ჰa-z]?)(?:\s+.+)?$/iu,
+          /^(.+?)\s+გამზ\.?\s*(\d+[ა-ჰa-z]?)(?:\s+.+)?$/iu,
+          /^(.+?)\s+ქ\.\s*(\d+[ა-ჰa-z]?)(?:\s+.+)?$/iu,
+          /^(.+?)\s+ქუჩა\s*№?\s*(\d+[ა-ჰa-z]?)(?:\s+.+)?$/iu,
+          /^(.+?)\s+შესახვევი\s+(\d+[ა-ჰa-z]?)$/iu,
+          /^(.+?)\s+ჩიხი\s+(\d+[ა-ჰa-z]?)$/iu,
+        ];
+        for (const re of withNumber) {
+          const m = text.match(re);
+          if (m) {
+            let suffix = "ქ";
+            if (re.source.includes("ქუჩა")) suffix = "ქუჩა";
+            else if (re.source.includes("შესახვევი")) suffix = "შესახვევი";
+            else if (re.source.includes("ჩიხი")) suffix = "ჩიხი";
+            else if (re.source.includes("გამზ")) suffix = "გამზ";
+            return {
+              street: `${m[1].trim()} ${suffix}`,
+              streetNumber: m[2].trim(),
+            };
+          }
+        }
+        const streetOnly = text.match(
+          /^(.+?)\s+(ქ\.?|ქუჩა|შესახვევი|ჩიხი)$/iu
+        );
+        if (streetOnly) {
+          return { street: text, streetNumber: "" };
+        }
+        if (isStreetLine(text)) {
+          const laneNum = text.match(/^(.+?)\s+შესახვევი\s+(\d+[ა-ჰa-z]?)$/iu);
+          if (laneNum) {
+            return {
+              street: `${laneNum[1].trim()} შესახვევი`,
+              streetNumber: laneNum[2].trim(),
+            };
+          }
+          return { street: text, streetNumber: "" };
+        }
+        return { street: "", streetNumber: "" };
+      }
+
+      function collectTitleStreetLines(): string[] {
+        const lines: string[] = [];
+        const acceptLine = (raw: string, fromPin = false) => {
+          const t = raw.replace(/\s+/g, " ").trim();
+          if (!t || lines.includes(t) || isListingAddressNoise(t)) return;
+          if (isStreetLine(t) || isMicrodistrictAddressLine(t)) {
+            lines.push(t);
+            return;
+          }
+          if (fromPin && isPinLandmarkLine(t)) lines.push(t);
+        };
+
+        const h1 = document.querySelector("h1");
+        const scanRoot = h1?.parentElement?.parentElement || h1?.parentElement;
+
+        for (const svg of document.querySelectorAll(
+          'svg[width="13"][height="15"], svg[viewBox="0 0 13 15"]'
+        )) {
+          const row = svg.closest(
+            "[class*='gap-2'], [class*='items-center'], motion.div, div, a, p, span"
+          );
+          if (!row || !isLocationPinRow(row)) continue;
+          for (const el of row.querySelectorAll("span, a, p")) {
+            if (el.children.length > 0) continue;
+            acceptLine(el.textContent || "", true);
+          }
+        }
+
+        if (scanRoot) {
+          for (const row of scanRoot.querySelectorAll(
+            "[class*='gap-2'][class*='mt-2'], [class*='items-center'][class*='gap-2']"
+          )) {
+            for (const el of row.querySelectorAll("span, a, p")) {
+              if (el.children.length > 0) continue;
+              acceptLine(el.textContent || "");
+            }
+          }
+          for (const el of scanRoot.querySelectorAll("span, a, p")) {
+            if (el.children.length > 0) continue;
+            acceptLine(el.textContent || "");
+          }
+        }
+
+        return lines;
+      }
+
+      function ingestStreetFromTitle(): boolean {
+        for (const line of collectTitleStreetLines()) {
+          if (isListingAddressNoise(line)) continue;
+          if (isMicrodistrictAddressLine(line) || isPinLandmarkLine(line)) {
+            street = line;
+            address = line;
+            streetNumber = "";
+            return true;
+          }
+          const parts = parseAddressParts(line);
+          const name = normalizeStreetNameOnly(parts.street || line);
+          if (!name || isListingAddressNoise(name)) continue;
+          street = name;
+          if (parts.streetNumber) streetNumber = parts.streetNumber;
+          address = line;
+          return true;
+        }
+        return false;
+      }
+
+      let address = "";
+      let city = "";
+      let street = "";
+      let streetNumber = "";
+
+      ingestStreetFromTitle();
+
+      function readSchemaAddress(node: Record<string, unknown>): { region: string; locality: string } {
+        const out = { region: "", locality: "" };
+        const addr = node.address;
+        if (addr && typeof addr === "object" && !Array.isArray(addr)) {
+          const a = addr as Record<string, string>;
+          if (a.addressRegion) out.region = a.addressRegion.trim();
+          if (a.addressLocality) out.locality = a.addressLocality.trim();
+        }
+        return out;
+      }
+
+      function parseSchemaOrgLocation(): { region: string; locality: string } {
+        const out = { region: "", locality: "" };
+        const listingId = (location.pathname.match(/\/pr\/(\d+)/) || [])[1] || "";
+
+        for (const script of document.querySelectorAll('script[type="application/ld+json"]')) {
+          let data: unknown;
+          try {
+            data = JSON.parse(script.textContent || "");
+          } catch {
+            continue;
+          }
+          const nodes = Array.isArray(data) ? data : [data];
+          for (const node of nodes) {
+            if (!node || typeof node !== "object") continue;
+            const obj = node as Record<string, unknown>;
+            const typeVal = obj["@type"];
+            const types = Array.isArray(typeVal)
+              ? typeVal.map(String)
+              : typeVal
+                ? [String(typeVal)]
+                : [];
+            const isListing = types.some(
+              (t) => t.includes("RealEstateListing") || t.includes("Product")
+            );
+            if (!isListing) continue;
+            const id = String(obj["@id"] || obj.url || "");
+            if (listingId && id && !id.includes(listingId)) continue;
+            const addr = readSchemaAddress(obj);
+            if (addr.region || addr.locality) return addr;
+          }
+        }
+
+        const visit = (node: unknown) => {
+          if (!node || typeof node !== "object") return;
+          if (Array.isArray(node)) {
+            node.forEach(visit);
+            return;
+          }
+          const addr = readSchemaAddress(node as Record<string, unknown>);
+          if (addr.region) out.region = addr.region;
+          if (addr.locality) out.locality = addr.locality;
+          for (const v of Object.values(node as Record<string, unknown>)) visit(v);
+        };
+
+        document.querySelectorAll('script[type="application/ld+json"]').forEach((script) => {
+          try {
+            visit(JSON.parse(script.textContent || ""));
+          } catch {
+            /* ignore malformed JSON-LD */
+          }
+        });
+        return out;
+      }
+
+      function buildCityFromSchema(region: string, locality: string): string {
+        const r = region.replace(/\s+/g, " ").trim();
+        const l = locality.replace(/\s+/g, " ").trim();
+        if (!r && !l) return "";
+
+        const rIsCity = KNOWN_CITIES.includes(r);
+        const lIsCity = KNOWN_CITIES.includes(l);
+
+        if (lIsCity && r && r !== l) {
+          return rIsCity ? `${r}, ${l}` : `${l}, ${r}`;
+        }
+        if (rIsCity) return l && l !== r ? `${r}, ${l}` : r;
+        if (lIsCity) return l;
+        if (r && l) return r === l ? r : `${r}, ${l}`;
+        return r || l;
+      }
+
+      function cityWordMatch(text: string, city: string): boolean {
+        const escaped = city.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+        const re = new RegExp(`(?:^|[\\s,;.\\-\\/])${escaped}(?:$|[\\s,;.\\-\\/])`, "u");
+        return re.test(text);
+      }
+
+      function extractCityFromH1(): string {
+        const title = (document.querySelector("h1")?.textContent || "").replace(/\s+/g, " ").trim();
+        if (!title) return "";
+
+        for (const c of KNOWN_CITIES) {
+          if (cityWordMatch(title, c)) return c;
+          const stem = c.endsWith("ი") ? c.slice(0, -1) : c;
+          if (stem.length < 4) continue;
+          if (title.includes(`${stem}ში`) || title.includes(`${stem}ზე`)) return c;
+        }
+        return "";
+      }
+
+      function extractCityFromTitleArea(): string {
+        const h1 = document.querySelector("h1");
+        if (!h1) return "";
+
+        const locParts: string[] = [];
+        const root = h1.parentElement?.parentElement;
+        if (!root) return "";
+
+        root
+          .querySelectorAll(
+            "[class*='gap-2'][class*='mt-2'] a, [class*='items-center'][class*='gap-2'] a, [class*='gap-2'][class*='mt-2'] span"
+          )
+          .forEach((el) => {
+            if (el.children.length > 0) return;
+            const t = (el.textContent || "").replace(/\s+/g, " ").trim();
+            if (!t || t.length > 50) return;
+            if (/ქ\.|ქუჩა|შესახვევი|ჩიხი|მეტრო|metro/i.test(t)) return;
+            if (isStreetLine(t)) return;
+            if (isMicrodistrictAddressLine(t)) return;
+            if (!locParts.includes(t)) locParts.push(t);
+          });
+
+        for (const p of locParts) {
+          if (KNOWN_CITIES.includes(p)) return p;
+        }
+
+        const cityPart = locParts.find((p) => KNOWN_CITIES.includes(p));
+        return cityPart || locParts[0] || "";
+      }
+
+      function pickCityOnly(...sources: string[]): string {
+        for (const src of sources) {
+          if (!src) continue;
+          for (const part of src.split(",").map((s) => s.trim())) {
+            if (KNOWN_CITIES.includes(part)) return part;
+          }
+        }
+        return extractCityFromH1();
+      }
+
+      function extractCityFromListingHeader(): string {
+        const h1 = document.querySelector("h1");
+        if (!h1) return "";
+
+        let node: Element | null = h1.parentElement;
+        const chunks: string[] = [];
+        for (let depth = 0; depth < 6 && node; depth++) {
+          chunks.push(node.textContent || "");
+          node = node.parentElement;
+        }
+        const scoped = chunks.join(" ");
+        let best = "";
+        let bestIdx = scoped.length;
+        for (const c of KNOWN_CITIES) {
+          if (!cityWordMatch(scoped, c)) continue;
+          const idx = scoped.indexOf(c);
+          if (idx >= 0 && idx < bestIdx) {
+            bestIdx = idx;
+            best = c;
+          }
+        }
+        return best;
+      }
+
+      const schemaLoc = parseSchemaOrgLocation();
+      const schemaCity = buildCityFromSchema(schemaLoc.region, schemaLoc.locality);
+      const h1City = extractCityFromH1();
+      const titleAreaCity = extractCityFromTitleArea();
+      const headerCity = extractCityFromListingHeader();
+
+      city = pickCityOnly(h1City, schemaCity, titleAreaCity, headerCity);
 
       // --- Specs: area, rooms, bedrooms, floor ---
       let area = "";
@@ -4913,6 +7356,7 @@ export async function parseListing(url: string): Promise<{
         "სვ.წერტილები",
         "სველი წერტილი",
         "სველი წერტილები",
+        "ეზოს ფართი",
       ];
       document.querySelectorAll("div").forEach((container) => {
         const children = Array.from(container.children);
@@ -4934,7 +7378,13 @@ export async function parseListing(url: string): Promise<{
             }
             if (label === "სართული") {
               const fm = sibling.match(/(\d+)\s*\/\s*(\d+)/);
-              if (fm && !floor) { floor = fm[1]; totalFloors = fm[2]; }
+              if (fm && !floor) {
+                floor = fm[1];
+                totalFloors = fm[2];
+              } else if (/^\d+$/.test(sibling) && !floor) {
+                floor = sibling;
+                totalFloors = sibling;
+              }
             }
             if (
               (label === "სვ.წერტილი" ||
@@ -4946,9 +7396,20 @@ export async function parseListing(url: string): Promise<{
             ) {
               bathrooms = sibling.replace(/[^\d]/g, "") || sibling;
             }
+            if (label === "ეზოს ფართი" && sibling.includes("მ²") && !rawData["ეზოს ფართი"]) {
+              const ym = sibling.match(/(\d+(?:[.,]\d+)?)/);
+              if (ym) rawData["ეზოს ფართი"] = ym[1].replace(",", ".");
+            }
           }
         }
       });
+
+      const topFloorFlex = collectFloorFromFlexRows(document.body);
+      if (topFloorFlex.floor && !floor) floor = topFloorFlex.floor;
+      if (topFloorFlex.totalFloors && !totalFloors) {
+        totalFloors = topFloorFlex.totalFloors;
+      }
+      if (topFloorFlex.raw) rawData["სართული"] = topFloorFlex.raw;
 
       // --- Additional parameters section ---
       let buildingStatus = "";
@@ -4960,13 +7421,30 @@ export async function parseListing(url: string): Promise<{
       let cadastralCode = "";
 
       const structuredFromAdditional: Record<string, (v: string) => void> = {
-        "სტატუსი": (v) => { if (!buildingStatus) buildingStatus = v; },
-        "მდგომარეობა": (v) => { if (!condition) condition = v; },
+        "სტატუსი": (v) => {
+          if (!buildingStatus) buildingStatus = dedupeRepeated(v);
+        },
+        "მდგომარეობა": (v) => {
+          if (!condition) condition = dedupeRepeated(v);
+        },
         "პროექტის ტიპი": (v) => {
           if (!projectType) projectType = dedupeRepeated(v);
         },
         "საძინებელი": (v) => {
           if (!bedrooms) bedrooms = v.replace(/[^\d]/g, "") || v;
+        },
+        "სართული": (v) => {
+          const fm = v.match(/(\d+)\s*\/\s*(\d+)/);
+          if (fm) {
+            if (!floor) floor = fm[1];
+            if (!totalFloors) totalFloors = fm[2];
+            return;
+          }
+          const digits = v.replace(/[^\d]/g, "");
+          if (digits && !floor) {
+            floor = digits;
+            totalFloors = digits;
+          }
         },
         "სვ.წერტილი": (v) => { if (!bathrooms) bathrooms = v.replace(/[^\d]/g, "") || v; },
         "სვ.წერტილები": (v) => { if (!bathrooms) bathrooms = v.replace(/[^\d]/g, "") || v; },
@@ -4977,13 +7455,12 @@ export async function parseListing(url: string): Promise<{
         "ლოჯია": (v) => { if (!loggiaArea) loggiaArea = v; },
         "საკადასტრო კოდი": (v) => { if (!cadastralCode) cadastralCode = v; },
         "მდებარეობა": (v) => {
-          if (!city) city = v.split(",")[0].trim();
+          const loc = v.replace(/\s+/g, " ").trim();
+          if (loc) city = loc;
         },
         "ქუჩა": (v) => {
           if (!street && isStreetLine(v)) {
-            const parts = parseAddressParts(v);
-            street = parts.street || v.trim();
-            if (!streetNumber && parts.streetNumber) streetNumber = parts.streetNumber;
+            street = normalizeStreetNameOnly(v);
           }
         },
         "ქუჩის ნომერი": (v) => {
@@ -5073,10 +7550,50 @@ export async function parseListing(url: string): Promise<{
       ensureFurnitureRawData(data.rawData);
     }
     if (data) {
+      if (data.city) {
+        const cityOnly = cityForPrefill(data.city);
+        data.city = cityOnly;
+        if (data.rawData?.["მდებარეობა"]) data.rawData["მდებარეობა"] = cityOnly;
+      }
+      applyPinStreetToListing(data, pinStreetRaw);
       applyBalconyParsedFields(data);
       applyLoggiaParsedFields(data);
       applyVerandaParsedFields(data);
+      applyYardAreaParsedFields(data);
       applyCeilingHeightParsedFields(data);
+      applyFloorParsedFields(data);
+      const resolvedStreet = resolveStreetForPrefill(
+        data.street || data.rawData?.["ქუჩა"] || "",
+        data.streetNumber || data.rawData?.["ქუჩის ნომერი"] || ""
+      );
+      if (resolvedStreet.street) {
+        data.street = resolvedStreet.street;
+        if (data.rawData) data.rawData["ქუჩა"] = resolvedStreet.street;
+      }
+      data.streetNumber = resolvedStreet.streetNumber;
+      if (data.rawData) {
+        if (resolvedStreet.streetNumber) {
+          data.rawData["ქუჩის ნომერი"] = resolvedStreet.streetNumber;
+        } else {
+          delete data.rawData["ქუჩის ნომერი"];
+        }
+      }
+      if (data.buildingStatus) {
+        data.buildingStatus = dedupeRepeatedLabelValue(data.buildingStatus);
+      }
+      if (data.condition) {
+        data.condition = dedupeRepeatedLabelValue(data.condition);
+      }
+      const rawStatus = data.rawData?.["სტატუსი"];
+      if (rawStatus) {
+        data.rawData["სტატუსი"] = dedupeRepeatedLabelValue(rawStatus);
+        if (!data.buildingStatus) data.buildingStatus = data.rawData["სტატუსი"];
+      }
+      const rawCondition = data.rawData?.["მდგომარეობა"];
+      if (rawCondition) {
+        data.rawData["მდგომარეობა"] = dedupeRepeatedLabelValue(rawCondition);
+        if (!data.condition) data.condition = data.rawData["მდგომარეობა"];
+      }
       if (data.projectType) {
         data.projectType = dedupeRepeatedLabelValue(data.projectType);
       }
@@ -5087,6 +7604,10 @@ export async function parseListing(url: string): Promise<{
       }
       if (!data.bedrooms && data.rawData?.["საძინებელი"]) {
         data.bedrooms = data.rawData["საძინებელი"].replace(/[^\d]/g, "") || data.rawData["საძინებელი"];
+      }
+      if (data.area) {
+        data.area = normalizeAreaForInput(data.area);
+        if (data.rawData) data.rawData["ფართი"] = data.area;
       }
     }
 
@@ -5102,30 +7623,84 @@ export async function parseListing(url: string): Promise<{
 }
 
 async function ensurePostSessionLogin(
-  page: Page,
-  credentials: MyhomeCredentials
+    page: Page,
+    credentials: MyhomeCredentials
 ): Promise<void> {
-  await page.goto("https://auth.tnet.ge/ka/user/login/?Continue=https://www.myhome.ge/", {
-    waitUntil: "domcontentloaded",
-    timeout: 30000,
-  });
-  await page.waitForSelector('input[name="Email"]', { timeout: 10000 });
-  await page.fill('input[name="Email"]', credentials.email);
-  await page.fill('input[name="Password"]', credentials.password);
-  await page.click('[data-testid="login-form__button-submit"]');
-  await page.waitForURL((url) => !url.href.includes("auth.tnet.ge"), {
-    timeout: 20000,
-  });
+    await page.goto("https://auth.tnet.ge/ka/user/login/?Continue=https://www.myhome.ge/", {
+      waitUntil: "domcontentloaded",
+      timeout: 30000,
+    });
+    await page.waitForSelector('input[name="Email"]', { timeout: 10000 });
+    await page.fill('input[name="Email"]', credentials.email);
+    await page.fill('input[name="Password"]', credentials.password);
+    await page.click('[data-testid="login-form__button-submit"]');
+    await page.waitForURL((url) => !url.href.includes("auth.tnet.ge"), {
+      timeout: 20000,
+    });
 }
 
-// Open a visible browser, login, navigate to create form, and pre-fill all fields.
-// The browser stays open for the user to review and submit manually.
+// Navigate to the photo gallery step and upload images via the hidden file input.
+export async function uploadListingImages(
+  page: Page,
+  imagePaths: string[]
+): Promise<void> {
+  if (imagePaths.length === 0) return;
+
+  const fileInput = page.locator(
+    '.document-uploader input[type="file"][accept*=".webp"]'
+  );
+
+  // Try sidebar step for photos / description
+  try {
+    const photoStep = page
+      .locator("button, a, li, [role='button']")
+      .filter({ hasText: /ფოტო|აღწერა/ })
+      .first();
+    if (await photoStep.isVisible({ timeout: 3000 })) {
+      await photoStep.click();
+      await page.waitForTimeout(1000);
+    }
+  } catch {
+    /* step may already be visible */
+  }
+
+  // Fallback: click Next until file input appears
+  for (let i = 0; i < 6; i++) {
+    if (await fileInput.isVisible({ timeout: 1500 }).catch(() => false)) break;
+    const nextBtn = page
+      .locator("button")
+      .filter({ hasText: /^შემდეგი$/ })
+      .first();
+    if (await nextBtn.isVisible({ timeout: 1000 }).catch(() => false)) {
+      await nextBtn.click();
+      await page.waitForTimeout(800);
+    } else {
+      break;
+    }
+  }
+
+  await fileInput.waitFor({ state: "attached", timeout: 15000 });
+  await fileInput.setInputFiles(imagePaths.slice(0, 16));
+
+  // Wait for upload previews (thumbnails or img inside uploader)
+  await page
+    .locator(".document-uploader img, .document-uploader [class*='preview']")
+    .first()
+    .waitFor({ state: "visible", timeout: 60000 })
+    .catch(() => page.waitForTimeout(5000));
+}
+
+// Login, navigate to create form, pre-fill fields, and upload photos.
+// Visible browser stays open locally; headless mode closes after success (MYHOME_PREFILL_HEADLESS=true).
 export async function createMyhomePost(
   credentials: MyhomeCredentials,
-  listing: MyhomeListing
+  listing: MyhomeListing,
+  options: { listingId: string; userId: string }
 ): Promise<{ success: boolean; postUrl?: string; error?: string }> {
   const reuseSession =
-    postSession?.email === credentials.email && postSession.browser.isConnected();
+      postSession?.email === credentials.email && postSession.browser.isConnected();
+
+  const headless = process.env.MYHOME_PREFILL_HEADLESS === "true";
 
   let browser: Browser;
   let context: BrowserContext;
@@ -5135,28 +7710,31 @@ export async function createMyhomePost(
     browser = postSession.browser;
     context = postSession.context;
     page = await context.newPage();
+    await ensureBrowserEvaluateShim(page);
   } else {
     if (postSession?.browser.isConnected()) {
       await postSession.context.close().catch(() => null);
       await postSession.browser.close().catch(() => null);
     }
     browser = await chromium.launch({
-    headless: false,
-    args: ["--no-sandbox", "--disable-setuid-sandbox"],
-  });
+      headless,
+      args: ["--no-sandbox", "--disable-setuid-sandbox", "--start-maximized"],
+    });
     context = await browser.newContext({
-    userAgent:
-      "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
-    locale: "ka-GE",
-  });
+      userAgent:
+        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+      locale: "ka-GE",
+      viewport: null,
+    });
     await context.route("**/*", (route) => {
       const type = route.request().resourceType();
-      if (type === "image" || type === "media" || type === "font") {
+      if (type === "media" || type === "font") {
         route.abort();
       } else {
         route.continue();
       }
     });
+    await addBrowserEvaluateShim(context);
     page = await context.newPage();
     postSession = { email: credentials.email, browser, context };
   }
@@ -5165,6 +7743,8 @@ export async function createMyhomePost(
     if (listing.rawData) {
       ensureFurnitureRawData(listing.rawData);
     }
+    sanitizeBalconyListing(listing);
+    applyFloorParsedFields(listing);
 
     if (!reuseSession) {
       await ensurePostSessionLogin(page, credentials);
@@ -5200,13 +7780,39 @@ export async function createMyhomePost(
           }
         }
 
+        function labelInBalconySection(lbl: Element): boolean {
+          let node: Element | null = lbl.parentElement;
+          while (node) {
+            if (/^H[234]$/.test(node.tagName)) {
+              const t = (node.textContent || "").replace(/\s*\*\s*$/, "").trim();
+              if (t === "აივანი" || /^აივნის\s*რაოდენობა$/iu.test(t)) return true;
+            }
+            node = node.parentElement;
+          }
+          return false;
+        }
+
         function fillInputByLabel(labelText: string, value: string) {
           if (!value) return;
           let filled = false;
           document.querySelectorAll("label").forEach((label) => {
             if (filled) return;
+            if (labelText === "ფართი" && labelInBalconySection(label)) return;
             const forAttr = label.getAttribute("for");
-            // Check ALL spans inside the label, not just the first
+            const normLabel = (label.textContent || "")
+              .replace(/\s*\*\s*$/, "")
+              .trim()
+              .replace(/\s+/g, " ");
+            if (labelText === "ფართი" && (normLabel === "ფართი" || normLabel.startsWith("ფართი "))) {
+              const input = forAttr
+                ? (document.getElementById(forAttr) as HTMLInputElement)
+                : (label.querySelector("input") as HTMLInputElement);
+              if (input?.tagName === "INPUT" && !labelInBalconySection(label)) {
+                setInputValue(input, value);
+                filled = true;
+                return;
+              }
+            }
             const spans = label.querySelectorAll("span");
             for (const span of spans) {
               const t = span.textContent?.trim()?.replace(/\s*\*\s*$/, "").trim();
@@ -5269,6 +7875,24 @@ export async function createMyhomePost(
             return false;
           }
 
+          function chipInExclusiveBalconyBlock(chip: Element): boolean {
+            let node: Element | null = chip;
+            for (let depth = 0; depth < 16 && node; depth++) {
+              let hasBalconyCount = false;
+              let hasOtherCountSection = false;
+              for (const marker of node.querySelectorAll("label,span,p")) {
+                const t = norm(marker.textContent || "");
+                if (/^აივნის\s*რაოდენობა$/iu.test(t)) hasBalconyCount = true;
+                if (/^საძინებელი/i.test(t)) hasOtherCountSection = true;
+                if (/^ოთახ/i.test(t)) hasOtherCountSection = true;
+                if (t.includes("სვ") && t.includes("წერტილი")) hasOtherCountSection = true;
+              }
+              if (hasBalconyCount && !hasOtherCountSection) return true;
+              node = node.parentElement;
+            }
+            return false;
+          }
+
           function tryGluedCountChip(parent: Element | null, re: RegExp): boolean {
             if (!parent) return false;
             const joined = (parent.textContent || "").replace(/\s+/g, "");
@@ -5283,6 +7907,7 @@ export async function createMyhomePost(
               const t = norm(el.textContent || "");
               if (t === digit || t === `${digit}+` || variants.includes(t)) {
                 const chip = (el.closest("[class*='rounded']") || el) as HTMLElement;
+                if (chipInExclusiveBalconyBlock(chip)) continue;
                 chip.click();
                 return true;
               }
@@ -5327,6 +7952,8 @@ export async function createMyhomePost(
           for (const el of row.querySelectorAll("span,motion.div,div,button,p")) {
             if (clicked) break;
             if (el.children.length > 0) continue;
+            const chip = (el.closest("[class*='rounded']") || el) as HTMLElement;
+            if (chipInExclusiveBalconyBlock(chip)) continue;
             const t = norm(el.textContent || "");
             if (!variants.includes(t)) {
               const tm = t.match(/^(\d+)\+?$/);
@@ -5334,7 +7961,6 @@ export async function createMyhomePost(
                 continue;
               }
             }
-            const chip = (el.closest("[class*='rounded']") || el) as HTMLElement;
             chip.click();
             clicked = true;
           }
@@ -5389,85 +8015,77 @@ export async function createMyhomePost(
       description: "",
     };
 
-    await batchPrefillChips(page, buildEarlyFormChipTasks(listing));
+    await batchPrefillChips(page, buildEarlyPropertyChipTasks(listing));
+    await prefillPause(page, 100);
+    await prefillBuildingStatusAndCondition(page, listing);
 
     await fillLocationFields(page, listingLocation(listing));
 
     await switchPriceFieldToUsd(page, "#total_price");
-    await prefillPause(page);
+    await prefillMainAreaField(page, listing);
 
     const bedroomsForForm = getBedroomsValue(listing);
     const bathroomsForForm = getBathroomsValue(listing);
+    const totalFloorsForForm = getTotalFloorsValue(listing);
+    const areaForForm = getAreaValue(listing);
 
     await fillForm({
       ...empty,
       price: listing.price,
       pricePerSqm: listing.pricePerSqm,
       currency: "USD",
-      area: listing.area,
+      area: areaForForm,
       rooms: listing.rooms,
       bedrooms: bedroomsForForm,
       bathrooms: bathroomsForForm,
       floor: listing.floor,
-      totalFloors: listing.totalFloors,
+      totalFloors: totalFloorsForForm,
       description: listing.description,
     });
 
-    await page
-      .waitForFunction(
-        () => {
-          const t = document.body?.innerText || "";
-          return t.includes("ოთახი") || t.includes("საძინებელი");
-        },
-        { timeout: 12000 }
-      )
-      .catch(() => {});
+    await applyAdditionalParametersPrefill(page, listing, {
+      skipStatusAndCondition: true,
+    });
 
-    if (listing.rooms) {
-      await prefillCountChipPlaywright(page, CHIP_SECTION_ALIASES["ოთახი"], listing.rooms);
+    if (!listingHasBalconyData(listing)) {
+      await clearBalconyFormFields(page);
     }
-    if (bedroomsForForm) {
-      await scrollToFormField(page, "საძინებელი");
-      await prefillCountChipPlaywright(
-        page,
-        CHIP_SECTION_ALIASES["საძინებელი"],
-        bedroomsForForm
+
+    if (getAreaValue(listing)) {
+      await prefillMainAreaField(page, listing);
+    }
+
+    // Upload images to photo gallery
+    if (listing.images.length > 0) {
+      const { paths, cleanup } = await resolveImagesForPlaywright(
+        listing.images,
+        options.listingId,
+        options.userId
       );
-    }
-    if (bathroomsForForm) {
-      await prefillCountChipPlaywright(
-        page,
-        CHIP_SECTION_ALIASES["სველი წერტილი"],
-        bathroomsForForm
-      );
-    }
-
-    await expandCreateFormSections(page);
-    await prefillPause(page, 80);
-
-    if (bedroomsForForm) {
-      await scrollToFormField(page, "საძინებელი");
-      await prefillRowCountChip(
-        page,
-        CHIP_SECTION_ALIASES["საძინებელი"],
-        bedroomsForForm
-      );
+      try {
+        if (paths.length > 0) {
+          await uploadListingImages(page, paths);
+        }
+      } finally {
+        await cleanup();
+      }
     }
 
-    await prefillMainCountChips(page, listing);
+    const postUrl = page.url();
 
-    await applyAdditionalParametersPrefill(page, listing);
+    if (headless) {
+      await browser.close();
+    }
 
-    // Browser stays open for user review
-    return {
-      success: true,
-      postUrl: page.url(),
-    };
+    return { success: true, postUrl };
   } catch (error) {
+    if (headless) {
+      await browser.close().catch(() => undefined);
+    }
     return {
       success: false,
       error: error instanceof Error ? error.message : "Failed to create post",
     };
   }
-  // No finally block -- browser stays open intentionally
+  // Non-headless: browser stays open for user review (no finally close)
 }

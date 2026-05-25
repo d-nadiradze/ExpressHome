@@ -68,6 +68,12 @@ ENCRYPTION_KEY="your-32-character-encryption-key"
 
 NEXT_PUBLIC_APP_URL="http://localhost:3000"
 SESSION_DURATION=86400
+
+# Optional: headless prefill on server (default false — visible browser locally)
+# MYHOME_PREFILL_HEADLESS=true
+
+# Optional: directory for user-uploaded listing photos (default data/uploads)
+# UPLOAD_DIR=data/uploads
 ```
 
 ### 5. Set up database
@@ -139,7 +145,7 @@ src/
    - Area, rooms, floor/total floors
    - All property detail key-value pairs
 3. The data is saved to the database and shown in the UI
-4. User can click **Publish** — the app logs into myhome.ge using stored credentials and navigates to the post creation form at `https://statements.myhome.ge/ka/statement/create`
+4. User can review photos (add/remove up to 16), then click **Prefill** — the app logs into myhome.ge, fills the form, and uploads images to the photo gallery via Playwright
 
 ---
 
@@ -167,3 +173,5 @@ Step-by-step setup (CI on every push, manual deploy over SSH): **[docs/GITHUB_CI
 4. Run `npm run build && npm start`
 5. Point a reverse proxy (nginx/Caddy) at port 3000
 6. Ensure Playwright's Chromium is installed on the server: `npx playwright install --with-deps chromium`
+7. Set `MYHOME_PREFILL_HEADLESS=true` on the server (Docker compose sets this automatically) for headless prefill without a display
+8. Mount a persistent volume for uploaded images (`UPLOAD_DIR`, default `data/uploads`) so user-added photos survive container restarts
