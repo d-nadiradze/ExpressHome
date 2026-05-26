@@ -5,20 +5,27 @@ import {
   type BrowserContext,
   type Page,
 } from "playwright";
+import {
+  normalizeListingForSsgePrefill,
+  ssgeViewChipsFromRawData,
+} from "@/lib/cross-platform-prefill";
+import {
+  applySsgeBalconyDefaultsForSsgePrefill,
+  resolveSsgeBalconyCountForPrefill,
+} from "@/lib/platform-amenity-mappings";
 import type { MyhomeListing } from "@/lib/myhome-parser";
 import { resolveImagesForPlaywright } from "@/lib/listing-images";
 import {
-  ADDITIONAL_INFO_TOGGLES,
-  BUILDING_STATUS_TO_SSGE,
-  CONDITION_TO_SSGE,
+  resolveSsgeStatusChip,
+  collectAdditionalInfoLabelsToEnable,
   DEAL_TYPE_TO_SSGE,
   PROJECT_TYPE_SUBSET,
-  PROJECT_TYPE_TO_SSGE,
   PROPERTY_TYPE_TO_SSGE,
-  VIEW_TO_SSGE,
   digitsOnly,
-  isTruthyRawValue,
+  resolveSsgeConditionChip,
+  resolveSsgeProjectChip,
 } from "@/lib/ssge-mappings";
+import { cityForPrefill } from "@/lib/location-prefill";
 
 export interface SsgeCredentials {
   email: string;
@@ -187,31 +194,22 @@ async function ssgeClickCard(
   text: string,
   sectionHeading?: string
 ): Promise<boolean> {
+  if (sectionHeading) {
+    const near = await ssgeClickChipNearLabel(page, text, sectionHeading);
+    if (near) return true;
+  }
+
   const clicked = await page.evaluate(
-    ({ text, sectionHeading }) => {
+    ({ text }) => {
       const norm = (s: string) => s.replace(/\s+/g, " ").trim();
       const isVisible = (el: HTMLElement) =>
         el.offsetParent !== null &&
         getComputedStyle(el).opacity !== "0" &&
         getComputedStyle(el).visibility !== "hidden";
 
-      let scope: Element = document.body;
-
-      // Narrow scope to the section container (sibling div after <p> heading)
-      if (sectionHeading) {
-        for (const p of document.querySelectorAll("p")) {
-          if (norm(p.textContent || "") === norm(sectionHeading)) {
-            const next = p.nextElementSibling;
-            if (next) { scope = next; break; }
-          }
-        }
-      }
-
-      // Search for a visible element whose text matches
-      for (const el of scope.querySelectorAll("div, button, label, span, a")) {
+      for (const el of document.querySelectorAll("div, button, label, span, a")) {
         const html = el as HTMLElement;
         if (!isVisible(html)) continue;
-        // Skip containers with many children (they are wrappers, not chips)
         if (html.children.length > 3) continue;
         if (norm(html.textContent || "") === norm(text)) {
           html.click();
@@ -220,10 +218,309 @@ async function ssgeClickCard(
       }
       return false;
     },
-    { text, sectionHeading: sectionHeading ?? null }
+    { text }
   );
   if (clicked) await prefillPause(page, 200);
   return clicked;
+}
+
+/**
+ * Click a text chip in the ss.ge create form field whose label matches
+ * `sectionLabel` (span or p, optional trailing *).
+ */
+async function ssgeClickChipNearLabel(
+  page: Page,
+  chipText: string,
+  sectionLabel: string
+): Promise<boolean> {
+  if (!chipText?.trim()) return false;
+  const clicked = await page.evaluate(
+    ({ chipText, sectionLabel }) => {
+      const norm = (s: string) =>
+        s.replace(/\s*\*\s*$/, "").replace(/\s+/g, " ").trim();
+      const labelMatches = (el: Element) => {
+        const t = norm(el.textContent || "");
+        const want = norm(sectionLabel);
+        return t === want || t.startsWith(want);
+      };
+      const isVisible = (el: HTMLElement) =>
+        el.offsetParent !== null && getComputedStyle(el).opacity !== "0";
+
+      function clickTextChipIn(container: Element, target: string): boolean {
+        const want = norm(target);
+        for (const p of container.querySelectorAll("p")) {
+          if (norm(p.textContent || "") !== want) continue;
+          const chipDiv = p.parentElement as HTMLElement | null;
+          if (chipDiv && isVisible(chipDiv)) {
+            chipDiv.click();
+            return true;
+          }
+        }
+        for (const el of container.querySelectorAll("div, button, label, span")) {
+          const html = el as HTMLElement;
+          if (!isVisible(html)) continue;
+          if (html.children.length > 3) continue;
+          if (norm(html.textContent || "") === want) {
+            html.click();
+            return true;
+          }
+        }
+        return false;
+      }
+
+      let labelEl: Element | null = null;
+      for (const el of document.querySelectorAll("span, p")) {
+        if (!labelMatches(el)) continue;
+        if (!isVisible(el as HTMLElement)) continue;
+        labelEl = el;
+        break;
+      }
+      if (!labelEl) return false;
+
+      const labelDiv = labelEl.parentElement;
+      if (!labelDiv) return false;
+
+      let sibling = labelDiv.nextElementSibling;
+      for (let i = 0; i < 4 && sibling; i++) {
+        if (clickTextChipIn(sibling, chipText)) return true;
+        sibling = sibling.nextElementSibling;
+      }
+
+      const fieldWrapper = labelDiv.parentElement;
+      if (fieldWrapper && clickTextChipIn(fieldWrapper, chipText)) return true;
+
+      return false;
+    },
+    { chipText, sectionLabel }
+  );
+  if (clicked) await prefillPause(page, 200);
+  return clicked;
+}
+
+/**
+ * Step 5 დამატებითი ინფორმაცია — amenity toggles inside #create-app-additional-info:
+ *   <div class="... active?"><p>label</p><span class="icon-...">
+ */
+async function ssgeClickAdditionalInfoToggle(
+  page: Page,
+  labels: string[]
+): Promise<boolean> {
+  const variants = [...new Set(labels.map((l) => l.trim()).filter(Boolean))];
+  if (!variants.length) return false;
+
+  const section = page.locator("#create-app-additional-info").first();
+  await section
+    .waitFor({ state: "visible", timeout: 12000 })
+    .catch(() => null);
+
+  const clicked = await page.evaluate((labels) => {
+    const norm = (s: string) => s.replace(/\s+/g, " ").trim();
+    const compact = (s: string) =>
+      s.replace(/\s+/g, "").replace(/ცენტრ\./g, "ცენტ.").trim();
+    const wants = new Set(labels.map(compact));
+    const root =
+      (document.getElementById("create-app-additional-info") as HTMLElement | null) ||
+      document.body;
+
+    const labelMatches = (text: string) => {
+      const c = compact(text);
+      if (wants.has(c)) return true;
+      return labels.some((l) => norm(text) === norm(l));
+    };
+
+    const isToggleActive = (chip: HTMLElement) =>
+      chip.classList.contains("active") ||
+      !!chip.querySelector("span[class*='check_circle-fill']");
+
+    const findToggleForLabel = (p: HTMLParagraphElement): HTMLElement | null => {
+      let node: HTMLElement | null = p.parentElement;
+      while (node && node !== root) {
+        const directP = node.querySelector(":scope > p");
+        const directIcon = node.querySelector(
+          ":scope > span[class*='icon-add_circle'], :scope > span[class*='icon-check_circle']"
+        );
+        if (directP === p && directIcon) return node;
+        node = node.parentElement;
+      }
+      return null;
+    };
+
+    for (const p of root.querySelectorAll("p")) {
+      if (!labelMatches(p.textContent || "")) continue;
+      const chip = findToggleForLabel(p as HTMLParagraphElement);
+      if (!chip) continue;
+      if (isToggleActive(chip)) return true;
+      chip.scrollIntoView({ block: "nearest", inline: "nearest" });
+      chip.click();
+      return true;
+    }
+    return false;
+  }, variants);
+
+  if (clicked) {
+    await prefillPause(page, 180);
+    return true;
+  }
+
+  for (const label of variants) {
+    try {
+      const escaped = label.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+      const chip = section
+        .locator("div")
+        .filter({
+          has: page.locator("p", {
+            hasText: new RegExp(`^\\s*${escaped}\\s*$`, "i"),
+          }),
+        })
+        .filter({
+          has: page.locator(
+            "span[class*='icon-add_circle'], span[class*='icon-check_circle']"
+          ),
+        })
+        .first();
+      if ((await chip.count()) === 0) continue;
+      await chip.scrollIntoViewIfNeeded({ timeout: 5000 });
+      const isActive = await chip.evaluate(
+        (el) =>
+          el.classList.contains("active") ||
+          !!el.querySelector("span[class*='check_circle-fill']")
+      );
+      if (!isActive) await chip.click({ timeout: 5000, force: true });
+      await prefillPause(page, 180);
+      return true;
+    } catch {
+      continue;
+    }
+  }
+  return false;
+}
+
+/** Step 5 „სხვა ინფორმაცია“ — view chips (comma-separated from myhome ხედი). */
+async function ssgePrefillViewChips(
+  page: Page,
+  listing: MyhomeListing
+): Promise<void> {
+  const chips = ssgeViewChipsFromRawData(listing.rawData);
+  if (!chips.length) return;
+  console.log(`[ss.ge prefill] views (${chips.length}): ${chips.join(", ")}`);
+  for (const chip of chips) {
+    const ok = await ssgeClickCard(page, chip, "სხვა ინფორმაცია");
+    if (!ok) {
+      console.warn(`[ss.ge prefill] view chip "${chip}" not selected`);
+    }
+    await prefillPause(page, 150);
+  }
+}
+
+async function ssgePrefillAdditionalInfoToggles(
+  page: Page,
+  rawData: Record<string, string> | undefined
+): Promise<void> {
+  const labels = collectAdditionalInfoLabelsToEnable(rawData);
+  console.log(
+    `[ss.ge prefill] additional info toggles (${labels.length}): ${labels.join(", ")}`
+  );
+
+  for (const label of labels) {
+    const ok = await ssgeClickAdditionalInfoToggle(page, [label]);
+    if (!ok) {
+      console.warn(
+        `[ss.ge prefill] დამატებითი ინფორმაცია toggle "${label}" not enabled`
+      );
+    }
+  }
+}
+
+/**
+ * Step 5 "მდგომარეობა" — chips are `<div><p>გარემონტებული</p></div>` in the
+ * main content column (not the left wizard sidebar).
+ */
+async function ssgePrefillCondition(
+  page: Page,
+  chipText: string
+): Promise<boolean> {
+  if (!chipText?.trim()) return false;
+
+  const clicked = await page.evaluate((chipText) => {
+    const norm = (s: string) =>
+      s.replace(/\s*\*\s*$/, "").replace(/\s+/g, " ").trim();
+    const want = norm(chipText);
+    const isVisible = (el: HTMLElement) => {
+      const r = el.getBoundingClientRect();
+      if (r.width < 8 || r.height < 8) return false;
+      const st = getComputedStyle(el);
+      return (
+        el.offsetParent !== null &&
+        st.opacity !== "0" &&
+        st.visibility !== "hidden" &&
+        st.pointerEvents !== "none"
+      );
+    };
+
+    const clickChipDiv = (chipDiv: HTMLElement): boolean => {
+      if (!isVisible(chipDiv)) return false;
+      chipDiv.scrollIntoView({ block: "center", inline: "nearest" });
+      chipDiv.click();
+      return true;
+    };
+
+    const isConditionLabel = (el: Element) => {
+      const t = norm(el.textContent || "");
+      return t === "მდგომარეობა" || t.startsWith("მდგომარეობა");
+    };
+
+    const labelEls: Element[] = [];
+    for (const el of document.querySelectorAll("span, p, label")) {
+      if (!isConditionLabel(el)) continue;
+      const rect = (el as HTMLElement).getBoundingClientRect();
+      if (rect.left < 200) continue;
+      if (!isVisible(el as HTMLElement)) continue;
+      labelEls.push(el);
+    }
+
+    for (const labelEl of labelEls) {
+      let node: Element | null = labelEl;
+      for (let depth = 0; depth < 12 && node; depth++) {
+        for (const p of node.querySelectorAll("p")) {
+          if (norm(p.textContent || "") !== want) continue;
+          const chipDiv = p.parentElement as HTMLElement | null;
+          if (chipDiv?.tagName === "DIV" && clickChipDiv(chipDiv)) return true;
+        }
+        node = node.parentElement;
+      }
+    }
+
+    for (const p of document.querySelectorAll("p")) {
+      if (norm(p.textContent || "") !== want) continue;
+      const chipDiv = p.parentElement as HTMLElement | null;
+      if (!chipDiv || chipDiv.tagName !== "DIV") continue;
+      if ((chipDiv as HTMLElement).getBoundingClientRect().left < 200) continue;
+      if (clickChipDiv(chipDiv)) return true;
+    }
+    return false;
+  }, chipText);
+
+  if (clicked) {
+    await prefillPause(page, 250);
+    return true;
+  }
+
+  try {
+    const escaped = chipText.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+    const chip = page
+      .locator("div")
+      .filter({
+        has: page.locator("p", { hasText: new RegExp(`^\\s*${escaped}\\s*$`) }),
+      })
+      .filter({ has: page.locator("p") })
+      .first();
+    await chip.scrollIntoViewIfNeeded({ timeout: 8000 });
+    await chip.click({ timeout: 8000, force: true });
+    await prefillPause(page, 250);
+    return true;
+  } catch {
+    return false;
+  }
 }
 
 /**
@@ -278,9 +575,15 @@ async function ssgeClickNumberNear(
 
       // Find the label <span> element (NOT div — div wrapper comes first
       // in document order and causes the parent-walk to overshoot).
+      const labelMatches = (el: Element) => {
+        const t = norm(el.textContent || "");
+        const want = norm(sectionLabel);
+        return t === want || t.startsWith(want);
+      };
+
       let labelSpan: Element | null = null;
-      for (const el of document.querySelectorAll("span")) {
-        if (norm(el.textContent || "") !== norm(sectionLabel)) continue;
+      for (const el of document.querySelectorAll("span, p")) {
+        if (!labelMatches(el)) continue;
         if (!isVisible(el as HTMLElement)) continue;
         labelSpan = el;
         break;
@@ -330,89 +633,646 @@ async function ssgeClickNumberNear(
   return clicked;
 }
 
-/**
- * Interact with a react-select dropdown on ss.ge.
- * Finds the component by the hidden `<input name="...">` next to it,
- * clicks the control to open the menu, types to filter, then selects
- * the matching option.
- */
-async function ssgeSelectReactOption(
+/** Click an exact chip label (e.g. "8+") in a numeric chip row near a section label. */
+async function ssgeClickExactChipNear(
   page: Page,
-  hiddenInputName: string,
-  value: string
+  chipText: string,
+  sectionLabel: string
 ): Promise<boolean> {
-  if (!value?.trim()) return false;
+  const target = chipText.trim();
+  if (!target) return false;
 
-  const control = page.locator(
-    `input[name="${hiddenInputName}"]`
-  ).locator("xpath=ancestor::div[.//div[contains(@class,'select__control')]]").first()
-    .locator("div[class*='select__control']").first();
+  const clicked = await page.evaluate(
+    ({ target, sectionLabel }) => {
+      const norm = (s: string) =>
+        s.replace(/\s*\*\s*$/, "").replace(/\s+/g, " ").trim();
+      const isVisible = (el: HTMLElement) =>
+        el.offsetParent !== null && getComputedStyle(el).opacity !== "0";
 
-  const hasControl = await control
-    .waitFor({ state: "visible", timeout: 8000 })
-    .then(() => true)
-    .catch(() => false);
+      function findFieldWrapper(labelSpan: Element): Element | null {
+        const labelDiv = labelSpan.parentElement;
+        if (!labelDiv) return null;
+        let sibling = labelDiv.nextElementSibling;
+        for (let i = 0; i < 4 && sibling; i++) {
+          if (sibling.querySelector("p")) return labelDiv.parentElement;
+          sibling = sibling.nextElementSibling;
+        }
+        return labelDiv.parentElement;
+      }
 
-  if (!hasControl) {
-    console.warn(
-      `[ss.ge prefill] react-select control not found for "${hiddenInputName}"`
-    );
-    return false;
-  }
+      function clickExactIn(container: Element): boolean {
+        for (const p of container.querySelectorAll("p")) {
+          if ((p.textContent || "").trim() !== target) continue;
+          const chipDiv = p.parentElement as HTMLElement | null;
+          if (chipDiv && isVisible(chipDiv)) {
+            chipDiv.click();
+            return true;
+          }
+        }
+        return false;
+      }
 
-  // Click the control to open the dropdown menu
-  await control.click({ timeout: 5000 });
-  await prefillPause(page, 400);
+      const want = norm(sectionLabel);
+      for (const el of document.querySelectorAll("span, p")) {
+        const t = norm(el.textContent || "");
+        if (t !== want && !t.startsWith(want)) continue;
+        if (!isVisible(el as HTMLElement)) continue;
+        const root =
+          sectionLabel === "ოთახები"
+            ? document.getElementById("room-input") || findFieldWrapper(el)
+            : findFieldWrapper(el);
+        if (!root) continue;
+        if (clickExactIn(root)) return true;
+      }
+      return false;
+    },
+    { target, sectionLabel }
+  );
 
-  // Type into the react-select search input to filter options
-  const searchInput = page.locator(
-    "input[class*='select__input'], div[class*='select__input'] input"
-  ).last();
-  const hasSearch = await searchInput
-    .waitFor({ state: "attached", timeout: 3000 })
-    .then(() => true)
-    .catch(() => false);
-  if (hasSearch) {
-    await searchInput.fill(value, { timeout: 3000 }).catch(() => null);
-    await prefillPause(page, 600);
-  }
+  if (clicked) await prefillPause(page, 250);
+  return clicked;
+}
 
-  // Wait for the menu to appear and click the matching option
-  const optionClicked = await page.evaluate(
-    ({ value }) => {
-      const norm = (s: string) => s.replace(/\s+/g, " ").trim();
-      const target = norm(value);
+/** Fill the overflow number input shown after clicking "8+" (ოთახები) etc. */
+async function ssgeFillNumericOverflowInput(
+  page: Page,
+  value: string,
+  sectionLabel: string
+): Promise<boolean> {
+  const val = digitsOnly(value);
+  if (!val) return false;
 
-      const options = document.querySelectorAll(
-        "div[class*='select__option']"
-      );
-      for (const opt of options) {
-        const text = norm(opt.textContent || "");
-        if (text === target || text.includes(target) || target.includes(text)) {
-          (opt as HTMLElement).click();
-          return true;
+  const filled = await page.evaluate(
+    ({ val, sectionLabel }) => {
+      const norm = (s: string) =>
+        s.replace(/\s*\*\s*$/, "").replace(/\s+/g, " ").trim();
+      const isVisible = (el: HTMLElement) =>
+        el.offsetParent !== null && getComputedStyle(el).opacity !== "0";
+      const setter = Object.getOwnPropertyDescriptor(
+        window.HTMLInputElement.prototype,
+        "value"
+      )?.set;
+      if (!setter) return false;
+
+      function fillInput(input: HTMLInputElement): boolean {
+        if (!isVisible(input)) return false;
+        const type = (input.type || "text").toLowerCase();
+        if (type === "hidden" || type === "checkbox" || type === "radio") {
+          return false;
+        }
+        input.focus();
+        setter!.call(input, val);
+        input.dispatchEvent(
+          new InputEvent("input", {
+            bubbles: true,
+            cancelable: true,
+            inputType: "insertText",
+            data: val,
+          })
+        );
+        input.dispatchEvent(new Event("change", { bubbles: true }));
+        return true;
+      }
+
+      function findFieldWrapper(labelSpan: Element): Element | null {
+        const labelDiv = labelSpan.parentElement;
+        if (!labelDiv) return null;
+        return labelDiv.parentElement;
+      }
+
+      const want = norm(sectionLabel);
+      const roots: Element[] = [];
+      if (sectionLabel === "ოთახები") {
+        const roomInput = document.getElementById("room-input");
+        if (roomInput) roots.push(roomInput);
+      }
+      if (sectionLabel === "საძინებელი") {
+        const bedInput = document.querySelector(
+          'input[name="bedrooms"]'
+        ) as HTMLInputElement | null;
+        if (bedInput && fillInput(bedInput)) return true;
+      }
+      for (const el of document.querySelectorAll("span, p")) {
+        const t = norm(el.textContent || "");
+        if (t !== want && !t.startsWith(want)) continue;
+        const root = findFieldWrapper(el);
+        if (root && !roots.includes(root)) roots.push(root);
+      }
+
+      for (const root of roots) {
+        const inputs = [
+          ...root.querySelectorAll<HTMLInputElement>("input"),
+        ];
+        for (const inp of inputs) {
+          if (fillInput(inp)) return true;
         }
       }
       return false;
     },
-    { value }
+    { val, sectionLabel }
   );
 
-  if (optionClicked) {
-    await prefillPause(page, 300);
+  if (filled) {
+    await prefillPause(page, 200);
     return true;
   }
 
-  // Fallback: press ArrowDown + Enter if text match failed
-  await page.keyboard.press("ArrowDown").catch(() => null);
-  await prefillPause(page, 150);
-  await page.keyboard.press("Enter").catch(() => null);
-  await prefillPause(page, 300);
+  if (sectionLabel === "საძინებელი") {
+    const bedInput = page.locator('input[name="bedrooms"]').first();
+    if ((await bedInput.count()) > 0) {
+      await bedInput.scrollIntoViewIfNeeded().catch(() => null);
+      await bedInput.click({ timeout: 5000 }).catch(() => null);
+      await bedInput.fill(val, { timeout: 5000 });
+      await prefillPause(page, 200);
+      return true;
+    }
+  }
+
+  const root =
+    sectionLabel === "ოთახები"
+      ? page.locator("#room-input")
+      : page
+          .locator("span")
+          .filter({ hasText: new RegExp(`^${escapeRegExp(sectionLabel)}`, "i") })
+          .first()
+          .locator("xpath=ancestor::div[.//p][1]");
+
+  const input = root.locator('input:not([type="hidden"])').first();
+  if ((await input.count()) === 0) return false;
+  await input.scrollIntoViewIfNeeded().catch(() => null);
+  await input.fill(val, { timeout: 5000 });
+  await prefillPause(page, 200);
+  return true;
+}
+
+/**
+ * Numeric chip row: 1…N, or N+ with a text input (ოთახები uses 8+).
+ */
+async function ssgePrefillNumericChipField(
+  page: Page,
+  value: string,
+  sectionLabel: string,
+  maxChip: number
+): Promise<boolean> {
+  const digits = digitsOnly(value);
+  if (!digits) return false;
+  const num = parseInt(digits, 10);
+  if (!Number.isFinite(num) || num < 1) return false;
+
+  if (num <= maxChip) {
+    const ok = await ssgeClickNumberNear(page, digits, sectionLabel);
+    if (!ok) {
+      console.warn(
+        `[ss.ge prefill] ${sectionLabel} chip "${digits}" not selected`
+      );
+    }
+    return ok;
+  }
+
+  const overflowChip = `${maxChip}+`;
+  console.log(
+    `[ss.ge prefill] ${sectionLabel} ${num} > ${maxChip}: click "${overflowChip}" and type ${digits}`
+  );
+
+  const plusOk = await ssgeClickExactChipNear(page, overflowChip, sectionLabel);
+  if (!plusOk) {
+    if (sectionLabel === "საძინებელი") {
+      console.log(
+        `[ss.ge prefill] ${sectionLabel}: "${overflowChip}" chip not found — filling input[name="bedrooms"] directly`
+      );
+    } else {
+      console.warn(
+        `[ss.ge prefill] ${sectionLabel} overflow chip "${overflowChip}" not clicked`
+      );
+      return false;
+    }
+  }
+
+  await page
+    .waitForFunction(
+      ({ sectionLabel }) => {
+        if (sectionLabel === "საძინებელი") {
+          const bed = document.querySelector(
+            'input[name="bedrooms"]'
+          ) as HTMLElement | null;
+          if (bed?.offsetParent !== null) return true;
+        }
+        const root =
+          sectionLabel === "ოთახები"
+            ? document.getElementById("room-input")
+            : null;
+        const searchRoot = root || document.body;
+        for (const inp of searchRoot.querySelectorAll("input")) {
+          const type = (inp.getAttribute("type") || "text").toLowerCase();
+          if (type === "hidden" || type === "checkbox") continue;
+          const el = inp as HTMLElement;
+          if (el.offsetParent !== null) return true;
+        }
+        return false;
+      },
+      { sectionLabel },
+      { timeout: 8000 }
+    )
+    .catch(() => null);
+
+  await prefillPause(page, 350);
+
+  const inputOk = await ssgeFillNumericOverflowInput(
+    page,
+    digits,
+    sectionLabel
+  );
+  if (!inputOk) {
+    console.warn(
+      `[ss.ge prefill] ${sectionLabel} overflow input "${digits}" not filled`
+    );
+  }
+  return inputOk;
+}
+
+function escapeRegExp(s: string): string {
+  return s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
+async function readReactSelectValue(
+  control: ReturnType<Page["locator"]>
+): Promise<string> {
+  const single = control.locator("[class*='select__single-value']").first();
+  if ((await single.count()) > 0) {
+    return (await single.textContent())?.trim() || "";
+  }
+  return (await control.textContent())?.trim() || "";
+}
+
+function ssgeStreetKey(s: string): string {
+  return (s || "")
+    .toLowerCase()
+    .replace(/\s+/g, "")
+    .replace(/\./g, "")
+    .replace(/ქუჩა$/u, "ქ")
+    .replace(/შესახვევი$/u, "შეს")
+    .replace(/შეს$/u, "შეს")
+    .trim();
+}
+
+function ssgeStreetScore(want: string, option: string): number {
+  const a = ssgeStreetKey(want);
+  const b = ssgeStreetKey(option);
+  if (!a || !b) return 0;
+  if (a === b) return 1000;
+  if (b.startsWith(a) || a.startsWith(b)) return 900;
+  if (b.includes(a) || a.includes(b)) return Math.min(a.length, b.length) * 8;
+  let prefix = 0;
+  const max = Math.min(a.length, b.length);
+  while (prefix < max && a[prefix] === b[prefix]) prefix++;
+  return prefix * 15;
+}
+
+function ssgeStreetQueries(street: string): string[] {
+  const s = (street || "").replace(/\s+/g, " ").trim();
+  if (!s) return [];
+
+  const queries: string[] = [s];
+
+  const withoutPrefix = s.replace(/^[ა-ჰ]{1,2}\.\s*/iu, "").trim();
+  if (withoutPrefix && withoutPrefix !== s) {
+    queries.push(withoutPrefix);
+    const wpBase = withoutPrefix
+      .replace(/\s+(ქ\.?|ქუჩა|შეს\.?|შესახვევი)\s*$/iu, "")
+      .trim();
+    if (wpBase && wpBase !== withoutPrefix) {
+      queries.push(`${wpBase} ქ.`);
+      queries.push(wpBase);
+    }
+  }
+
+  const parenCleaned = s.replace(/\s*\([^)]*\)\s*/g, " ").replace(/\s+/g, " ").trim();
+  if (parenCleaned && parenCleaned !== s) {
+    queries.push(parenCleaned);
+  }
+
+  queries.push(s.replace(/\s*შეს\.?/iu, " შეს. ").replace(/\s+/g, " ").trim());
+  queries.push(s.replace(/\./g, " ").replace(/\s+/g, " ").trim());
+
+  const base = s.replace(/\s+(ქ\.?|ქუჩა|შეს\.?|შესახვევი)\s*$/iu, "").trim();
+  if (base) {
+    queries.push(base, `${base} ქ`, `${base} ქ.`, `${base} ქუჩა`,
+      `${base} შეს.`, `${base} შესახვევი`);
+  }
+
+  return [...new Set(queries)].filter(Boolean);
+}
+
+async function ssgeLocateReactSelectInput(
+  page: Page,
+  opts: { hiddenInputName?: string; visibleIndex: number }
+): Promise<ReturnType<Page["locator"]> | null> {
+  const { hiddenInputName, visibleIndex } = opts;
+
+  if (hiddenInputName) {
+    const hidden = page.locator(`input[name="${hiddenInputName}"]`);
+    if ((await hidden.count()) > 0) {
+      const root = hidden.locator(
+        'xpath=ancestor::*[.//div[contains(@class,"select__control")]][1]'
+      );
+      const inp = root.locator('input[id^="react-select-"][id$="-input"]');
+      if ((await inp.count()) > 0) return inp.first();
+    }
+  }
+
+  const inputs = page.locator('input[id^="react-select-"][id$="-input"]');
+  const n = await inputs.count();
+  let seen = 0;
+  for (let i = 0; i < n; i++) {
+    const loc = inputs.nth(i);
+    if (!(await loc.isVisible().catch(() => false))) continue;
+    if (seen === visibleIndex) return loc;
+    seen++;
+  }
+  return null;
+}
+
+function ssgeCompactLocationText(s: string): string {
+  return s
+    .replace(/\s+/g, " ")
+    .trim()
+    .toLowerCase()
+    .replace(/\./g, "")
+    .replace(/\s+/g, "");
+}
+
+function ssgeOptionScore(want: string, option: string): number {
+  const a = ssgeCompactLocationText(want);
+  const b = ssgeCompactLocationText(option);
+  if (!a || !b) return 0;
+  if (a === b) return 1000;
+  const bCity = b.split(",")[0]?.trim() || b;
+  if (bCity === a || b.startsWith(a)) return 950;
+  if (b.includes(a) || a.includes(bCity)) return 850;
+  let pref = 0;
+  const min = Math.min(a.length, b.length);
+  while (pref < min && a[pref] === b[pref]) pref++;
+  return pref * 25;
+}
+
+function ssgeSelectionMatches(want: string, selected: string): boolean {
+  const w = want.replace(/\s+/g, " ").trim();
+  const s = selected.replace(/\s+/g, " ").trim();
+  if (!w || !s) return false;
+  if (s === w || s.startsWith(w) || s.includes(w)) return true;
+  const wCity = w.split(",")[0]?.trim() || w;
+  const sCity = s.split(",")[0]?.trim() || s;
+  return sCity === wCity || s.includes(wCity);
+}
+
+/**
+ * Fill a react-select on ss.ge (city / street).
+ * Uses real keyboard input + option click — never ArrowDown+Enter (that picks თბილისი).
+ */
+async function ssgeSelectReactOption(
+  page: Page,
+  hiddenInputName: string,
+  value: string,
+  visibleIndex = hiddenInputName === "choose-street" ? 1 : 0
+): Promise<boolean> {
+  const target = value?.trim();
+  if (!target) return false;
+
+  const input = await ssgeLocateReactSelectInput(page, {
+    hiddenInputName,
+    visibleIndex,
+  });
+  if (!input) {
+    console.warn(
+      `[ss.ge prefill] react-select input not found (name=${hiddenInputName}, idx=${visibleIndex})`
+    );
+    return false;
+  }
+
+  const control = input.locator(
+    'xpath=ancestor::*[contains(@class,"select__control")][1]'
+  );
+
+  await control.scrollIntoViewIfNeeded().catch(() => null);
+
+  const clear = control.locator('[class*="select__clear-indicator"]');
+  if ((await clear.count()) > 0 && (await clear.isVisible().catch(() => false))) {
+    await clear.click({ timeout: 3000 }).catch(() => null);
+    await prefillPause(page, 100);
+  }
+
+  await control.click({ timeout: 8000 });
+  await input.click({ timeout: 5000 });
+  await input.fill("");
+  await input.pressSequentially(target, { delay: 18 });
+  await prefillPause(page, 400);
+
+  const listboxId = await input.getAttribute("aria-controls");
+  const options = listboxId
+    ? page.locator(`#${listboxId} [class*="select__option"]`)
+    : page.locator('[class*="select__menu"] [class*="select__option"]');
+
+  await options
+    .first()
+    .waitFor({ state: "visible", timeout: 4000 })
+    .catch(() => null);
+
+  const optionCount = await options.count();
+  if (optionCount === 0) {
+    const roleOpt = page.getByRole("option").filter({
+      hasText: new RegExp(escapeRegExp(target.split(",")[0].trim()), "iu"),
+    });
+    if ((await roleOpt.count()) > 0) {
+      await roleOpt.first().click({ timeout: 5000 });
+    } else {
+      console.warn(
+        `[ss.ge prefill] react-select "${hiddenInputName}": no options for "${target}"`
+      );
+      await page.keyboard.press("Escape").catch(() => null);
+      return false;
+    }
+  } else {
+    let bestIdx = 0;
+    let bestScore = -1;
+    for (let i = 0; i < optionCount; i++) {
+      const text = (await options.nth(i).textContent())?.trim() || "";
+      const score = ssgeOptionScore(target, text);
+      if (score > bestScore) {
+        bestScore = score;
+        bestIdx = i;
+      }
+    }
+    const minScore = hiddenInputName === "choose-street" ? 120 : 80;
+    if (bestScore < minScore) {
+      console.warn(
+        `[ss.ge prefill] react-select "${hiddenInputName}": weak match for "${target}" (score ${bestScore})`
+      );
+      await page.keyboard.press("Escape").catch(() => null);
+      return false;
+    }
+    await options.nth(bestIdx).click({ timeout: 5000 });
+  }
+
+  await prefillPause(page, 200);
+
+  const selected = await readReactSelectValue(control);
+  const ok = ssgeSelectionMatches(target, selected);
+  if (!ok) {
+    console.warn(
+      `[ss.ge prefill] react-select "${hiddenInputName}": wanted "${target}", got "${selected}"`
+    );
+  }
+  return ok;
+}
+
+/** Step 3 — city then street (street loads async after city). */
+async function ssgeFillLocationStep(
+  page: Page,
+  listing: Pick<MyhomeListing, "city" | "street" | "streetNumber">
+): Promise<void> {
+  const cityRaw = listing.city?.trim() || "";
+  const cityQuery = cityForPrefill(cityRaw);
+  const streetRaw = (listing.street || "").trim();
 
   console.log(
-    `[ss.ge prefill] react-select "${hiddenInputName}" → "${value}" (keyboard fallback)`
+    `[ss.ge prefill] location parsed: city="${cityRaw}" → prefill="${cityQuery}", street="${streetRaw}"`
   );
-  return true;
+
+  await page
+    .locator('input[id^="react-select-"][id$="-input"]')
+    .first()
+    .waitFor({ state: "visible", timeout: 20000 })
+    .catch(() => null);
+  await prefillPause(page, 200);
+
+  if (cityQuery) {
+    const cityOk = await ssgeSelectReactOption(page, "choose-city", cityQuery, 0);
+    if (!cityOk) {
+      console.warn(`[ss.ge prefill] city "${cityQuery}" was not selected`);
+    }
+    await page
+      .waitForFunction(
+        () => {
+          const inputs = [
+            ...document.querySelectorAll(
+              'input[id^="react-select-"][id$="-input"]'
+            ),
+          ] as HTMLInputElement[];
+          const visible = inputs.filter(
+            (el) => el.offsetParent !== null && !el.disabled
+          );
+          return visible.length >= 2;
+        },
+        { timeout: 10000 }
+      )
+      .catch(() => null);
+    await prefillPause(page, 400);
+  }
+
+  if (streetRaw) {
+    const streetQueries = ssgeStreetQueries(streetRaw);
+    let streetOk = false;
+    for (const q of streetQueries) {
+      if (await ssgeSelectReactOption(page, "choose-street", q, 1)) {
+        streetOk = true;
+        break;
+      }
+    }
+    if (!streetOk) {
+      console.warn(
+        `[ss.ge prefill] street "${streetRaw}" was not selected (tried ${streetQueries.length} queries)`
+      );
+    }
+    await prefillPause(page, 150);
+  }
+
+  const streetNumber = listing.streetNumber?.trim();
+  if (streetNumber) {
+    await ssgeSetInputByPlaceholder(page, "სახლის", streetNumber).catch(
+      () => null
+    );
+    await ssgeSetInputByPlaceholder(page, "ნომერი", streetNumber).catch(
+      () => null
+    );
+  }
+}
+
+/** Fill input by label span/text (ss.ge step 4 — სახლის ფართი, ეზოს ფართი). */
+async function ssgeSetInputByLabel(
+  page: Page,
+  label: string,
+  value: string
+): Promise<boolean> {
+  if (!value?.trim()) return false;
+  return page.evaluate(
+    ({ label, value }) => {
+      function norm(s: string) {
+        return (s || "").replace(/\s*\*\s*$/, "").trim().replace(/\s+/g, " ");
+      }
+      function labelMatch(text: string, want: string) {
+        const n = norm(text);
+        const w = norm(want);
+        return n === w || n.startsWith(`${w} `) || n.replace(/\*+$/, "").trim() === w;
+      }
+      const isVisible = (el: HTMLElement) =>
+        el.offsetParent !== null && getComputedStyle(el).opacity !== "0";
+      const setter = Object.getOwnPropertyDescriptor(
+        window.HTMLInputElement.prototype,
+        "value"
+      )?.set;
+      if (!setter) return false;
+
+      function fill(input: HTMLInputElement): boolean {
+        if (!isVisible(input)) return false;
+        const type = (input.getAttribute("type") || "text").toLowerCase();
+        if (type === "hidden" || type === "checkbox" || type === "radio") {
+          return false;
+        }
+        input.focus();
+        setter!.call(input, value);
+        input.dispatchEvent(
+          new InputEvent("input", {
+            bubbles: true,
+            cancelable: true,
+            inputType: "insertText",
+            data: value,
+          })
+        );
+        input.dispatchEvent(new Event("change", { bubbles: true }));
+        return true;
+      }
+
+      for (const lbl of document.querySelectorAll("label")) {
+        for (const span of lbl.querySelectorAll("span")) {
+          if (!labelMatch(span.textContent || "", label)) continue;
+          const forAttr = lbl.getAttribute("for");
+          const input = forAttr
+            ? (document.getElementById(forAttr) as HTMLInputElement | null)
+            : (lbl.querySelector("input") as HTMLInputElement | null);
+          if (input && fill(input)) return true;
+        }
+      }
+
+      for (const el of document.querySelectorAll("span, p")) {
+        if (!labelMatch(el.textContent || "", label)) continue;
+        if ((el.textContent || "").length > 40) continue;
+        let node: Element | null = el.parentElement;
+        for (let depth = 0; depth < 10 && node; depth++) {
+          const inputs = node.querySelectorAll("input");
+          for (const inp of inputs) {
+            if (fill(inp as HTMLInputElement)) return true;
+          }
+          node = node.parentElement;
+        }
+      }
+
+      for (const inp of document.querySelectorAll<HTMLInputElement>("input")) {
+        if ((inp.placeholder || "").includes(label) && fill(inp)) return true;
+      }
+      return false;
+    },
+    { label, value: value.trim() }
+  );
 }
 
 /** Fill a visible input found by placeholder substring. */
@@ -493,11 +1353,10 @@ function isUsdCurrency(currency: string | undefined | null): boolean {
 }
 
 /**
- * Fill price on ss.ge step 7.
- * DOM: #create-app-price contains two <label> boxes side by side.
- *   Left  = GEL (child div text "₾")
- *   Right = USD (child div text "$")
- * Must CLICK the target label first so it gets class "active", then fill its input.
+ * Fill price on ss.ge step 7 (#create-app-price).
+ * Two <label> boxes: GEL (₾) and USD ($). Only the active label has
+ * <input type="number">; the inactive one shows a static <div> value.
+ * Must click the $ label first to activate it, then fill the input.
  */
 async function ssgeFillPrice(
   page: Page,
@@ -507,10 +1366,10 @@ async function ssgeFillPrice(
   const priceDigits = price.replace(/[^\d.]/g, "");
   if (!priceDigits) return false;
 
-  const wantUsd = isUsdCurrency(currency);
+  const wantUsd = isUsdCurrency(currency ?? "USD");
+  const targetSym = wantUsd ? "$" : "₾";
 
-  // Wait for price section (only present when logged in on step 7)
-  const section = page.locator("#create-app-price");
+  const section = page.locator("#create-app-price").first();
   const hasSection = await section
     .waitFor({ state: "visible", timeout: 12000 })
     .then(() => true)
@@ -521,94 +1380,80 @@ async function ssgeFillPrice(
     return false;
   }
 
-  // Find which label index is GEL vs USD by checking direct currency symbol div
-  const labelIndex = await section.evaluate((wantUsd) => {
-    const root = document.getElementById("create-app-price");
-    if (!root) return -1;
-
-    const labels = [...root.querySelectorAll("label")].filter((lbl) =>
-      lbl.querySelector('input[type="number"]')
-    );
-
-    if (labels.length < 2) return labels.length === 1 ? 0 : -1;
-
+  // Match by currency symbol — do NOT filter labels that already have an input
+  // (only the active GEL box has one until we click USD).
+  const labelIndex = await section.evaluate((root, currencySym) => {
+    const labels = [...root.querySelectorAll("label")];
     const symOf = (lbl: Element): string | null => {
-      // Symbol lives in a leaf div (not a wrapper that also contains the input value)
       for (const div of lbl.querySelectorAll("div")) {
-        if (div.children.length > 0) continue;
         const t = (div.textContent || "").trim();
         if (t === "₾" || t === "$") return t;
       }
       return null;
     };
 
-    let gelIdx = -1;
-    let usdIdx = -1;
-    labels.forEach((lbl, i) => {
-      const sym = symOf(lbl);
-      if (sym === "₾") gelIdx = i;
-      if (sym === "$") usdIdx = i;
-    });
-
-    if (gelIdx >= 0 && usdIdx >= 0) {
-      return wantUsd ? usdIdx : gelIdx;
+    for (let i = 0; i < labels.length; i++) {
+      if (symOf(labels[i]) === currencySym) return i;
     }
 
-    // Fallback: left = GEL, right = USD (by screen position)
-    const sorted = labels
-      .map((lbl, i) => ({ i, left: lbl.getBoundingClientRect().left }))
-      .sort((a, b) => a.left - b.left);
-    return wantUsd ? sorted[sorted.length - 1].i : sorted[0].i;
-  }, wantUsd);
+    if (labels.length >= 2) {
+      const sorted = labels
+        .map((lbl, i) => ({ i, left: lbl.getBoundingClientRect().left }))
+        .sort((a, b) => a.left - b.left);
+      return currencySym === "$"
+        ? sorted[sorted.length - 1].i
+        : sorted[0].i;
+    }
+    return labels.length === 1 ? 0 : -1;
+  }, targetSym);
 
   if (labelIndex < 0) {
-    console.warn("[ss.ge prefill] price label index not found");
+    console.warn(`[ss.ge prefill] price label for "${targetSym}" not found`);
     return false;
   }
 
-  const priceBoxes = section.locator('label:has(input[type="number"])');
-  const boxCount = await priceBoxes.count();
-  if (labelIndex >= boxCount) {
-    console.warn(`[ss.ge prefill] price box index ${labelIndex} out of range (${boxCount})`);
-    return false;
-  }
-
-  const targetLabel = priceBoxes.nth(labelIndex);
+  const targetLabel = section.locator("label").nth(labelIndex);
   await targetLabel.scrollIntoViewIfNeeded().catch(() => null);
-  await targetLabel.click({ timeout: 5000 });
-  await prefillPause(page, 300);
+  await targetLabel.click({ timeout: 8000, force: true });
+  await prefillPause(page, 350);
 
-  // Wait until this box is the active currency (blue border / active class)
   await page
     .waitForFunction(
       (idx) => {
         const root = document.getElementById("create-app-price");
         if (!root) return false;
-        const boxes = [...root.querySelectorAll("label")].filter((lbl) =>
-          lbl.querySelector('input[type="number"]')
-        );
-        const box = boxes[idx] as HTMLElement | undefined;
-        return !!box?.classList.contains("active");
+        const lbl = root.querySelectorAll("label")[idx] as HTMLElement | undefined;
+        if (!lbl?.classList.contains("active")) return false;
+        const inp = lbl.querySelector('input[type="number"]');
+        return !!inp && (inp as HTMLElement).offsetParent !== null;
       },
       labelIndex,
-      { timeout: 5000 }
+      { timeout: 10000 }
     )
     .catch(() => null);
 
-  // "გამოჩნდეს საიტზე" under this box — sets which currency is shown on the listing
-  const showOnSite = targetLabel.getByRole("button", { name: "გამოჩნდეს საიტზე" });
+  const showOnSite = targetLabel.getByText("გამოჩნდეს საიტზე");
   if ((await showOnSite.count()) > 0) {
     await showOnSite.first().click({ timeout: 3000 }).catch(() => null);
     await prefillPause(page, 200);
   }
 
   const input = targetLabel.locator('input[type="number"]');
-  await input.waitFor({ state: "visible", timeout: 5000 }).catch(() => null);
+  const hasInput = await input
+    .waitFor({ state: "visible", timeout: 10000 })
+    .then(() => true)
+    .catch(() => false);
+
+  if (!hasInput) {
+    console.warn(
+      `[ss.ge prefill] price input not visible in ${wantUsd ? "USD" : "GEL"} box`
+    );
+    return false;
+  }
+
   await input.click({ timeout: 3000 }).catch(() => null);
-  await input.fill("", { timeout: 2000 }).catch(() => null);
   await input.fill(priceDigits, { timeout: 5000 });
 
-  // React controlled inputs sometimes ignore fill — set value + events as fallback
   await input.evaluate((el, v) => {
     const inp = el as HTMLInputElement;
     const setter = Object.getOwnPropertyDescriptor(
@@ -623,10 +1468,17 @@ async function ssgeFillPrice(
 
   await prefillPause(page, 200);
 
+  const filled = (await input.inputValue().catch(() => "")).replace(/[^\d.]/g, "");
+  const ok =
+    filled === priceDigits ||
+    filled.replace(/\.0+$/, "") === priceDigits.replace(/\.0+$/, "");
+
   console.log(
-    `[ss.ge prefill] price ${priceDigits} in ${wantUsd ? "USD" : "GEL"} box (index ${labelIndex})`
+    `[ss.ge prefill] price ${priceDigits} in ${wantUsd ? "USD ($)" : "GEL (₾)"} — ${
+      ok ? "ok" : `verify failed (got "${filled}")`
+    }`
   );
-  return true;
+  return ok || filled.length > 0;
 }
 
 /** Navigate to a wizard step by clicking its sidebar item. */
@@ -665,8 +1517,15 @@ async function goToSsgeStep(page: Page, stepName: string): Promise<void> {
 export async function createSsgePost(
   credentials: SsgeCredentials,
   listing: MyhomeListing,
-  _options: { listingId: string; userId: string }
+  options: { listingId: string; userId: string; sourceUrl?: string | null }
 ): Promise<{ success: boolean; postUrl?: string; error?: string }> {
+  listing = normalizeListingForSsgePrefill(listing, {
+    sourceUrl: options.sourceUrl,
+  });
+  if (listing.rawData) {
+    applySsgeBalconyDefaultsForSsgePrefill(listing.rawData);
+  }
+
   const reuseSession =
     postSession?.email === credentials.email &&
     postSession.browser.isConnected();
@@ -749,8 +1608,8 @@ export async function createSsgePost(
       try {
         const { paths, cleanup } = await resolveImagesForPlaywright(
           listing.images,
-          _options.listingId,
-          _options.userId
+          options.listingId,
+          options.userId
         );
         cleanups.push(cleanup);
         if (paths.length) {
@@ -768,16 +1627,7 @@ export async function createSsgePost(
     // ---------------------------------------------------------------
     console.log("[ss.ge prefill] Step 3: location");
     await goToSsgeStep(page, "მისამართი");
-
-    if (listing.city) {
-      await ssgeSelectReactOption(page, "choose-city", listing.city);
-      await prefillPause(page, 600);
-    }
-
-    if (listing.street) {
-      await ssgeSelectReactOption(page, "choose-street", listing.street);
-      await prefillPause(page, 400);
-    }
+    await ssgeFillLocationStep(page, listing);
 
     // ---------------------------------------------------------------
     // WIZARD STEP 4 — დეტალური ინფორმაცია
@@ -785,52 +1635,69 @@ export async function createSsgePost(
     console.log("[ss.ge prefill] Step 4: detailed info");
     await goToSsgeStep(page, "დეტალური ინფორმაცია");
 
-    // Rooms (ოთახები)
-    const roomsDigit = digitsOnly(listing.rooms);
-    if (roomsDigit) {
-      await ssgeClickNumberNear(page, roomsDigit, "ოთახები");
+    // Rooms (ოთახები) — chips 1–8, then "8+" reveals a text input for 9+
+    if (listing.rooms?.trim()) {
+      await ssgePrefillNumericChipField(page, listing.rooms, "ოთახები", 8);
     }
 
-    // Bedrooms section appears DYNAMICALLY after rooms is selected.
-    // Wait for React to render it before trying to click.
-    const bedroomsDigit = digitsOnly(listing.bedrooms);
-    if (bedroomsDigit) {
-      // Poll until "საძინებელი" label appears in the DOM (max 5s)
-      await page.evaluate(() =>
-        new Promise<void>((resolve) => {
-          let attempts = 0;
-          const poll = () => {
-            for (const el of document.querySelectorAll("span")) {
-              if ((el.textContent || "").includes("საძინებელი")) {
-                resolve();
-                return;
-              }
+    // Bedrooms — chips 1–9, then "9+" or input[name="bedrooms"] for 10+
+    if (listing.bedrooms?.trim()) {
+      await page
+        .waitForFunction(
+          () => {
+            if (document.querySelector('input[name="bedrooms"]')) return true;
+            for (const el of document.querySelectorAll("span, p")) {
+              if ((el.textContent || "").includes("საძინებელი")) return true;
             }
-            if (++attempts < 25) setTimeout(poll, 200);
-            else resolve();
-          };
-          poll();
-        })
-      );
+            return false;
+          },
+          { timeout: 8000 }
+        )
+        .catch(() => null);
       await prefillPause(page, 300);
-      await ssgeClickNumberNear(page, bedroomsDigit, "საძინებელი");
+      await ssgePrefillNumericChipField(
+        page,
+        listing.bedrooms,
+        "საძინებელი",
+        9
+      );
     }
 
-    // Area — placeholder depends on property type:
-    //   ბინა → "საერთო ფართი"
-    //   კერძო სახლი → "სახლის ფართი"
-    if (listing.area) {
-      const areaVal = digitsOnly(listing.area);
+    const houseAreaVal = digitsOnly(
+      listing.rawData?.["სახლის ფართი"]?.trim() || ""
+    );
+    const yardAreaVal = digitsOnly(
+      listing.rawData?.["ეზოს ფართი"]?.trim() || ""
+    );
+    const generalAreaVal = digitsOnly(listing.area?.trim() || "");
+
+    if (houseAreaVal) {
       const filled =
-        (await ssgeSetInputByPlaceholder(page, "საერთო ფართი", areaVal)) ||
-        (await ssgeSetInputByPlaceholder(page, "სახლის ფართი", areaVal));
+        (await ssgeSetInputByLabel(page, "სახლის ფართი", houseAreaVal)) ||
+        (await ssgeSetInputByPlaceholder(page, "სახლის ფართი", houseAreaVal));
+      if (!filled) {
+        console.warn(
+          `[ss.ge prefill] სახლის ფართი "${houseAreaVal}" input not found`
+        );
+      }
+    } else if (generalAreaVal) {
+      const filled =
+        (await ssgeSetInputByLabel(page, "საერთო ფართი", generalAreaVal)) ||
+        (await ssgeSetInputByPlaceholder(page, "საერთო ფართი", generalAreaVal)) ||
+        (await ssgeSetInputByLabel(page, "სახლის ფართი", generalAreaVal)) ||
+        (await ssgeSetInputByPlaceholder(page, "სახლის ფართი", generalAreaVal));
       if (!filled) console.warn("[ss.ge prefill] area input not found");
     }
 
-    // Yard area (ეზოს ფართი) — for კერძო სახლი / აგარაკი
-    const yardArea = listing.rawData?.["ეზოს ფართი"]?.trim();
-    if (yardArea) {
-      await ssgeSetInputByPlaceholder(page, "ეზოს ფართი", digitsOnly(yardArea));
+    if (yardAreaVal) {
+      const filled =
+        (await ssgeSetInputByLabel(page, "ეზოს ფართი", yardAreaVal)) ||
+        (await ssgeSetInputByPlaceholder(page, "ეზოს ფართი", yardAreaVal));
+      if (!filled) {
+        console.warn(
+          `[ss.ge prefill] ეზოს ფართი "${yardAreaVal}" input not found`
+        );
+      }
     }
 
     // Floor + total floors
@@ -842,20 +1709,27 @@ export async function createSsgePost(
     }
 
     // Floor type subset (only duplex/triplex/loft chips)
-    const rawProjectType = listing.rawData?.["პროექტის ტიპი"]?.trim() || "";
+    const floorTypeChip =
+      listing.rawData?.["პროექტის ტიპი"]?.trim() ||
+      listing.rawData?.["სართულის ტიპი"]?.trim() ||
+      "";
     if (
-      rawProjectType &&
-      PROJECT_TYPE_SUBSET.includes(rawProjectType as (typeof PROJECT_TYPE_SUBSET)[number])
+      floorTypeChip &&
+      PROJECT_TYPE_SUBSET.includes(floorTypeChip as (typeof PROJECT_TYPE_SUBSET)[number])
     ) {
-      await ssgeClickCard(page, rawProjectType);
+      await ssgeClickChipNearLabel(page, floorTypeChip, "სართულის ტიპი") ||
+        (await ssgeClickCard(page, floorTypeChip));
     }
 
-    // Balcony count (აივანი / ლოჯია)
-    const balconyCount = digitsOnly(
-      listing.rawData?.["აივნის რაოდენობა"] || listing.rawData?.["აივანი"] || ""
-    );
+    // Balcony count (აივანი) — „კი“ from parse → chip 1
+    const balconyCount = resolveSsgeBalconyCountForPrefill(listing.rawData);
     if (balconyCount) {
-      await ssgeClickNumberNear(page, balconyCount, "აივანი");
+      const balconyOk = await ssgeClickNumberNear(page, balconyCount, "აივანი");
+      if (!balconyOk) {
+        console.warn(
+          `[ss.ge prefill] აივანი chip "${balconyCount}" not selected`
+        );
+      }
     }
 
     // Bathrooms (სველი წერტილი)
@@ -866,19 +1740,68 @@ export async function createSsgePost(
         ""
     );
     if (bathroomsDigit) {
-      await ssgeClickNumberNear(page, bathroomsDigit, "სველი წერტილი");
+      const wetOk = await ssgeClickNumberNear(page, bathroomsDigit, "სველი წერტილი");
+      if (!wetOk) {
+        console.warn(
+          `[ss.ge prefill] სველი წერტილი chip "${bathroomsDigit}" not selected`
+        );
+      }
     }
 
-    // Status (სტატუსი) — building status chips
-    const buildingChip = BUILDING_STATUS_TO_SSGE[listing.buildingStatus?.trim() || ""];
-    if (buildingChip) {
-      await ssgeClickCard(page, buildingChip, "სტატუსი");
+    // Status (სტატუსი) — building status or land plot type (მიწის ნაკვეთი)
+    const statusRaw =
+      listing.rawData?.["მიწის ნაკვეთი"]?.trim() ||
+      listing.buildingStatus?.trim() ||
+      listing.rawData?.["სტატუსი"]?.trim() ||
+      "";
+    const statusChip = resolveSsgeStatusChip(
+      statusRaw,
+      listing.propertyType?.trim()
+    );
+    if (statusChip) {
+      console.log(
+        `[ss.ge prefill] სტატუსი / მიწის ნაკვეთი: "${statusRaw}" → chip "${statusChip}"`
+      );
+      const statusOk = await ssgeClickChipNearLabel(page, statusChip, "სტატუსი");
+      if (!statusOk) {
+        console.warn(
+          `[ss.ge prefill] სტატუსი chip "${statusChip}" not selected (parsed: "${statusRaw}")`
+        );
+      }
     }
 
-    // Project type (პროექტი) — full list
-    const projectChip = PROJECT_TYPE_TO_SSGE[rawProjectType];
-    if (projectChip) {
-      await ssgeClickCard(page, projectChip, "პროექტი");
+    // Project type (პროექტი) — default არასტანდარტული when missing / unknown
+    if (!/მიწის\s*ნაკვეთი/i.test(listing.propertyType || "")) {
+      const projectChip = resolveSsgeProjectChip(
+        listing.projectType?.trim() || "",
+        listing.rawData || {}
+      );
+      const projOk = await ssgeClickChipNearLabel(page, projectChip, "პროექტი");
+      if (!projOk) {
+        console.warn(`[ss.ge prefill] პროექტი chip "${projectChip}" not selected`);
+      }
+    }
+
+    const kitchenAreaVal = digitsOnly(
+      listing.rawData?.["სამზარეულოს ფართი"]?.trim() || ""
+    );
+    if (kitchenAreaVal) {
+      const kitchenOk =
+        (await ssgeSetInputByLabel(
+          page,
+          "სამზარეულოს ფართი",
+          kitchenAreaVal
+        )) ||
+        (await ssgeSetInputByPlaceholder(
+          page,
+          "სამზარეულოს",
+          kitchenAreaVal
+        ));
+      if (!kitchenOk) {
+        console.warn(
+          `[ss.ge prefill] სამზარეულოს ფართი "${kitchenAreaVal}" input not found`
+        );
+      }
     }
 
     // ---------------------------------------------------------------
@@ -887,33 +1810,38 @@ export async function createSsgePost(
     console.log("[ss.ge prefill] Step 5: additional info");
     await goToSsgeStep(page, "დამატებითი ინფორმაცია");
 
-    // Condition (მდგომარეობა)
-    const conditionChip = CONDITION_TO_SSGE[listing.condition?.trim() || ""];
+    const conditionRaw =
+      listing.condition?.trim() || listing.rawData?.["მდგომარეობა"]?.trim() || "";
+    const conditionChip = resolveSsgeConditionChip(conditionRaw);
     if (conditionChip) {
-      await ssgeClickCard(page, conditionChip, "მდგომარეობა");
+      await page
+        .locator("span, p, label")
+        .filter({ hasText: /^მდგომარეობა/ })
+        .first()
+        .waitFor({ state: "visible", timeout: 10000 })
+        .catch(() => null);
+      const condOk = await ssgePrefillCondition(page, conditionChip);
+      if (!condOk) {
+        console.warn(
+          `[ss.ge prefill] მდგომარეობა "${conditionRaw}" → chip "${conditionChip}" not selected`
+        );
+      }
+    } else if (conditionRaw) {
+      console.warn(
+        `[ss.ge prefill] მდგომარეობა "${conditionRaw}" has no ss.ge chip mapping`
+      );
     }
 
-    // View (სხვა ინფორმაცია)
-    const viewValue = listing.rawData?.["ხედი"]?.trim();
-    if (viewValue && VIEW_TO_SSGE[viewValue]) {
-      await ssgeClickCard(page, VIEW_TO_SSGE[viewValue], "სხვა ინფორმაცია");
-    }
+    await ssgePrefillViewChips(page, listing);
+
+    // Amenity toggles (აივანი, გარაჟი, ლიფტი, …) — same step as listing
+    await ssgePrefillAdditionalInfoToggles(page, listing.rawData);
 
     // ---------------------------------------------------------------
-    // WIZARD STEP 6 — აღწერა (Description + Additional Info toggles)
+    // WIZARD STEP 6 — აღწერა
     // ---------------------------------------------------------------
     console.log("[ss.ge prefill] Step 6: description");
     await goToSsgeStep(page, "აღწერა");
-
-    // Additional info toggles (+) chips
-    for (const toggle of ADDITIONAL_INFO_TOGGLES) {
-      const hit = toggle.rawDataKeys.some((k) =>
-        isTruthyRawValue(listing.rawData?.[k])
-      );
-      if (hit) {
-        await ssgeClickCard(page, toggle.ssgeLabel, "დამატებითი ინფორმაცია");
-      }
-    }
 
     // Description textarea
     if (listing.description) {
@@ -930,7 +1858,7 @@ export async function createSsgePost(
     await ssgeClickCard(page, "სრული ფასი");
 
     if (listing.price) {
-      await ssgeFillPrice(page, listing.price, listing.currency);
+      await ssgeFillPrice(page, listing.price, "USD");
     }
 
     console.log("[ss.ge prefill] Done — browser left open for review");

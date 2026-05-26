@@ -97,8 +97,14 @@ export async function parseSsgeListing(url: string): Promise<{
           ""
       );
 
-      let city = norm(addr?.cityTitle || "");
-      let street = norm(addr?.streetTitle || "");
+      let city = norm(
+        addr?.cityTitle || addr?.cityName || addr?.city || ""
+      );
+      if (!city && title) {
+        const cityInTitle = title.match(/([\u10A0-\u10FF]+)ში\b/u);
+        if (cityInTitle) city = norm(cityInTitle[1]);
+      }
+      let street = norm(addr?.streetTitle || addr?.street || "");
       let streetNumber = norm(addr?.streetNumber || "");
       let address = "";
       if (street) {
@@ -111,15 +117,27 @@ export async function parseSsgeListing(url: string): Promise<{
       }
 
       let price = "";
-      let currency = "GEL";
+      let currency = "USD";
       let pricePerSqm = "";
       if (priceData) {
-        if (priceData.currencyType === 1) {
-          price = String(priceData.priceUsd ?? "");
+        const usdPrice = priceData.priceUsd;
+        const gelPrice = priceData.priceGeo;
+        const usdNum =
+          usdPrice != null && String(usdPrice).trim() !== ""
+            ? Number(usdPrice)
+            : 0;
+        const gelNum =
+          gelPrice != null && String(gelPrice).trim() !== ""
+            ? Number(gelPrice)
+            : 0;
+
+        // Prefer USD (ss.ge API always has both; listing display currency may be GEL).
+        if (usdNum > 0) {
+          price = String(usdPrice);
           pricePerSqm = String(priceData.unitPriceUsd ?? "");
           currency = "USD";
-        } else {
-          price = String(priceData.priceGeo ?? "");
+        } else if (gelNum > 0) {
+          price = String(gelPrice);
           pricePerSqm = String(priceData.unitPriceGeo ?? "");
           currency = "GEL";
         }
@@ -140,9 +158,13 @@ export async function parseSsgeListing(url: string): Promise<{
         const value = norm(valueEl?.textContent || "");
         if (!label || !value) return;
 
+        const areaM = value.match(/([\d.,]+)/);
         if (/^(საერთო\s*)?ფართი$/i.test(label)) {
-          const m = value.match(/([\d.]+)/);
-          if (m) specLabels.area = m[1];
+          if (areaM) specLabels.area = areaM[1].replace(",", ".");
+        } else if (/^სახლის\s*ფართი$/i.test(label)) {
+          if (areaM) specLabels.houseArea = areaM[1].replace(",", ".");
+        } else if (/^ეზოს\s*ფართი$/i.test(label)) {
+          if (areaM) specLabels.yardArea = areaM[1].replace(",", ".");
         } else if (/^ოთახი$/i.test(label)) {
           const m = value.match(/(\d+)/);
           if (m) specLabels.rooms = m[1];
@@ -158,6 +180,8 @@ export async function parseSsgeListing(url: string): Promise<{
             const single = value.match(/(\d+)/);
             if (single) specLabels.floor = single[1];
           }
+        } else if (/^მიწის\s*ნაკვეთი$/i.test(label)) {
+          specLabels.landPlotType = value;
         }
       });
 
@@ -178,24 +202,132 @@ export async function parseSsgeListing(url: string): Promise<{
         }
       }
 
-      // ---------- Detailed info (#details_main_info) ----------
+      // ---------- Detailed info (p label + h3 value blocks) ----------
       const detailFields: Record<string, string> = {};
-      mainInfo?.querySelectorAll("div").forEach((div) => {
-        const labelEl = div.querySelector(":scope > p");
-        const valueEl = div.querySelector(":scope > h3");
-        if (!labelEl || !valueEl) return;
-        const label = norm(labelEl.textContent || "");
-        const value = norm(valueEl.textContent || "");
-        if (label && value) detailFields[label] = value;
-      });
+
+      const collectDetailPair = (labelEl, valueEl) => {
+        const label = norm(labelEl?.textContent || "");
+        const value = norm(valueEl?.textContent || "");
+        if (!label || !value || value.length > 120) return;
+        if (label.length > 60) return;
+        detailFields[label] = value;
+      };
+
+      const detailRoots = [
+        mainInfo,
+        detailsDesc,
+        document.querySelector("#details_desc"),
+      ].filter(Boolean);
+
+      for (const root of detailRoots) {
+        root.querySelectorAll("div").forEach((div) => {
+          const labelEl = div.querySelector(":scope > p");
+          const valueEl = div.querySelector(":scope > h3");
+          if (labelEl && valueEl) collectDetailPair(labelEl, valueEl);
+        });
+
+        root.querySelectorAll("p").forEach((labelEl) => {
+          const label = norm(labelEl.textContent || "");
+          if (!label || label.length > 60) return;
+          const valueEl =
+            labelEl.nextElementSibling?.tagName === "H3"
+              ? labelEl.nextElementSibling
+              : labelEl.parentElement?.querySelector(":scope > h3");
+          if (valueEl) collectDetailPair(labelEl, valueEl);
+        });
+      }
 
       const bathrooms = detailFields["სველი წერტილი"] || "";
       const condition = detailFields["მდგომარეობა"] || "";
-      const buildingStatus = detailFields["სტატუსი"] || "";
-      const projectType = detailFields["პროექტი"] || "";
+      let landPlotType =
+        specLabels.landPlotType ||
+        detailFields["მიწის ნაკვეთი"] ||
+        "";
+      let buildingStatus = detailFields["სტატუსი"] || "";
 
-      // ---------- Amenities (#additional_information, active chips only) ----------
+      if (!landPlotType) {
+        for (const p of document.querySelectorAll("p")) {
+          const label = norm(p.textContent || "");
+          if (label !== "მიწის ნაკვეთი") continue;
+          const span =
+            p.parentElement?.querySelector("span") ||
+            (p.nextElementSibling?.tagName === "SPAN"
+              ? p.nextElementSibling
+              : null);
+          const val = norm(span?.textContent || "");
+          if (val && val !== "მიწის ნაკვეთი") {
+            landPlotType = val;
+            break;
+          }
+        }
+      }
+
+      if (app?.landType != null && !landPlotType) {
+        const landById = {
+          1: "სასოფლო-სამეურნეო მიწა",
+          2: "არასასოფლო-სამეურნეო მიწა",
+          3: "კომერციული მიწა",
+          4: "სპეციალური მიწა",
+          5: "საინვესტიციო მიწა",
+          6: "ფერმერული მიწა",
+        };
+        const id = Number(app.landType);
+        if (landById[id]) landPlotType = landById[id];
+      }
+
+      const landTypeLabels = new Set([
+        "სასოფლო-სამეურნეო მიწა",
+        "არასასოფლო-სამეურნეო მიწა",
+        "კომერციული მიწა",
+        "სპეციალური მიწა",
+        "საინვესტიციო მიწა",
+        "ფერმერული მიწა",
+      ]);
+      const isLandType = (v) => landTypeLabels.has(norm(v || ""));
+
+      if (isLandType(buildingStatus) && !landPlotType) {
+        landPlotType = buildingStatus;
+        buildingStatus = "";
+      } else if (isLandType(landPlotType)) {
+        /* keep landPlotType only */
+      } else if (landPlotType && !isLandType(landPlotType)) {
+        landPlotType = "";
+      }
+
+      // ---------- Amenities (#additional_information, active toggles only) ----------
       const rawData: Record<string, string> = {};
+
+      const markActiveAmenity = (label) => {
+        if (!label || label === "დამატებითი ინფორმაცია" || label.length > 50) return;
+        let key = label;
+        const compact = label.replace(/\s+/g, "").replace(/ცენტრ\./g, "ცენტ.");
+        if (compact.includes("ცენტ") && compact.includes("გათბობა")) {
+          key = "ცენტ.გათბობა";
+        }
+        rawData[key] = "კი";
+      };
+
+      const collectActiveAmenities = (root) => {
+        if (!root) return;
+        root.querySelectorAll("div").forEach((el) => {
+          const p = el.querySelector(":scope > p");
+          if (!p) return;
+          const label = norm(p.textContent || "");
+          const icon = el.querySelector(
+            "span[class*='icon-add_circle'], span[class*='icon-check_circle']"
+          );
+          if (!icon) return;
+          const active =
+            el.classList.contains("active") ||
+            el.querySelector("span[class*='check_circle-fill']") ||
+            (el.className || "").includes("hiVzfk");
+          if (active) markActiveAmenity(label);
+        });
+      };
+
+      collectActiveAmenities(additionalInfo);
+
+      // Legacy listing markup (styled-components class names)
       additionalInfo
         ?.querySelectorAll("div[class*='sc-abd90df5-1']")
         .forEach((el) => {
@@ -203,12 +335,110 @@ export async function parseSsgeListing(url: string): Promise<{
           if (!label || label === "დამატებითი ინფორმაცია") return;
           const cls = el.className || "";
           if (cls.includes("cWzNVx")) return;
-          if (cls.includes("hiVzfk")) rawData[label] = "კი";
+          if (cls.includes("hiVzfk")) markActiveAmenity(label);
         });
 
+      const extractAreaDigits = (s) => {
+        const m = norm(String(s || "")).match(/([\d]+(?:[.,]\d+)?)/);
+        return m ? m[1].replace(",", ".") : "";
+      };
+
+      const projectType =
+        detailFields["პროექტი"] || detailFields["პროექტის ტიპი"] || "";
+
+      if (landPlotType && isLandType(landPlotType)) {
+        rawData["მიწის ნაკვეთი"] = landPlotType;
+      }
       if (buildingStatus) rawData["სტატუსი"] = buildingStatus;
       if (condition) rawData["მდგომარეობა"] = condition;
-      if (projectType) rawData["პროექტი"] = projectType;
+      if (projectType) {
+        rawData["პროექტი"] = projectType;
+        rawData["პროექტის ტიპი"] = projectType;
+      }
+
+      const kitchenArea = extractAreaDigits(detailFields["სამზარეულოს ფართი"]);
+      if (kitchenArea) rawData["სამზარეულოს ფართი"] = kitchenArea;
+
+      const viewChipLabels = [
+        "ხედი ეზოზე",
+        "ხედი ქუჩაზე",
+        "ნათელი",
+        "მყუდრო",
+        "მცხელო",
+      ];
+      const activeViews = [];
+      const viewRoots = [detailsDesc, additionalInfo, document.body];
+      for (const view of viewChipLabels) {
+        let found = false;
+        for (const root of viewRoots) {
+          if (!root || found) break;
+          for (const el of root.querySelectorAll("p, span, div, h3, button")) {
+            if (norm(el.textContent || "") !== view) continue;
+            activeViews.push(view);
+            found = true;
+            break;
+          }
+        }
+      }
+      if (activeViews.length) {
+        rawData["ხედი"] = [...new Set(activeViews)].join(", ");
+      }
+
+      let houseArea =
+        specLabels.houseArea ||
+        extractAreaDigits(detailFields["სახლის ფართი"]) ||
+        "";
+      let yardArea =
+        specLabels.yardArea ||
+        extractAreaDigits(detailFields["ეზოს ფართი"]) ||
+        "";
+
+      if (app && typeof app === "object") {
+        const appNum = (v) => extractAreaDigits(v);
+        const tryKeys = (keys) => {
+          for (const k of keys) {
+            if (app[k] != null && app[k] !== "") {
+              const n = appNum(app[k]);
+              if (n) return n;
+            }
+          }
+          return "";
+        };
+        const estateType = norm(String(app.realEstateType || ""));
+        const isHouseLike =
+          /კერძო\s*სახლი|აგარაკი|სახლ/i.test(estateType) ||
+          /კერძო\s*სახლი|აგარაკი|სახლ/i.test(title);
+
+        if (!houseArea && isHouseLike) {
+          houseArea = tryKeys([
+            "houseArea",
+            "houseSquare",
+            "houseSquareMeter",
+            "buildingArea",
+            "homeArea",
+            "totalSquare",
+            "squareMeter",
+            "area",
+            "totalArea",
+          ]);
+        }
+        if (!yardArea && isHouseLike) {
+          yardArea = tryKeys([
+            "yardArea",
+            "yardSquare",
+            "yardSquareMeter",
+            "gardenArea",
+            "gardenSquare",
+            "landArea",
+          ]);
+        }
+      }
+
+      if (houseArea) {
+        rawData["სახლის ფართი"] = houseArea;
+        if (!specLabels.area) specLabels.area = houseArea;
+      }
+      if (yardArea) rawData["ეზოს ფართი"] = yardArea;
 
       return {
         title,
@@ -286,8 +516,14 @@ export async function parseSsgeListing(url: string): Promise<{
       rawData: data.rawData,
     };
 
+    const yardLog = listing.rawData?.["ეზოს ფართი"]
+      ? `, yard ${listing.rawData["ეზოს ფართი"]} m²`
+      : "";
+    const houseLog = listing.rawData?.["სახლის ფართი"]
+      ? ` (house ${listing.rawData["სახლის ფართი"]} m²)`
+      : "";
     console.log(
-      `[ss.ge parse] OK: "${listing.title}" — ${listing.price} ${listing.currency}, ${listing.rooms} rooms, ${listing.area} m²`
+      `[ss.ge parse] OK: "${listing.title}" — ${listing.price} ${listing.currency}, ${listing.rooms} rooms, ${listing.area} m²${houseLog}${yardLog}`
     );
     return { success: true, data: listing };
   } catch (error) {

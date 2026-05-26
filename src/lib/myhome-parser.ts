@@ -15,6 +15,11 @@ import {
   PREFILL_NUMERIC_LABELS,
   RAW_DATA_HANDLED_LABELS,
 } from "@/lib/additional-params";
+import { normalizeListingForMyhomePrefill } from "@/lib/cross-platform-prefill";
+import {
+  mapLandPlotStatusForMyhome,
+  resolveProjectTypeCanonical,
+} from "@/lib/ssge-mappings";
 import { resolveImagesForPlaywright } from "@/lib/listing-images";
 
 export interface MyhomeListing {
@@ -203,6 +208,72 @@ const FLEX_CHIP_ROW_CONFIGS: Record<string, FlexChipRowConfig> = {
     },
     rowMarkers: [/ბლოკი/, /აგური/, /კომბინირებული/],
   },
+  გათბობა: {
+    chipLabels: [
+      "ცენტრალური გათბობა",
+      "გაზის გამათბობელი",
+      "დენის გამათბობელი",
+      "ცენტრალური+იატაკის გათბობა",
+      "გათბობის გარეშე",
+      "ინდივიდუალური",
+      "იატაკის გათბობა",
+    ],
+    aliases: {
+      "ცენტრალური გათბობა": [
+        "ცენტრალური გათბობა",
+        "ცენტ.გათბობა",
+        "ცენტ. გათბობა",
+        "ცენტრ. გათბობა",
+        "ცენტრ.გათბობა",
+        "ცენტრალური",
+      ],
+      "გაზის გამათბობელი": ["გაზის გამათბობელი", "გაზის"],
+      "დენის გამათბობელი": ["დენის გამათბობელი", "დენის"],
+      "ცენტრალური+იატაკის გათბობა": [
+        "ცენტრალური+იატაკის გათბობა",
+        "ცენტრალური + იატაკის გათბობა",
+      ],
+      "გათბობის გარეშე": ["გათბობის გარეშე", "გათბობის გარეშეა"],
+      ინდივიდუალური: ["ინდივიდუალური"],
+      "იატაკის გათბობა": ["იატაკის გათბობა", "იატაკის"],
+    },
+    rowMarkers: [/ცენტრალური/, /გათბობის გარეშე/],
+  },
+  "ცხელი წყალი": {
+    chipLabels: [
+      "ცენტრალური ცხელი წყალი",
+      "გაზის გამაცხელებელი",
+      "დენის გამაცხელებელი",
+      "ავზი",
+      "მზის გამათბობელი",
+      "ცხელი წყლის გარეშე",
+      "ბუნებრივი ცხელი წყალი",
+      "ინდივიდუალური",
+    ],
+    aliases: {
+      "ცენტრალური ცხელი წყალი": [
+        "ცენტრალური ცხელი წყალი",
+        "ცენტრალური",
+      ],
+      "გაზის გამაცხელებელი": ["გაზის გამაცხელებელი"],
+      "დენის გამაცხელებელი": ["დენის გამაცხელებელი"],
+      ავზი: ["ავზი", "ავზის"],
+      "მზის გამათბობელი": ["მზის გამათბობელი", "მზის"],
+      "ცხელი წყლის გარეშე": ["ცხელი წყლის გარეშე"],
+      "ბუნებრივი ცხელი წყალი": ["ბუნებრივი ცხელი წყალი"],
+      ინდივიდუალური: ["ინდივიდუალური"],
+    },
+    rowMarkers: [/ცენტრალური ცხელი/, /ცხელი წყლის გარეშე/],
+  },
+  "კარ-ფანჯარა": {
+    chipLabels: ["ხე", "პლასტმასა", "ალუმინი"],
+    aliases: {
+      ხე: ["ხე", "ხის"],
+      პლასტმასა: ["პლასტმასა", "პლასტიკი", "პლასტმასის"],
+      ალუმინი: ["ალუმინი", "ალუმინის"],
+    },
+    rowMarkers: [/პლასტმასა/, /ალუმინი/],
+  },
 };
 
 const FLEX_CHIP_EXACT_LABELS = new Set<string>(
@@ -241,7 +312,16 @@ function canonicalParkingChipLabel(value: string): string {
 }
 
 function getParkingPrefillValue(listing: MyhomeListing): string {
-  return getFlexChipPrefillValue(listing, "პარკირება", ["სათავსო", "სათავსოს ტიპი"]);
+  const fromFlex = getFlexChipPrefillValue(listing, "პარკირება", [
+    "სათავსო",
+    "სათავსოს ტიპი",
+  ]);
+  if (fromFlex) return fromFlex;
+  const rd = listing.rawData || {};
+  if (rd["გარაჟი"] === "კი" || rd["პარკინგი"] === "კი") {
+    return canonicalParkingChipLabel("ავტოფარეხი") || "ავტოფარეხი";
+  }
+  return "";
 }
 
 function getFlexChipPrefillValue(
@@ -666,6 +746,23 @@ function streetAutocompleteQueries(street: string): string[] {
     }
     return [...new Set(queries.filter((q) => q.length > 0))];
   }
+  const withoutInitial = s.replace(/^[ა-ჰ]{1,2}\.\s*/iu, "").trim();
+  if (withoutInitial && withoutInitial !== s) {
+    queries.push(withoutInitial);
+    const wiBase = withoutInitial
+      .replace(/\s+(ქ\.?|ქუჩა|შესახვევი|ჩიხი)\s*$/iu, "")
+      .trim();
+    if (wiBase && wiBase !== withoutInitial) {
+      queries.push(`${wiBase} ქ.`);
+      queries.push(wiBase);
+    }
+  }
+
+  const parenCleaned = s.replace(/\s*\([^)]*\)\s*/g, " ").replace(/\s+/g, " ").trim();
+  if (parenCleaned && parenCleaned !== s) {
+    queries.push(parenCleaned);
+  }
+
   const withoutSuffix = s
     .replace(/\s+(ქ\.?|ქუჩა|შესახვევი|ჩიხი)\s*$/iu, "")
     .trim();
@@ -695,7 +792,17 @@ function getRawPreferenceValue(
   const rd = listing.rawData || {};
   const direct = rd[label]?.trim();
   if (direct) return direct;
-  if (label === "გათბობა") return rd["გათბომა"]?.trim() || "";
+  if (label === "გათბობა") {
+    const v = rd["გათბომა"]?.trim() || rd["გათბობა"]?.trim() || "";
+    if (v === "კი") return "ცენტრალური გათბობა";
+    if (/ცენტ/i.test(v) && /გათბობ/i.test(v)) return v;
+    return v;
+  }
+  if (label === "პარკირება") {
+    const p = rd["პარკირება"]?.trim() || "";
+    if (p) return p;
+    if (rd["გარაჟი"] === "კი") return "ავტოფარეხი";
+  }
   return "";
 }
 
@@ -878,8 +985,17 @@ function clearInvalidBalconyRawData(
     return;
   }
 
-  if (
-    header === "კი" ||
+  if (header === "კი" || header === "დიახ") {
+    const c = count.replace(/[^\d]/g, "") || "1";
+    const a = area.replace(/[^\d.]/g, "") || "1";
+    if (/\d/.test(c) && /\d/.test(a)) {
+      rd["აივნის რაოდენობა"] = c;
+      rd["აივნის ფართი"] = a;
+      rd["აივანი"] = `${c}/${a}`;
+    } else {
+      delete rd["აივანი"];
+    }
+  } else if (
     /^(1|0)$/.test(header) ||
     (header && !balconyEvidenceInMain(header))
   ) {
@@ -1856,7 +1972,6 @@ async function expandCreateFormSections(page: Page): Promise<void> {
     .first()
     .click({ timeout: CHIP_CLICK_TIMEOUT_MS })
     .catch(() => {});
-  await prefillPause(page, 60);
 }
 
 async function markLukFieldTrigger(
@@ -2894,6 +3009,28 @@ async function prefillProjectTypeField(page: Page, rawValue: string): Promise<bo
   return prefillLukSelectByLabel(page, "პროექტის ტიპი", rawValue);
 }
 
+/** ხედი — multi-select; rawData may be comma-separated (ss.ge: ეზო + ქუჩა + …). */
+async function prefillViewField(page: Page, listing: MyhomeListing): Promise<void> {
+  const raw = listing.rawData?.["ხედი"]?.trim();
+  if (!raw) return;
+
+  const options = [
+    ...new Set(
+      raw
+        .split(/[,;]/)
+        .map((s) => s.trim())
+        .filter(Boolean)
+    ),
+  ];
+  if (!options.length) return;
+
+  await scrollToFormField(page, "ხედი");
+  for (const opt of options) {
+    await prefillLukSelectByLabel(page, "ხედი", opt);
+    await prefillPause(page, 100);
+  }
+}
+
 /** Step 4 flex chip row — click leaf chip under h2, verify selection (not luk dropdown). */
 async function readFlexChipRowSelection(
   page: Page,
@@ -3459,10 +3596,33 @@ async function prefillSectionChipPlaywright(
   return false;
 }
 
+/** Land listings: ss.ge uses სტატუსი chips; myhome uses მიწის ნაკვეთი preference row. */
+async function prefillLandPlotTypeChip(
+  page: Page,
+  listing: MyhomeListing
+): Promise<void> {
+  const landTypeRaw = listing.rawData?.["მიწის ნაკვეთი"]?.trim();
+  if (!landTypeRaw) return;
+  const landType = mapLandPlotStatusForMyhome(landTypeRaw);
+  const pt = (listing.propertyType || "").trim();
+  if (!/მიწის\s*ნაკვეთი/i.test(pt)) return;
+
+  await scrollToFormField(page, "მიწის ნაკვეთი");
+  await prefillPause(page, 80);
+  for (const section of ["მიწის ნაკვეთი", "სტატუსი"]) {
+    if (await prefillSectionChipPlaywright(page, section, landType)) return;
+    if (await prefillPreferenceField(page, section, landType)) return;
+    await batchPrefillChips(page, [{ section, chip: landType }]);
+    return;
+  }
+}
+
 async function prefillBuildingStatusAndCondition(
   page: Page,
   listing: MyhomeListing
 ): Promise<void> {
+  await prefillLandPlotTypeChip(page, listing);
+
   const buildingStatus = getBuildingStatusValue(listing);
   const condition = getConditionValue(listing);
 
@@ -3686,9 +3846,13 @@ async function fillMainAreaInputPlaywright(
 }
 
 function getProjectTypeValue(listing: MyhomeListing): string {
-  return dedupeRepeatedLabelValue(
-    listing.projectType || listing.rawData?.["პროექტის ტიპი"] || ""
+  const raw = dedupeRepeatedLabelValue(
+    listing.projectType ||
+      listing.rawData?.["პროექტის ტიპი"] ||
+      listing.rawData?.["პროექტი"] ||
+      ""
   );
+  return resolveProjectTypeCanonical(raw, listing.rawData || {});
 }
 
 /** Listing UI often duplicates chip text: „თუხარელისთუხარელის“ → „თუხარელის“. */
@@ -4298,6 +4462,91 @@ async function prefillRowCountChip(
   return false;
 }
 
+const MYHOME_COUNT_OVERFLOW_MAX = 10;
+
+/** After 10+ chip, type exact count (ss.ge listings often have 8+ / 9+ overflow). */
+async function prefillMyhomeOverflowCountInput(
+  page: Page,
+  sectionLabels: string[],
+  rawValue: string
+): Promise<boolean> {
+  const digits = rawValue.replace(/[^\d]/g, "");
+  const n = parseInt(digits, 10);
+  if (!Number.isFinite(n) || n <= MYHOME_COUNT_OVERFLOW_MAX) return false;
+
+  const chipClicked =
+    (await prefillCountChipPlaywright(page, sectionLabels, "10+")) ||
+    (await prefillRowCountChip(page, sectionLabels, "10+"));
+  if (!chipClicked) {
+    await clickChipInSectionLabels(page, sectionLabels, "10+");
+  }
+  await prefillPause(page, 250);
+
+  const filled = await page.evaluate(
+    ({ sectionLabels, digits }) => {
+      function norm(s: string) {
+        return (s || "").replace(/\s*\*\s*$/, "").trim().replace(/\s+/g, " ");
+      }
+      function labelsMatch(text: string, label: string): boolean {
+        const t = norm(text);
+        const l = norm(label);
+        if (t === l) return true;
+        if (/^ოთახ/i.test(l) && /^ოთახ/i.test(t)) return true;
+        if (/^საძინებელი/i.test(l) && /^საძინებელი/i.test(t)) return true;
+        if (l.includes("სვ") && l.includes("წერტილი") && t.includes("სვ")) {
+          return true;
+        }
+        return false;
+      }
+      const setter = Object.getOwnPropertyDescriptor(
+        window.HTMLInputElement.prototype,
+        "value"
+      )?.set;
+      if (!setter) return false;
+
+      function fillInput(input: HTMLInputElement): boolean {
+        if (input.offsetParent === null) return false;
+        const type = (input.type || "text").toLowerCase();
+        if (type === "hidden" || type === "checkbox" || type === "radio") {
+          return false;
+        }
+        input.focus();
+        setter!.call(input, digits);
+        input.dispatchEvent(
+          new InputEvent("input", {
+            bubbles: true,
+            cancelable: true,
+            inputType: "insertText",
+            data: digits,
+          })
+        );
+        input.dispatchEvent(new Event("change", { bubbles: true }));
+        return true;
+      }
+
+      for (const label of sectionLabels) {
+        for (const el of document.querySelectorAll(
+          "label, span, p, h2, h3, h4, div, motion.div"
+        )) {
+          if (!labelsMatch(el.textContent || "", label)) continue;
+          let node: Element | null = el;
+          for (let depth = 0; depth < 12 && node; depth++) {
+            for (const inp of node.querySelectorAll<HTMLInputElement>("input")) {
+              if (fillInput(inp)) return true;
+            }
+            node = node.parentElement;
+          }
+        }
+      }
+      return false;
+    },
+    { sectionLabels, digits }
+  );
+
+  if (filled) await prefillPause(page, 150);
+  return filled;
+}
+
 async function prefillMainCountChips(
   page: Page,
   listing: MyhomeListing
@@ -4318,6 +4567,11 @@ async function prefillMainCountChips(
 
   if (listing.rooms) {
     await prefillRowCountChip(page, CHIP_SECTION_ALIASES["ოთახი"], listing.rooms);
+    await prefillMyhomeOverflowCountInput(
+      page,
+      CHIP_SECTION_ALIASES["ოთახი"],
+      listing.rooms
+    );
   }
 
   const bedrooms = getBedroomsValue(listing);
@@ -4345,6 +4599,11 @@ async function prefillMainCountChips(
     if (!bedroomClicked) {
       await batchPrefillChips(page, [{ section: "საძინებელი", chip: bedroomChip }]);
     }
+    await prefillMyhomeOverflowCountInput(
+      page,
+      CHIP_SECTION_ALIASES["საძინებელი"],
+      bedrooms
+    );
   }
 
   const bathrooms = getBathroomsValue(listing);
@@ -4435,7 +4694,12 @@ async function prefillGeneralFurnitureChip(page: Page): Promise<void> {
 const FURNITURE_LABEL_SET = new Set<string>(FURNITURE_LABELS);
 const CHIP_ROW_LABEL_SET = new Set<string>(CHIP_ROW_PARAM_LABELS);
 
-function shouldSkipYesChipPrefill(label: string): boolean {
+function shouldSkipYesChipPrefill(label: string, rawValue?: string): boolean {
+  if (rawValue?.trim() === "კი") {
+    if (label === "სათავსო" || label === "აივანი" || label === "მისაღები") {
+      return false;
+    }
+  }
   if (RAW_DATA_HANDLED_LABELS.has(label)) return true;
   if (PREFILL_NUMERIC_LABELS.has(label)) return true;
   if (PREFILL_LIST_FIELDS.some((f) => f.labels.includes(label))) return true;
@@ -4450,7 +4714,7 @@ function collectYesAmenityLabels(listing: MyhomeListing): string[] {
 
   for (const [label, raw] of Object.entries(listing.rawData || {})) {
     if (raw?.trim() !== "კი") continue;
-    if (shouldSkipYesChipPrefill(label)) continue;
+    if (shouldSkipYesChipPrefill(label, raw)) continue;
     const canon = LABEL_CANONICAL[label] || label;
     if (seen.has(canon)) continue;
     seen.add(canon);
@@ -5090,6 +5354,10 @@ const PREFILL_NUMERIC_FIELDS: {
     getValue: (l) => getBathroomsValue(l),
   },
   { labels: ["აშენების წელი"], getValue: (l) => l.rawData?.["აშენების წელი"] || "" },
+  {
+    labels: ["სამზარეულოს ფართი", "სამზარეულო"],
+    getValue: (l) => l.rawData?.["სამზარეულოს ფართი"] || "",
+  },
 ];
 
 const PREFILL_LIST_FIELDS: {
@@ -5137,19 +5405,15 @@ async function applyAdditionalParametersPrefill(
   options?: { skipStatusAndCondition?: boolean }
 ): Promise<void> {
   await expandCreateFormSections(page);
-  await prefillMainAreaField(page, listing);
   if (!options?.skipStatusAndCondition) {
     await prefillBuildingStatusAndCondition(page, listing);
   }
-  await page
-    .locator("h2,h3,h4")
-    .filter({ hasText: /ავეჯი/i })
-    .first()
-    .scrollIntoViewIfNeeded()
-    .catch(() => {});
   const constructionEarly = getFlexChipPrefillValue(listing, "სამშენებლო მასალა");
   const parkingEarly = getParkingPrefillValue(listing);
-  if (constructionEarly || parkingEarly) {
+  const heatingEarly = getFlexChipPrefillValue(listing, "გათბობა");
+  const hotWaterEarly = getFlexChipPrefillValue(listing, "ცხელი წყალი");
+  const doorsEarly = getFlexChipPrefillValue(listing, "კარ-ფანჯარა");
+  if (constructionEarly || parkingEarly || heatingEarly || hotWaterEarly || doorsEarly) {
     await closeOpenDropdowns(page);
     if (constructionEarly) {
       await prefillFlexChipRowField(page, "სამშენებლო მასალა", constructionEarly);
@@ -5157,13 +5421,26 @@ async function applyAdditionalParametersPrefill(
     if (parkingEarly) {
       await prefillFlexChipRowField(page, "პარკირება", parkingEarly);
     }
+    if (heatingEarly) {
+      await prefillFlexChipRowField(page, "გათბობა", heatingEarly);
+    }
+    if (hotWaterEarly) {
+      await prefillFlexChipRowField(page, "ცხელი წყალი", hotWaterEarly);
+    }
+    if (doorsEarly) {
+      await prefillFlexChipRowField(page, "კარ-ფანჯარა", doorsEarly);
+    }
   }
 
+  const isLandPlot = /მიწის\s*ნაკვეთი/i.test(listing.propertyType || "");
+
   await batchPrefillChips(page, buildPostExpandChipTasks(listing));
-  await scrollToFormField(page, "საძინებელი");
-  await prefillMainCountChips(page, listing);
-  if (listingHasFurniture(listing)) {
-    await prefillGeneralFurnitureChip(page);
+  if (!isLandPlot) {
+    await scrollToFormField(page, "საძინებელი");
+    await prefillMainCountChips(page, listing);
+    if (listingHasFurniture(listing)) {
+      await prefillGeneralFurnitureChip(page);
+    }
   }
 
   for (const field of PREFILL_NUMERIC_FIELDS) {
@@ -5177,99 +5454,92 @@ async function applyAdditionalParametersPrefill(
     }
   }
 
-  await prefillFloorFields(page, listing);
-
-  await prefillBalconyFields(page, listing);
-  await prefillLoggiaFields(page, listing);
-  await prefillVerandaFields(page, listing);
-  await prefillYardAreaFields(page, listing);
-  await prefillCeilingHeightFields(page, listing);
-
-  const parkingChip = getParkingPrefillValue(listing);
-  const constructionMaterial = getFlexChipPrefillValue(
-    listing,
-    "სამშენებლო მასალა"
-  );
-  await closeOpenDropdowns(page);
-  if (parkingChip) {
-    await prefillParkingChipField(page, parkingChip);
+  if (!isLandPlot) {
+    await prefillFloorFields(page, listing);
+    await prefillBalconyFields(page, listing);
+    await prefillLoggiaFields(page, listing);
+    await prefillVerandaFields(page, listing);
   }
-  if (constructionMaterial) {
-    await prefillFlexChipRowField(page, "სამშენებლო მასალა", constructionMaterial);
+  await prefillYardAreaFields(page, listing);
+  if (!isLandPlot) {
+    await prefillCeilingHeightFields(page, listing);
   }
 
   for (const label of CHIP_STYLE_ROW_LABELS) {
     const value = getRawPreferenceValue(listing, label);
     if (!value || value === "კი" || value === "არა") continue;
-    if (label === "პარკირება" && parkingChip) continue;
-    if (label === "სამშენებლო მასალა" && constructionMaterial) continue;
+    if (label === "პარკირება" && parkingEarly) continue;
+    if (label === "სამშენებლო მასალა" && constructionEarly) continue;
+    if (label === "გათბობა" && heatingEarly) continue;
+    if (label === "ცხელი წყალი" && hotWaterEarly) continue;
+    if (label === "კარ-ფანჯარა" && doorsEarly) continue;
     await prefillPreferenceField(page, label, value);
   }
 
-  await closeOpenDropdowns(page);
-  for (const nested of NESTED_LUK_TYPE_SECTIONS) {
-    const value = getNestedSectionTypeValue(listing, nested.valueKeys);
-    if (!value) continue;
-    if (nested.section === "სათავსო" && isParkingChipValue(value)) continue;
-    await prefillNestedSectionTypeDropdown(
-      page,
-      nested.section,
-      nested.dropdownHint,
-      value
-    );
-    if (nested.areaKey) {
-      const sectionArea = getNestedSectionAreaValue(
-        listing,
-        nested.areaKey,
-        nested.valueKeys
-      );
-      if (sectionArea) {
-        await prefillPause(page, 50);
-        await fillInputInNestedSection(page, nested.section, "ფართი", sectionArea);
-      }
-    }
-    await prefillPause(page, 60);
-  }
-
-  const lukSelectPrefillOrder = ["ხედი", "შესასვლელი"] as const;
-
-  await closeOpenDropdowns(page);
-  for (const label of lukSelectPrefillOrder) {
-    const value =
-      listing.rawData?.[label]?.trim() ||
-      PREFILL_LIST_FIELDS.find((f) => f.labels.includes(label))?.getValue(listing)?.trim() ||
-      "";
-    if (!value) continue;
-    await scrollToFormField(page, label);
-    await prefillLukSelectByLabel(page, label, value);
-  }
-
-  for (const field of PREFILL_LIST_FIELDS) {
-    const value = field.getValue(listing)?.trim();
-    if (!value) continue;
-    for (const label of field.labels) {
-      if (label === "პროექტის ტიპი") continue;
-      if (
-        label === "სათავსო" ||
-        label === "სათავსოს ტიპი" ||
-        label === "მისაღები"
-      ) {
-        continue;
-      }
-      if (lukSelectPrefillOrder.includes(label as (typeof lukSelectPrefillOrder)[number])) {
-        continue;
-      }
-      await closeOpenDropdowns(page);
-      await prefillLukSelectByLabel(page, label, value);
-      break;
-    }
-  }
-
-  const projectType = getProjectTypeValue(listing);
-  if (projectType) {
+  if (!isLandPlot) {
     await closeOpenDropdowns(page);
-    await prefillProjectTypeField(page, projectType);
+    for (const nested of NESTED_LUK_TYPE_SECTIONS) {
+      const value = getNestedSectionTypeValue(listing, nested.valueKeys);
+      if (!value) continue;
+      if (nested.section === "სათავსო" && isParkingChipValue(value)) continue;
+      await prefillNestedSectionTypeDropdown(
+        page,
+        nested.section,
+        nested.dropdownHint,
+        value
+      );
+      if (nested.areaKey) {
+        const sectionArea = getNestedSectionAreaValue(
+          listing,
+          nested.areaKey,
+          nested.valueKeys
+        );
+        if (sectionArea) {
+          await fillInputInNestedSection(page, nested.section, "ფართი", sectionArea);
+        }
+      }
+    }
+
+    await prefillViewField(page, listing);
+
+    const lukSelectPrefillOrder = ["შესასვლელი"] as const;
+    for (const label of lukSelectPrefillOrder) {
+      const value =
+        listing.rawData?.[label]?.trim() ||
+        PREFILL_LIST_FIELDS.find((f) => f.labels.includes(label))?.getValue(listing)?.trim() ||
+        "";
+      if (!value) continue;
+      await prefillLukSelectByLabel(page, label, value);
+    }
+
+    for (const field of PREFILL_LIST_FIELDS) {
+      const value = field.getValue(listing)?.trim();
+      if (!value) continue;
+      for (const label of field.labels) {
+        if (label === "პროექტის ტიპი") continue;
+        if (
+          label === "სათავსო" ||
+          label === "სათავსოს ტიპი" ||
+          label === "მისაღები"
+        ) {
+          continue;
+        }
+        if (lukSelectPrefillOrder.includes(label as (typeof lukSelectPrefillOrder)[number])) {
+          continue;
+        }
+        await closeOpenDropdowns(page);
+        await prefillLukSelectByLabel(page, label, value);
+        break;
+      }
+    }
+
+    const projectType = getProjectTypeValue(listing);
+    if (projectType) {
+      await closeOpenDropdowns(page);
+      await prefillProjectTypeField(page, projectType);
+    }
   }
+
   await closeOpenDropdowns(page);
 }
 
@@ -7695,8 +7965,12 @@ export async function uploadListingImages(
 export async function createMyhomePost(
   credentials: MyhomeCredentials,
   listing: MyhomeListing,
-  options: { listingId: string; userId: string }
+  options: { listingId: string; userId: string; sourceUrl?: string | null }
 ): Promise<{ success: boolean; postUrl?: string; error?: string }> {
+  listing = normalizeListingForMyhomePrefill(listing, {
+    sourceUrl: options.sourceUrl,
+  });
+
   const reuseSession =
       postSession?.email === credentials.email && postSession.browser.isConnected();
 
@@ -8024,6 +8298,9 @@ export async function createMyhomePost(
     await switchPriceFieldToUsd(page, "#total_price");
     await prefillMainAreaField(page, listing);
 
+    const isLandPlotListing = /მიწის\s*ნაკვეთი/i.test(
+      listing.propertyType || ""
+    );
     const bedroomsForForm = getBedroomsValue(listing);
     const bathroomsForForm = getBathroomsValue(listing);
     const totalFloorsForForm = getTotalFloorsValue(listing);
@@ -8035,24 +8312,31 @@ export async function createMyhomePost(
       pricePerSqm: listing.pricePerSqm,
       currency: "USD",
       area: areaForForm,
-      rooms: listing.rooms,
-      bedrooms: bedroomsForForm,
-      bathrooms: bathroomsForForm,
-      floor: listing.floor,
-      totalFloors: totalFloorsForForm,
+      rooms: isLandPlotListing ? "" : listing.rooms,
+      bedrooms: isLandPlotListing ? "" : bedroomsForForm,
+      bathrooms: isLandPlotListing ? "" : bathroomsForForm,
+      floor: isLandPlotListing ? "" : listing.floor,
+      totalFloors: isLandPlotListing ? "" : totalFloorsForForm,
       description: listing.description,
     });
 
-    await applyAdditionalParametersPrefill(page, listing, {
-      skipStatusAndCondition: true,
-    });
-
-    if (!listingHasBalconyData(listing)) {
-      await clearBalconyFormFields(page);
+    try {
+      await applyAdditionalParametersPrefill(page, listing, {
+        skipStatusAndCondition: true,
+      });
+    } catch (e) {
+      console.warn(
+        "[myhome prefill] additional parameters warning:",
+        e instanceof Error ? e.message : e
+      );
     }
 
-    if (getAreaValue(listing)) {
-      await prefillMainAreaField(page, listing);
+    try {
+      if (!isLandPlotListing && !listingHasBalconyData(listing)) {
+        await clearBalconyFormFields(page);
+      }
+    } catch (e) {
+      console.warn("[myhome prefill] post-area cleanup warning:", e instanceof Error ? e.message : e);
     }
 
     // Upload images to photo gallery

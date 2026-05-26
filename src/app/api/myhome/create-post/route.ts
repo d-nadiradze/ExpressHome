@@ -75,7 +75,7 @@ export async function POST(request: NextRequest) {
         images: (listing.images as string[]) || [],
         rawData: (listing.rawData as Record<string, string>) || {},
       },
-      { listingId, userId }
+      { listingId, userId, sourceUrl: listing.sourceUrl }
     );
 
     if (!result.success) {
