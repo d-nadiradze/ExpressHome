@@ -38,6 +38,13 @@ const PREFILL_PAUSE_MS = 20;
 const USER_AGENT =
   "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36";
 
+const DOCKER_SAFE_CHROMIUM_ARGS = [
+  "--no-sandbox",
+  "--disable-setuid-sandbox",
+  "--disable-dev-shm-usage",
+  "--disable-gpu",
+];
+
 const SSGE_CREATE_URL = "https://home.ss.ge/ka/udzravi-qoneba/create";
 /** Standalone login page (მობილური ან ელ.ფოსტა + პაროლი). */
 const SSGE_ACCOUNT_LOGIN_URL = "https://account.ss.ge/ka/account/login";
@@ -564,11 +571,7 @@ export async function loginToSsge(credentials: SsgeCredentials): Promise<{
 }> {
   const browser = await chromium.launch({
     headless: true,
-    args: [
-      "--no-sandbox", "--disable-setuid-sandbox",
-      "--disable-dev-shm-usage", "--disable-gpu",
-      "--single-process", "--no-zygote",
-    ],
+    args: DOCKER_SAFE_CHROMIUM_ARGS,
   });
   const context = await browser.newContext({
     userAgent: USER_AGENT,
@@ -2389,10 +2392,11 @@ export async function createSsgePost(
     browser = await chromium.launch({
       headless,
       args: [
-        "--no-sandbox", "--disable-setuid-sandbox",
+        "--no-sandbox",
+        "--disable-setuid-sandbox",
         ...(headless ? [] : ["--start-maximized"]),
-        "--disable-dev-shm-usage", "--disable-gpu",
-        "--single-process", "--no-zygote",
+        "--disable-dev-shm-usage",
+        "--disable-gpu",
       ],
     });
     context = await browser.newContext({

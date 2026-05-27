@@ -6188,6 +6188,7 @@ export async function loginToMyhome(credentials: MyhomeCredentials): Promise<{
     try {
       await page.waitForURL((url) => !url.href.includes("auth.tnet.ge"), {
         timeout: 12000,
+        waitUntil: "domcontentloaded",
       });
     } catch {
       return { success: false, error: "Invalid credentials or login failed" };
@@ -8556,7 +8557,6 @@ export async function createMyhomePost(
       args: [
         "--no-sandbox", "--disable-setuid-sandbox", "--start-maximized",
         "--disable-dev-shm-usage", "--disable-gpu",
-        "--single-process", "--no-zygote",
         ...(headless ? ["--window-size=1920,1080"] : []),
       ],
     });
