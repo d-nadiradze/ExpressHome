@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { db } from "@/lib/db";
 import { decrypt } from "@/lib/encryption";
 import { createMyhomePost } from "@/lib/myhome-parser";
+import { enqueuePrefill } from "@/lib/prefill-queue";
 
 export async function POST(request: NextRequest) {
   const userId = request.headers.get("x-user-id");
@@ -44,8 +45,9 @@ export async function POST(request: NextRequest) {
       data: { postStatus: "PENDING" },
     });
 
-    // Pre-fill the form in a visible browser
-    const result = await createMyhomePost(
+    const result = await enqueuePrefill(
+      `myhome-${listingId}`,
+      () => createMyhomePost(
       { email: myhomeAccount.myhomeEmail, password },
       {
         title: listing.title || "",
@@ -76,7 +78,7 @@ export async function POST(request: NextRequest) {
         rawData: (listing.rawData as Record<string, string>) || {},
       },
       { listingId, userId, sourceUrl: listing.sourceUrl }
-    );
+    ));
 
     if (!result.success) {
       await db.parsedListing.update({

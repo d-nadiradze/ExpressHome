@@ -101,9 +101,8 @@ export default function ParsePage() {
       listingIdRef.current = data.listingId;
       setParseStatus("parsing");
 
-      pollingRef.current = setInterval(pollStatus, 3000);
-      // First poll immediately
-      setTimeout(pollStatus, 500);
+      pollingRef.current = setInterval(pollStatus, 1000);
+      void pollStatus();
     } catch {
       toast.error("Something went wrong");
       setParseStatus("idle");

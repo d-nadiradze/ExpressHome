@@ -3,6 +3,7 @@ import {
   chromium,
   type Browser,
   type BrowserContext,
+  type Locator,
   type Page,
 } from "playwright";
 import {
@@ -32,7 +33,7 @@ export interface SsgeCredentials {
   password: string;
 }
 
-const PREFILL_PAUSE_MS = 80;
+const PREFILL_PAUSE_MS = 20;
 
 const USER_AGENT =
   "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36";
@@ -40,6 +41,179 @@ const USER_AGENT =
 const SSGE_CREATE_URL = "https://home.ss.ge/ka/udzravi-qoneba/create";
 /** Standalone login page (მობილური ან ელ.ფოსტა + პაროლი). */
 const SSGE_ACCOUNT_LOGIN_URL = "https://account.ss.ge/ka/account/login";
+
+function isSsgeBrokenAccountUrl(url: string): boolean {
+  return /\/ka\/account\/null(?:\?|#|$)/i.test(url);
+}
+
+/** NextAuth session on home.ss.ge (required for create wizard API / step 5+). */
+async function hasSsgeNextAuthSession(context: BrowserContext): Promise<boolean> {
+  const cookies = await context.cookies("https://home.ss.ge");
+  return cookies.some(
+    (c) =>
+      /next-auth\.session-token/i.test(c.name) &&
+      (c.value?.length ?? 0) > 20
+  );
+}
+
+async function waitForSsgeNextAuthSession(
+  page: Page,
+  timeout = 45000
+): Promise<void> {
+  const deadline = Date.now() + timeout;
+  while (Date.now() < deadline) {
+    if (await hasSsgeNextAuthSession(page.context())) return;
+    await page.waitForTimeout(400);
+  }
+  throw new Error("ss.ge NextAuth session not established on home.ss.ge");
+}
+
+/** Click header შესვლა → account login with OAuth returnUrl (not plain create URL). */
+async function clickSsgeSignInButton(page: Page): Promise<boolean> {
+  return page.evaluate(() => {
+    const buttons = [...document.querySelectorAll("button")].filter(
+      (b) => (b.textContent || "").trim() === "შესვლა"
+    );
+    const btn =
+      buttons.find((b) => {
+        const r = b.getBoundingClientRect();
+        return r.width > 0 && r.height > 0 && r.top < 320;
+      }) ?? buttons[0];
+    if (!btn) return false;
+    (btn as HTMLButtonElement).click();
+    return true;
+  });
+}
+
+/** Open account login through home.ss.ge NextAuth (preserves OAuth callback). */
+async function openSsgeLoginViaNextAuth(page: Page): Promise<void> {
+  if (!page.url().includes("home.ss.ge")) {
+    await page.goto(SSGE_CREATE_URL, {
+      waitUntil: "load",
+      timeout: 45000,
+    });
+  } else if (!page.url().includes("/create")) {
+    await page.goto(SSGE_CREATE_URL, {
+      waitUntil: "load",
+      timeout: 45000,
+    });
+  } else {
+    await page.waitForLoadState("load", { timeout: 15000 }).catch(() => null);
+  }
+  await prefillPause(page, 1500);
+
+  if (!(await clickSsgeSignInButton(page))) {
+    await prefillPause(page, 2000);
+    if (!(await clickSsgeSignInButton(page))) {
+      throw new Error("ss.ge sign-in button not found on create page");
+    }
+  }
+
+  await page.waitForURL(
+    (url) =>
+      url.href.includes("account.ss.ge") &&
+      (url.href.includes("/login") || url.href.includes("/Login")),
+    { timeout: 20000 }
+  );
+}
+
+/** NextAuth entry on create, or direct account login if the sign-in button is missing. */
+async function gotoSsgeAccountLogin(page: Page): Promise<void> {
+  try {
+    await openSsgeLoginViaNextAuth(page);
+    if (await isSsgeLoginFormVisible(page)) return;
+  } catch {
+    /* fall through to direct login URL */
+  }
+
+  const loginUrl = `${SSGE_ACCOUNT_LOGIN_URL}?returnUrl=${encodeURIComponent(SSGE_CREATE_URL)}`;
+  await page.goto(loginUrl, { waitUntil: "load", timeout: 30000 });
+  if (isSsgeBrokenAccountUrl(page.url())) {
+    await page.goto(SSGE_ACCOUNT_LOGIN_URL, {
+      waitUntil: "load",
+      timeout: 30000,
+    });
+  }
+}
+
+/** True after a successful sign-in (for account linking — wizard not required). */
+async function isSsgeLoginSucceeded(page: Page): Promise<boolean> {
+  if (isSsgeBrokenAccountUrl(page.url())) return false;
+  if (isSsgeLoginPage(page.url())) return false;
+  if (await isSsgeLoginFormVisible(page)) return false;
+  if (await hasSsgeNextAuthSession(page.context())) return true;
+  return page.url().includes("home.ss.ge");
+}
+
+async function verifySsgeCredentialsOnPage(
+  page: Page,
+  credentials: SsgeCredentials
+): Promise<{ ok: boolean; error?: string }> {
+  await gotoSsgeAccountLogin(page);
+
+  if (!(await isSsgeLoginFormVisible(page))) {
+    return {
+      ok: false,
+      error: `ss.ge login form not found (at ${page.url()})`,
+    };
+  }
+
+  await submitSsgeLoginForm(page, credentials);
+  await prefillPause(page, 1200);
+
+  if (!page.url().includes("home.ss.ge")) {
+    await page
+      .waitForURL(
+        (url) => {
+          const href = url.href;
+          return (
+            !isSsgeBrokenAccountUrl(href) &&
+            !isSsgeLoginPage(href) &&
+            (href.includes("home.ss.ge") || href.includes("account.ss.ge"))
+          );
+        },
+        { timeout: 45000 }
+      )
+      .catch(() => null);
+  }
+
+  if (!page.url().includes("home.ss.ge")) {
+    await page
+      .goto("https://home.ss.ge/", { waitUntil: "load", timeout: 30000 })
+      .catch(() => null);
+    await prefillPause(page, 600);
+  }
+
+  try {
+    await waitForSsgeNextAuthSession(page, 20000);
+    return { ok: true };
+  } catch {
+    /* session cookie may appear after home visit */
+  }
+
+  if (await isSsgeLoginSucceeded(page)) {
+    return { ok: true };
+  }
+
+  if (isSsgeLoginPage(page.url()) || (await isSsgeLoginFormVisible(page))) {
+    return { ok: false, error: "Invalid email or password" };
+  }
+
+  return {
+    ok: false,
+    error: `Login did not complete (at ${page.url()})`,
+  };
+}
+
+function ssgeLoginFailureMessage(page: Page): string {
+  if (isSsgeBrokenAccountUrl(page.url())) {
+    return "ss.ge opened a broken account page (/account/null) — retry prefill";
+  }
+  if (isSsgeLoginPage(page.url())) {
+    return "ss.ge login failed — check linked email and password";
+  }
+  return `ss.ge login failed — create form did not load (at ${page.url()})`;
+}
 
 /** Reused visible browser session so repeat pre-fills skip login. */
 let postSession: {
@@ -53,21 +227,240 @@ async function prefillPause(page: Page, ms = PREFILL_PAUSE_MS) {
 }
 
 function isSsgeLoginPage(url: string): boolean {
-  return url.includes("account.ss.ge") && url.includes("/login");
+  return url.includes("account.ss.ge") && /\/login/i.test(url);
 }
 
-/** Fill account.ss.ge login form (POST /Login — see DevTools on account.ss.ge). */
-async function fillSsgeLoginForm(
+async function isSsgeLoginFormVisible(page: Page): Promise<boolean> {
+  if (isSsgeLoginPage(page.url())) return true;
+  const passwordVisible = await page
+    .locator(
+      'form[action="/Login"] input[type="password"], input[name="password"], input[name="Password"]'
+    )
+    .first()
+    .isVisible({ timeout: 1500 })
+    .catch(() => false);
+  if (!passwordVisible) return false;
+  const loginBtn = await page
+    .getByRole("button", { name: /^შესვლა$/i })
+    .first()
+    .isVisible({ timeout: 1500 })
+    .catch(() => false);
+  return loginBtn;
+}
+
+const SSGE_UNFINISHED_MODAL_TITLE = "განთავსების გაგრძელება";
+const SSGE_NEW_LISTING_BUTTON = "დაამატე ახალი განცხადება";
+
+/**
+ * Unfinished-draft modal on /create (only when the “new listing” button is shown).
+ * If this is false, prefill continues unchanged.
+ */
+async function isSsgeUnfinishedDraftModalVisible(page: Page): Promise<boolean> {
+  const newListingBtn = page
+    .getByRole("button", { name: SSGE_NEW_LISTING_BUTTON })
+    .first();
+  if (!(await newListingBtn.isVisible({ timeout: 1000 }).catch(() => false))) {
+    return false;
+  }
+  return page
+    .locator("h6")
+    .filter({ hasText: SSGE_UNFINISHED_MODAL_TITLE })
+    .first()
+    .isVisible({ timeout: 500 })
+    .catch(() => true);
+}
+
+/**
+ * If the unfinished-draft modal is open: click **დაამატე ახალი განცხადება**, then wait for a clean wizard.
+ * If it never appears: no-op — prefill proceeds as before.
+ */
+async function dismissSsgeUnfinishedDraftModal(page: Page): Promise<void> {
+  if (!(await isSsgeUnfinishedDraftModalVisible(page))) {
+    return;
+  }
+
+  const newListingBtn = page
+    .getByRole("button", { name: SSGE_NEW_LISTING_BUTTON })
+    .first();
+  const clicked = await newListingBtn
+    .click({ timeout: 8000 })
+    .then(() => true)
+    .catch(async () =>
+      page.evaluate((buttonText) => {
+        const norm = (s: string) => s.replace(/\s+/g, " ").trim();
+        for (const btn of document.querySelectorAll("button")) {
+          if (norm(btn.textContent || "") !== buttonText) continue;
+          if ((btn as HTMLElement).offsetParent === null) continue;
+          (btn as HTMLButtonElement).click();
+          return true;
+        }
+        return false;
+      }, SSGE_NEW_LISTING_BUTTON)
+    );
+
+  if (!clicked) {
+    throw new Error(
+      "ss.ge unfinished-draft modal: could not click new listing button"
+    );
+  }
+
+  console.log("[ss.ge prefill] dismissed unfinished-draft modal (new listing)");
+
+  const modalGoneBy = Date.now() + 15000;
+  while (Date.now() < modalGoneBy) {
+    if (!(await isSsgeUnfinishedDraftModalVisible(page))) break;
+    await page.waitForTimeout(300);
+  }
+
+  if (
+    page.url().includes("home.ss.ge") &&
+    (await isSsgeOnCreateWizard(page))
+  ) {
+    await prefillPause(page, 200);
+    return;
+  }
+
+  const wizardBy = Date.now() + 20000;
+  while (Date.now() < wizardBy) {
+    if (
+      page.url().includes("home.ss.ge") &&
+      (await isSsgeOnCreateWizard(page))
+    ) {
+      await prefillPause(page, 200);
+      return;
+    }
+    await page.waitForTimeout(400);
+  }
+
+  if (await isSsgeUnfinishedDraftModalVisible(page)) {
+    throw new Error("ss.ge unfinished-draft modal blocked prefill");
+  }
+}
+
+/** Create wizard step 1 content is on the page (shown even when logged out). */
+async function isSsgeOnCreateWizard(page: Page): Promise<boolean> {
+  if (!page.url().includes("home.ss.ge")) return false;
+  if (!page.url().includes("/create")) return false;
+  if (isSsgeLoginPage(page.url())) return false;
+  if (await isSsgeLoginFormVisible(page)) return false;
+  return page.evaluate(() =>
+    !!Array.from(document.querySelectorAll("p")).find((p) =>
+      (p.textContent || "").includes("აირჩიე კატეგორია")
+    )
+  );
+}
+
+/** Visible sign-in affordance on home.ss.ge (use href, not duplicate header text). */
+async function isSsgeLoggedOutOnHome(page: Page): Promise<boolean> {
+  if (!page.url().includes("home.ss.ge")) return false;
+  const loginLink = page.locator('a[href*="/account/login"]').first();
+  if (await loginLink.isVisible({ timeout: 800 }).catch(() => false)) {
+    return true;
+  }
+  return page.evaluate(() => {
+    for (const a of document.querySelectorAll("a")) {
+      const href = a.href || "";
+      if (!href.includes("account.ss.ge") || !href.includes("login")) continue;
+      if (href.includes("/account/null")) continue;
+      const rect = a.getBoundingClientRect();
+      if (rect.width < 1 || rect.height < 1 || rect.top > 280) continue;
+      return true;
+    }
+    return false;
+  });
+}
+
+async function isSsgeHeaderLoginPromptVisible(page: Page): Promise<boolean> {
+  return isSsgeLoggedOutOnHome(page);
+}
+
+/** Signed-in on home.ss.ge for create-listing API steps. */
+async function isSsgeHomeAuthenticated(page: Page): Promise<boolean> {
+  if (!page.url().includes("home.ss.ge")) return false;
+  if (await hasSsgeNextAuthSession(page.context())) return true;
+  return !(await isSsgeLoggedOutOnHome(page));
+}
+
+async function waitForSsgeOnCreate(
+  page: Page,
+  timeout = 30000
+): Promise<void> {
+  const deadline = Date.now() + timeout;
+  while (Date.now() < deadline) {
+    if (isSsgeLoginPage(page.url()) || (await isSsgeLoginFormVisible(page))) {
+      throw new Error("ss.ge login page still open after sign-in");
+    }
+    if (await isSsgeUnfinishedDraftModalVisible(page)) {
+      await dismissSsgeUnfinishedDraftModal(page);
+      continue;
+    }
+    if (await isSsgeOnCreateWizard(page)) return;
+    await page.waitForTimeout(400);
+  }
+  throw new Error("ss.ge create wizard did not load");
+}
+
+async function openSsgeCreateAfterLogin(page: Page): Promise<void> {
+  await waitForSsgeNextAuthSession(page, 45000);
+
+  if (!page.url().includes("home.ss.ge")) {
+    await page.goto(SSGE_CREATE_URL, {
+      waitUntil: "load",
+      timeout: 45000,
+    });
+  } else if (!page.url().includes("/create")) {
+    await page.goto(SSGE_CREATE_URL, {
+      waitUntil: "load",
+      timeout: 45000,
+    });
+  }
+
+  await dismissSsgeUnfinishedDraftModal(page);
+  await waitForSsgeOnCreate(page, 30000);
+
+  if (!(await hasSsgeNextAuthSession(page.context()))) {
+    throw new Error("ss.ge NextAuth session missing on create page");
+  }
+}
+
+async function ensureSsgeHomeAuthenticated(
   page: Page,
   credentials: SsgeCredentials
 ): Promise<void> {
-  // Placeholders are visual-only; inputs use name attributes on the server form.
+  if (await hasSsgeNextAuthSession(page.context())) return;
+  console.log("[ss.ge prefill] NextAuth session lost — re-signing in…");
+  const ok = await performSsgeLogin(page, credentials);
+  if (!ok) throw new Error(ssgeLoginFailureMessage(page));
+}
+
+/** Must log in before prefill when login UI is showing or create wizard is missing. */
+async function needsSsgeLogin(page: Page): Promise<boolean> {
+  if (isSsgeBrokenAccountUrl(page.url())) return true;
+  if (await isSsgeLoginFormVisible(page)) return true;
+  if (isSsgeLoginPage(page.url())) return true;
+  if (!page.url().includes("home.ss.ge")) return true;
+  if (!page.url().includes("/create")) return true;
+  return !(await isSsgeOnCreateWizard(page));
+}
+
+/** Fill account.ss.ge login form and click შესვლა (same flow as myhome credential submit). */
+async function submitSsgeLoginForm(
+  page: Page,
+  credentials: SsgeCredentials
+): Promise<void> {
+  await page
+    .locator(
+      'form[action="/Login"], form[method="post"], input[name="password"], input[type="password"]'
+    )
+    .first()
+    .waitFor({ state: "visible", timeout: 15000 });
+
   const usernameLocator = page
     .locator(
-      'form[action="/Login"] input[name="useName"], form[action="/Login"] input[name="userName"], input[name="useName"], input[name="userName"]'
+      'form[action="/Login"] input[name="userName"], form[action="/Login"] input[name="useName"], input[name="userName"], input[name="useName"], input[type="email"]'
     )
     .first();
-  await usernameLocator.waitFor({ state: "visible", timeout: 20000 });
+  await usernameLocator.waitFor({ state: "visible", timeout: 12000 });
   await usernameLocator.fill(credentials.email);
 
   const passwordLocator = page
@@ -75,77 +468,122 @@ async function fillSsgeLoginForm(
       'form[action="/Login"] input[name="password"], form[action="/Login"] input[name="Password"], input[name="password"], input[type="password"]'
     )
     .first();
-  await passwordLocator.waitFor({ state: "visible", timeout: 10000 });
+  await passwordLocator.waitFor({ state: "visible", timeout: 8000 });
   await passwordLocator.fill(credentials.password);
 
-  const submit = page
-    .locator('form[action="/Login"] button[type="submit"]')
-    .or(page.getByRole("button", { name: /^შესვლა$/i }))
-    .first();
-  await submit.click({ timeout: 10000 });
+  const submit = page.getByRole("button", { name: /^შესვლა$/i }).first();
+  await submit.waitFor({ state: "visible", timeout: 8000 });
+  await Promise.all([
+    page
+      .waitForURL(
+        (url) => {
+          const href = url.href;
+          if (isSsgeBrokenAccountUrl(href) || isSsgeLoginPage(href)) return false;
+          return href.includes("home.ss.ge");
+        },
+        { timeout: 45000 }
+      )
+      .catch(() => null),
+    submit.click({ timeout: 10000 }),
+  ]);
 }
 
 /**
- * Submit credentials on account.ss.ge and wait until login completes.
- * Returns false when still on the login page (bad credentials or error).
+ * Log in on account.ss.ge, then open the create wizard on home.ss.ge.
  */
 async function performSsgeLogin(
   page: Page,
   credentials: SsgeCredentials,
-  startUrl: string
+  _startUrl?: string
 ): Promise<boolean> {
-  await page.goto(startUrl, { waitUntil: "domcontentloaded", timeout: 30000 });
+  if (
+    page.url().includes("home.ss.ge") &&
+    (await hasSsgeNextAuthSession(page.context())) &&
+    (await isSsgeOnCreateWizard(page))
+  ) {
+    return true;
+  }
 
-  if (isSsgeLoginPage(page.url())) {
+  try {
+    await gotoSsgeAccountLogin(page);
+  } catch (e) {
+    console.warn("[ss.ge prefill] login entry:", e);
+    return false;
+  }
+
+  if (isSsgeBrokenAccountUrl(page.url())) {
+    console.warn("[ss.ge prefill] landed on broken account URL:", page.url());
+    return false;
+  }
+
+  if (!(await isSsgeLoginFormVisible(page))) {
+    console.warn("[ss.ge prefill] login form not found at", page.url());
+    return false;
+  }
+
+  await submitSsgeLoginForm(page, credentials);
+  await prefillPause(page, 1000);
+
+  if (isSsgeLoginPage(page.url()) || isSsgeBrokenAccountUrl(page.url())) {
+    return false;
+  }
+
+  if (!page.url().includes("home.ss.ge")) {
     await page
-      .locator('form[action="/Login"], form[method="post"]')
-      .first()
-      .waitFor({ state: "visible", timeout: 20000 })
+      .waitForURL(
+        (url) => {
+          const href = url.href;
+          return (
+            !isSsgeBrokenAccountUrl(href) &&
+            !isSsgeLoginPage(href) &&
+            href.includes("home.ss.ge")
+          );
+        },
+        { timeout: 45000 }
+      )
       .catch(() => null);
   }
 
-  if (!isSsgeLoginPage(page.url())) {
-    // Already authenticated for home.ss.ge (e.g. create page loaded).
-    if (page.url().includes("home.ss.ge")) return true;
-    // Open create page — ss.ge redirects to account login with OAuth returnUrl.
-    await page.goto(SSGE_CREATE_URL, {
-      waitUntil: "domcontentloaded",
-      timeout: 30000,
-    });
-  }
-
-  if (!isSsgeLoginPage(page.url())) {
-    return page.url().includes("home.ss.ge");
-  }
-
-  await fillSsgeLoginForm(page, credentials);
-
   try {
-    await page.waitForURL((url) => !isSsgeLoginPage(url.href), { timeout: 20000 });
-    return true;
-  } catch {
-    const stillLogin = isSsgeLoginPage(page.url());
-    if (stillLogin) return false;
-    return page.url().includes("home.ss.ge") || page.url().includes("account.ss.ge");
+    await openSsgeCreateAfterLogin(page);
+  } catch (e) {
+    console.warn("[ss.ge prefill] OAuth session / create wizard:", e);
+    return false;
   }
+
+  return (
+    (await hasSsgeNextAuthSession(page.context())) &&
+    (await isSsgeOnCreateWizard(page))
+  );
 }
 
-/** Verify ss.ge credentials via account.ss.ge login page. */
+/** Verify ss.ge credentials (account link flow — same OAuth login as prefill). */
 export async function loginToSsge(credentials: SsgeCredentials): Promise<{
   success: boolean;
   error?: string;
 }> {
   const browser = await chromium.launch({
     headless: true,
-    args: ["--no-sandbox", "--disable-setuid-sandbox"],
+    args: [
+      "--no-sandbox", "--disable-setuid-sandbox",
+      "--disable-dev-shm-usage", "--disable-gpu",
+      "--single-process", "--no-zygote",
+    ],
   });
-  const context = await browser.newContext({ userAgent: USER_AGENT });
+  const context = await browser.newContext({
+    userAgent: USER_AGENT,
+    locale: "ka-GE",
+    viewport: { width: 1920, height: 1080 },
+  });
   const page = await context.newPage();
 
   try {
-    const ok = await performSsgeLogin(page, credentials, SSGE_ACCOUNT_LOGIN_URL);
-    if (!ok) {
-      return { success: false, error: "Invalid credentials or login failed" };
+    const result = await verifySsgeCredentialsOnPage(page, credentials);
+    if (!result.ok) {
+      return {
+        success: false,
+        error: result.error || "Invalid credentials or login failed",
+      };
     }
     return { success: true };
   } catch (error) {
@@ -159,19 +597,65 @@ export async function loginToSsge(credentials: SsgeCredentials): Promise<{
   }
 }
 
+/** @deprecated Use isSsgeOnCreateWizard — kept for call sites. */
+async function isSsgeCreateWizardReady(page: Page): Promise<boolean> {
+  return isSsgeOnCreateWizard(page);
+}
+
 /**
- * Login inside an existing browser session. Opens the create page first so
- * ss.ge supplies the correct OAuth returnUrl, then fills account.ss.ge if
- * redirected.
+ * Fresh browser: log in first (myhome-style), then wait for create wizard.
+ * Reused browser: open create and log in only if session expired.
  */
-async function ensurePostSessionLogin(
+async function ensureSsgeCreateFormReady(
   page: Page,
-  credentials: SsgeCredentials
+  credentials: SsgeCredentials,
+  options?: { freshSession?: boolean }
 ): Promise<void> {
-  const ok = await performSsgeLogin(page, credentials, SSGE_CREATE_URL);
-  if (!ok) {
-    throw new Error("ss.ge login failed — check linked credentials");
+  if (options?.freshSession) {
+    console.log("[ss.ge prefill] Logging in before prefill…");
+    const ok = await performSsgeLogin(
+      page,
+      credentials,
+      SSGE_ACCOUNT_LOGIN_URL
+    );
+    if (!ok) {
+      throw new Error(ssgeLoginFailureMessage(page));
+    }
+    await waitForSsgeForm(page);
+    return;
   }
+
+  await page.goto(SSGE_CREATE_URL, {
+    waitUntil: "load",
+    timeout: 30000,
+  });
+  await page
+    .waitForURL(
+      (url) =>
+        url.href.includes("home.ss.ge") || isSsgeLoginPage(url.href),
+      { timeout: 15000 }
+    )
+    .catch(() => null);
+  await prefillPause(page, 400);
+  await dismissSsgeUnfinishedDraftModal(page);
+
+  if (await needsSsgeLogin(page)) {
+    console.log("[ss.ge prefill] Not signed in — logging in before prefill…");
+    const ok = await performSsgeLogin(
+      page,
+      credentials,
+      SSGE_ACCOUNT_LOGIN_URL
+    );
+    if (!ok) {
+      throw new Error(ssgeLoginFailureMessage(page));
+    }
+  }
+
+  if (await needsSsgeLogin(page)) {
+    throw new Error(ssgeLoginFailureMessage(page));
+  }
+
+  await waitForSsgeForm(page);
 }
 
 // ---------------------------------------------------------------------------
@@ -220,7 +704,7 @@ async function ssgeClickCard(
     },
     { text }
   );
-  if (clicked) await prefillPause(page, 200);
+  if (clicked) await prefillPause(page, 80);
   return clicked;
 }
 
@@ -293,7 +777,7 @@ async function ssgeClickChipNearLabel(
     },
     { chipText, sectionLabel }
   );
-  if (clicked) await prefillPause(page, 200);
+  if (clicked) await prefillPause(page, 80);
   return clicked;
 }
 
@@ -358,7 +842,7 @@ async function ssgeClickAdditionalInfoToggle(
   }, variants);
 
   if (clicked) {
-    await prefillPause(page, 180);
+    await prefillPause(page, 80);
     return true;
   }
 
@@ -386,7 +870,7 @@ async function ssgeClickAdditionalInfoToggle(
           !!el.querySelector("span[class*='check_circle-fill']")
       );
       if (!isActive) await chip.click({ timeout: 5000, force: true });
-      await prefillPause(page, 180);
+      await prefillPause(page, 80);
       return true;
     } catch {
       continue;
@@ -408,7 +892,7 @@ async function ssgePrefillViewChips(
     if (!ok) {
       console.warn(`[ss.ge prefill] view chip "${chip}" not selected`);
     }
-    await prefillPause(page, 150);
+    await prefillPause(page, 60);
   }
 }
 
@@ -501,7 +985,7 @@ async function ssgePrefillCondition(
   }, chipText);
 
   if (clicked) {
-    await prefillPause(page, 250);
+    await prefillPause(page, 40);
     return true;
   }
 
@@ -514,9 +998,9 @@ async function ssgePrefillCondition(
       })
       .filter({ has: page.locator("p") })
       .first();
-    await chip.scrollIntoViewIfNeeded({ timeout: 8000 });
-    await chip.click({ timeout: 8000, force: true });
-    await prefillPause(page, 250);
+    await chip.scrollIntoViewIfNeeded({ timeout: 5000 });
+    await chip.click({ timeout: 5000, force: true });
+    await prefillPause(page, 40);
     return true;
   } catch {
     return false;
@@ -629,7 +1113,7 @@ async function ssgeClickNumberNear(
     },
     { number, sectionLabel }
   );
-  if (clicked) await prefillPause(page, 200);
+  if (clicked) await prefillPause(page, 80);
   return clicked;
 }
 
@@ -689,7 +1173,7 @@ async function ssgeClickExactChipNear(
     { target, sectionLabel }
   );
 
-  if (clicked) await prefillPause(page, 250);
+  if (clicked) await prefillPause(page, 40);
   return clicked;
 }
 
@@ -773,7 +1257,7 @@ async function ssgeFillNumericOverflowInput(
   );
 
   if (filled) {
-    await prefillPause(page, 200);
+    await prefillPause(page, 80);
     return true;
   }
 
@@ -783,7 +1267,7 @@ async function ssgeFillNumericOverflowInput(
       await bedInput.scrollIntoViewIfNeeded().catch(() => null);
       await bedInput.click({ timeout: 5000 }).catch(() => null);
       await bedInput.fill(val, { timeout: 5000 });
-      await prefillPause(page, 200);
+      await prefillPause(page, 80);
       return true;
     }
   }
@@ -801,8 +1285,69 @@ async function ssgeFillNumericOverflowInput(
   if ((await input.count()) === 0) return false;
   await input.scrollIntoViewIfNeeded().catch(() => null);
   await input.fill(val, { timeout: 5000 });
-  await prefillPause(page, 200);
+  await prefillPause(page, 80);
   return true;
+}
+
+/** Fill bedroom count in the text box to the right of chip "9" (no 9+ chip on ss.ge). */
+async function ssgeFillBedroomsBox(page: Page, value: string): Promise<boolean> {
+  const digits = digitsOnly(value);
+  if (!digits) return false;
+  const num = parseInt(digits, 10);
+  if (!Number.isFinite(num) || num <= 9) return false;
+
+  console.log(
+    `[ss.ge prefill] საძინებელი ${num} > 9: typing ${digits} in input[name="bedrooms"]`
+  );
+
+  const bedInput = page.locator('input[name="bedrooms"]').first();
+  const hasInput = await bedInput
+    .waitFor({ state: "visible", timeout: 5000 })
+    .then(() => true)
+    .catch(() => false);
+
+  if (!hasInput) {
+    const byPlaceholder = await ssgeSetInputByPlaceholder(page, "საძინებელი", digits);
+    if (byPlaceholder) await prefillPause(page, 80);
+    return byPlaceholder;
+  }
+
+  await bedInput.scrollIntoViewIfNeeded().catch(() => null);
+  await bedInput.click({ timeout: 5000 });
+  await prefillPause(page, 40);
+
+  const filled = await page.evaluate((val) => {
+    const input = document.querySelector(
+      'input[name="bedrooms"]'
+    ) as HTMLInputElement | null;
+    if (!input) return false;
+    const setter = Object.getOwnPropertyDescriptor(
+      window.HTMLInputElement.prototype,
+      "value"
+    )?.set;
+    input.focus();
+    if (setter) setter.call(input, val);
+    else input.value = val;
+    input.dispatchEvent(
+      new InputEvent("input", {
+        bubbles: true,
+        cancelable: true,
+        inputType: "insertText",
+        data: val,
+      })
+    );
+    input.dispatchEvent(new Event("change", { bubbles: true }));
+    return input.value === val;
+  }, digits);
+
+  if (filled) {
+    await prefillPause(page, 80);
+    return true;
+  }
+
+  await bedInput.fill(digits, { timeout: 5000 }).catch(() => null);
+  await prefillPause(page, 80);
+  return (await bedInput.inputValue().catch(() => "")) === digits;
 }
 
 /**
@@ -829,6 +1374,10 @@ async function ssgePrefillNumericChipField(
     return ok;
   }
 
+  if (sectionLabel === "საძინებელი" && num > maxChip) {
+    return ssgeFillBedroomsBox(page, digits);
+  }
+
   const overflowChip = `${maxChip}+`;
   console.log(
     `[ss.ge prefill] ${sectionLabel} ${num} > ${maxChip}: click "${overflowChip}" and type ${digits}`
@@ -836,16 +1385,10 @@ async function ssgePrefillNumericChipField(
 
   const plusOk = await ssgeClickExactChipNear(page, overflowChip, sectionLabel);
   if (!plusOk) {
-    if (sectionLabel === "საძინებელი") {
-      console.log(
-        `[ss.ge prefill] ${sectionLabel}: "${overflowChip}" chip not found — filling input[name="bedrooms"] directly`
-      );
-    } else {
-      console.warn(
-        `[ss.ge prefill] ${sectionLabel} overflow chip "${overflowChip}" not clicked`
-      );
-      return false;
-    }
+    console.warn(
+      `[ss.ge prefill] ${sectionLabel} overflow chip "${overflowChip}" not clicked`
+    );
+    return false;
   }
 
   await page
@@ -871,11 +1414,11 @@ async function ssgePrefillNumericChipField(
         return false;
       },
       { sectionLabel },
-      { timeout: 8000 }
+      { timeout: 5000 }
     )
     .catch(() => null);
 
-  await prefillPause(page, 350);
+  await prefillPause(page, 60);
 
   const inputOk = await ssgeFillNumericOverflowInput(
     page,
@@ -928,39 +1471,121 @@ function ssgeStreetScore(want: string, option: string): number {
   return prefix * 15;
 }
 
+/** Alternate spellings for ss.ge street token search (e.g. კათოლიკოს აბრამ I ქ.). */
+const SSGE_STREET_WORD_ALIASES: Record<string, string[]> = {
+  კათოლიკოს: ["კათალიკოს"],
+  კათალიკოს: ["კათოლიკოს"],
+  აბრამ: ["აბრაჰამ"],
+  აბრაჰამ: ["აბრამ"],
+};
+
+function ssgeSignificantStreetWords(street: string): string[] {
+  const core = street
+    .replace(/\s+(ქ\.?|ქუჩა|შეს\.?|შესახვევი)\s*$/iu, "")
+    .replace(/\s+/g, " ")
+    .trim();
+  return core
+    .split(/\s+/)
+    .map((w) => w.replace(/\.$/, "").trim())
+    .filter((w) => w.length >= 3 && !/^[IVXLC]+$/iu.test(w));
+}
+
+/** Try individual name tokens when the full street string does not match. */
+function ssgeStreetWordFallbackQueries(street: string): string[] {
+  const out: string[] = [];
+  const seen = new Set<string>();
+  const push = (q: string) => {
+    const s = q.replace(/\s+/g, " ").trim();
+    if (!s || seen.has(s)) return;
+    seen.add(s);
+    out.push(s);
+  };
+
+  for (const word of ssgeSignificantStreetWords(street)) {
+    push(word);
+    for (const alias of SSGE_STREET_WORD_ALIASES[word] || []) {
+      push(alias);
+    }
+  }
+  return out;
+}
+
+function ssgeStreetSelectionOk(query: string, selected: string): boolean {
+  if (ssgeSelectionMatches(query, selected)) return true;
+  if (ssgeStreetScore(query, selected) >= 80) return true;
+
+  const selectedKey = ssgeStreetKey(selected);
+  const queryKey = ssgeStreetKey(query);
+  if (queryKey.length >= 4 && selectedKey.includes(queryKey)) return true;
+
+  for (const alias of SSGE_STREET_WORD_ALIASES[query] || []) {
+    const aliasKey = ssgeStreetKey(alias);
+    if (selectedKey.includes(aliasKey)) return true;
+  }
+
+  return false;
+}
+
 function ssgeStreetQueries(street: string): string[] {
   const s = (street || "").replace(/\s+/g, " ").trim();
   if (!s) return [];
 
-  const queries: string[] = [s];
+  const seen = new Set<string>();
+  const ordered: string[] = [];
+  const push = (q: string) => {
+    const v = q.replace(/\s+/g, " ").trim();
+    if (!v || seen.has(v)) return;
+    seen.add(v);
+    ordered.push(v);
+  };
+
+  // 1. Exact parsed street first.
+  push(s);
+
+  // 2. User-requested word fallbacks before any other reshaping.
+  for (const q of ssgeStreetWordFallbackQueries(s)) {
+    push(q);
+  }
+
+  // 3. Generic suffix/prefix reshaping only after word fallbacks fail.
+  const generic: string[] = [];
 
   const withoutPrefix = s.replace(/^[ა-ჰ]{1,2}\.\s*/iu, "").trim();
   if (withoutPrefix && withoutPrefix !== s) {
-    queries.push(withoutPrefix);
+    generic.push(withoutPrefix);
     const wpBase = withoutPrefix
       .replace(/\s+(ქ\.?|ქუჩა|შეს\.?|შესახვევი)\s*$/iu, "")
       .trim();
     if (wpBase && wpBase !== withoutPrefix) {
-      queries.push(`${wpBase} ქ.`);
-      queries.push(wpBase);
+      generic.push(`${wpBase} ქ.`, wpBase);
     }
   }
 
   const parenCleaned = s.replace(/\s*\([^)]*\)\s*/g, " ").replace(/\s+/g, " ").trim();
   if (parenCleaned && parenCleaned !== s) {
-    queries.push(parenCleaned);
+    generic.push(parenCleaned);
   }
 
-  queries.push(s.replace(/\s*შეს\.?/iu, " შეს. ").replace(/\s+/g, " ").trim());
-  queries.push(s.replace(/\./g, " ").replace(/\s+/g, " ").trim());
+  generic.push(s.replace(/\s*შეს\.?/iu, " შეს. ").replace(/\s+/g, " ").trim());
+  generic.push(s.replace(/\./g, " ").replace(/\s+/g, " ").trim());
 
   const base = s.replace(/\s+(ქ\.?|ქუჩა|შეს\.?|შესახვევი)\s*$/iu, "").trim();
   if (base) {
-    queries.push(base, `${base} ქ`, `${base} ქ.`, `${base} ქუჩა`,
-      `${base} შეს.`, `${base} შესახვევი`);
+    generic.push(
+      base,
+      `${base} ქ`,
+      `${base} ქ.`,
+      `${base} ქუჩა`,
+      `${base} შეს.`,
+      `${base} შესახვევი`
+    );
   }
 
-  return [...new Set(queries)].filter(Boolean);
+  for (const q of generic) {
+    push(q);
+  }
+
+  return ordered;
 }
 
 async function ssgeLocateReactSelectInput(
@@ -1058,14 +1683,14 @@ async function ssgeSelectReactOption(
   const clear = control.locator('[class*="select__clear-indicator"]');
   if ((await clear.count()) > 0 && (await clear.isVisible().catch(() => false))) {
     await clear.click({ timeout: 3000 }).catch(() => null);
-    await prefillPause(page, 100);
+    await prefillPause(page, 40);
   }
 
-  await control.click({ timeout: 8000 });
+  await control.click({ timeout: 5000 });
   await input.click({ timeout: 5000 });
   await input.fill("");
   await input.pressSequentially(target, { delay: 18 });
-  await prefillPause(page, 400);
+  await prefillPause(page, 60);
 
   const listboxId = await input.getAttribute("aria-controls");
   const options = listboxId
@@ -1094,15 +1719,17 @@ async function ssgeSelectReactOption(
   } else {
     let bestIdx = 0;
     let bestScore = -1;
+    const scoreFn =
+      hiddenInputName === "choose-street" ? ssgeStreetScore : ssgeOptionScore;
     for (let i = 0; i < optionCount; i++) {
       const text = (await options.nth(i).textContent())?.trim() || "";
-      const score = ssgeOptionScore(target, text);
+      const score = scoreFn(target, text);
       if (score > bestScore) {
         bestScore = score;
         bestIdx = i;
       }
     }
-    const minScore = hiddenInputName === "choose-street" ? 120 : 80;
+    const minScore = hiddenInputName === "choose-street" ? 80 : 80;
     if (bestScore < minScore) {
       console.warn(
         `[ss.ge prefill] react-select "${hiddenInputName}": weak match for "${target}" (score ${bestScore})`
@@ -1113,10 +1740,13 @@ async function ssgeSelectReactOption(
     await options.nth(bestIdx).click({ timeout: 5000 });
   }
 
-  await prefillPause(page, 200);
+  await prefillPause(page, 80);
 
   const selected = await readReactSelectValue(control);
-  const ok = ssgeSelectionMatches(target, selected);
+  const ok =
+    hiddenInputName === "choose-street"
+      ? ssgeStreetSelectionOk(target, selected)
+      : ssgeSelectionMatches(target, selected);
   if (!ok) {
     console.warn(
       `[ss.ge prefill] react-select "${hiddenInputName}": wanted "${target}", got "${selected}"`
@@ -1141,9 +1771,9 @@ async function ssgeFillLocationStep(
   await page
     .locator('input[id^="react-select-"][id$="-input"]')
     .first()
-    .waitFor({ state: "visible", timeout: 20000 })
+    .waitFor({ state: "visible", timeout: 12000 })
     .catch(() => null);
-  await prefillPause(page, 200);
+  await prefillPause(page, 80);
 
   if (cityQuery) {
     const cityOk = await ssgeSelectReactOption(page, "choose-city", cityQuery, 0);
@@ -1163,10 +1793,10 @@ async function ssgeFillLocationStep(
           );
           return visible.length >= 2;
         },
-        { timeout: 10000 }
+        { timeout: 6000 }
       )
       .catch(() => null);
-    await prefillPause(page, 400);
+    await prefillPause(page, 60);
   }
 
   if (streetRaw) {
@@ -1183,7 +1813,7 @@ async function ssgeFillLocationStep(
         `[ss.ge prefill] street "${streetRaw}" was not selected (tried ${streetQueries.length} queries)`
       );
     }
-    await prefillPause(page, 150);
+    await prefillPause(page, 60);
   }
 
   const streetNumber = listing.streetNumber?.trim();
@@ -1329,20 +1959,9 @@ async function ssgeSetTextarea(page: Page, value: string): Promise<boolean> {
  * Wait for the SS.ge React SPA to render step 1 content.
  * Polls until the "აირჩიე კატეგორია" heading <p> is in the DOM.
  */
-async function waitForSsgeForm(page: Page, timeout = 20000): Promise<void> {
-  const deadline = Date.now() + timeout;
-  while (Date.now() < deadline) {
-    const found = await page.evaluate(() =>
-      !!Array.from(document.querySelectorAll("p")).find((p) =>
-        (p.textContent || "").includes("აირჩიე კატეგორია") ||
-        (p.textContent || "").includes("აირჩიეთ") ||
-        (p.textContent || "").includes("საძინებელი")
-      )
-    );
-    if (found) break;
-    await page.waitForTimeout(500);
-  }
-  await prefillPause(page, 400);
+async function waitForSsgeForm(page: Page, timeout = 30000): Promise<void> {
+  await waitForSsgeOnCreate(page, timeout);
+  await prefillPause(page, 60);
 }
 
 /** True when listing currency is USD (handles "USD", "$", "usd"). */
@@ -1414,8 +2033,8 @@ async function ssgeFillPrice(
 
   const targetLabel = section.locator("label").nth(labelIndex);
   await targetLabel.scrollIntoViewIfNeeded().catch(() => null);
-  await targetLabel.click({ timeout: 8000, force: true });
-  await prefillPause(page, 350);
+  await targetLabel.click({ timeout: 5000, force: true });
+  await prefillPause(page, 60);
 
   await page
     .waitForFunction(
@@ -1428,19 +2047,19 @@ async function ssgeFillPrice(
         return !!inp && (inp as HTMLElement).offsetParent !== null;
       },
       labelIndex,
-      { timeout: 10000 }
+      { timeout: 6000 }
     )
     .catch(() => null);
 
   const showOnSite = targetLabel.getByText("გამოჩნდეს საიტზე");
   if ((await showOnSite.count()) > 0) {
     await showOnSite.first().click({ timeout: 3000 }).catch(() => null);
-    await prefillPause(page, 200);
+    await prefillPause(page, 80);
   }
 
   const input = targetLabel.locator('input[type="number"]');
   const hasInput = await input
-    .waitFor({ state: "visible", timeout: 10000 })
+    .waitFor({ state: "visible", timeout: 6000 })
     .then(() => true)
     .catch(() => false);
 
@@ -1466,7 +2085,7 @@ async function ssgeFillPrice(
     inp.dispatchEvent(new Event("change", { bubbles: true }));
   }, priceDigits);
 
-  await prefillPause(page, 200);
+  await prefillPause(page, 80);
 
   const filled = (await input.inputValue().catch(() => "")).replace(/[^\d.]/g, "");
   const ok =
@@ -1479,6 +2098,224 @@ async function ssgeFillPrice(
     }`
   );
   return ok || filled.length > 0;
+}
+
+/**
+ * Step 8 კონტაქტი — always enable WhatsApp and Viber on the phone row.
+ * DOM: label.whatsappLabel / label.viberLabel → div (checkbox) → svg line when on.
+ */
+async function ssgeWaitForSsgeContactStep(page: Page): Promise<boolean> {
+  const contact = page.locator("#create-app-contact").first();
+  if (
+    await contact
+      .waitFor({ state: "visible", timeout: 5000 })
+      .then(() => true)
+      .catch(() => false)
+  ) {
+    return true;
+  }
+  return page
+    .locator(
+      "label.whatsappLabel, label.viberLabel, [class*='whatsappLabel'], [class*='viberLabel']"
+    )
+    .first()
+    .waitFor({ state: "visible", timeout: 3000 })
+    .then(() => true)
+    .catch(() => false);
+}
+
+/** Checked = tick line in the last div (checkbox), not the app icon. */
+async function ssgeIsMessagingToggleOn(label: Locator): Promise<boolean> {
+  return label
+    .locator("div")
+    .last()
+    .locator("svg line")
+    .isVisible({ timeout: 500 })
+    .catch(() => false);
+}
+
+/** One click on the checkbox only — clicking label+box toggles twice. */
+async function ssgeEnableMessagingToggle(
+  scope: Locator,
+  name: "WhatsApp" | "Viber",
+  primarySelector: string
+): Promise<boolean> {
+  let label = scope.locator(primarySelector).first();
+  if (!(await label.isVisible({ timeout: 2000 }).catch(() => false))) {
+    label = scope.locator("label").filter({ hasText: name }).first();
+  }
+  if (!(await label.isVisible({ timeout: 1500 }).catch(() => false))) {
+    console.warn(`[ss.ge prefill] ${name} toggle not found`);
+    return false;
+  }
+
+  await label.scrollIntoViewIfNeeded({ timeout: 2000 }).catch(() => null);
+  const checkbox = label.locator("div").last();
+
+  if (await ssgeIsMessagingToggleOn(label)) {
+    console.log(`[ss.ge prefill] ${name} already on`);
+    return true;
+  }
+
+  await checkbox.click({ timeout: 2000, force: true });
+  await prefillPause(label.page(), 30);
+
+  if (await ssgeIsMessagingToggleOn(label)) {
+    console.log(`[ss.ge prefill] ${name} enabled`);
+    return true;
+  }
+
+  console.warn(`[ss.ge prefill] ${name} still off after one click`);
+  return false;
+}
+
+async function ssgeEnsureWhatsAppAndViber(page: Page): Promise<void> {
+  if (!(await ssgeWaitForSsgeContactStep(page))) {
+    console.warn(
+      "[ss.ge prefill] contact step not visible — skip WhatsApp/Viber"
+    );
+    return;
+  }
+
+  const scope = (await page.locator("#create-app-contact").count())
+    ? page.locator("#create-app-contact").first()
+    : page.locator("main").first();
+
+  await ssgeEnableMessagingToggle(scope, "WhatsApp", "label.whatsappLabel");
+  await ssgeEnableMessagingToggle(scope, "Viber", "label.viberLabel");
+}
+
+const SSGE_PUBLISH_BUTTON_RE = /განაცხადის\s*განთავსება/;
+const SSGE_CHECKOUT_WAIT_MS = parseInt(
+  process.env.SSGE_CHECKOUT_MAX_WAIT_MS || "2500",
+  10
+);
+
+function ssgeCheckoutLocator(page: Page) {
+  return page.locator("text=/გადახდის მეთოდები|განცხადების ღირებულება/").first();
+}
+
+async function isSsgeCheckoutVisible(page: Page): Promise<boolean> {
+  return ssgeCheckoutLocator(page)
+    .isVisible({ timeout: 200 })
+    .catch(() => false);
+}
+
+/** Click გაგრძელება only when checkout panel is not already open. */
+async function ssgeOpenCheckoutIfNeeded(page: Page): Promise<boolean> {
+  if (await isSsgeCheckoutVisible(page)) return true;
+
+  const clicked = await page.evaluate(() => {
+    const btn = Array.from(
+      document.querySelectorAll<HTMLButtonElement>("button.btn-next")
+    )
+      .reverse()
+      .find(
+        (b) =>
+          b.offsetParent !== null &&
+          !b.disabled &&
+          /გაგრძელება/.test(b.textContent || "")
+      );
+    if (!btn) return false;
+    btn.scrollIntoView({ block: "center", behavior: "instant" });
+    btn.click();
+    return true;
+  });
+  if (!clicked) return false;
+
+  return ssgeCheckoutLocator(page)
+    .waitFor({ state: "visible", timeout: SSGE_CHECKOUT_WAIT_MS })
+    .then(() => true)
+    .catch(() => false);
+}
+
+/** Scroll to and click განაცხადის განთავსება immediately (no post-click wait in headed mode). */
+async function ssgeClickPublishListingNow(page: Page): Promise<boolean> {
+  await page.evaluate(() => {
+    const norm = (s: string) => s.replace(/\s+/g, " ").trim();
+    const re = /განაცხადის\s*განთავსება/i;
+    const btn = Array.from(document.querySelectorAll<HTMLButtonElement>("button"))
+      .filter((b) => re.test(norm(b.textContent || "")))
+      .pop();
+    if (!btn) return;
+    window.scrollTo({ top: document.body.scrollHeight, behavior: "instant" });
+    let node: HTMLElement | null = btn.parentElement;
+    while (node && node !== document.documentElement) {
+      const oy = getComputedStyle(node).overflowY;
+      if (/(auto|scroll|overlay)/.test(oy)) {
+        const rect = btn.getBoundingClientRect();
+        const pr = node.getBoundingClientRect();
+        if (rect.bottom > pr.bottom - 8) {
+          node.scrollTop += rect.bottom - pr.bottom + 16;
+        }
+      }
+      node = node.parentElement;
+    }
+    btn.scrollIntoView({ block: "center", behavior: "instant" });
+  });
+
+  const publishBtn = page
+    .getByRole("button", { name: SSGE_PUBLISH_BUTTON_RE })
+    .last();
+  if (!(await publishBtn.count())) {
+    return page
+      .locator("button")
+      .filter({ hasText: SSGE_PUBLISH_BUTTON_RE })
+      .last()
+      .click({ timeout: 1500, force: true })
+      .then(() => true)
+      .catch(() => false);
+  }
+
+  return publishBtn
+    .click({ timeout: 1500, force: true })
+    .then(() => true)
+    .catch(() => false);
+}
+
+/** Continue → checkout → publish (checkout uses same /create URL — never wait on URL change). */
+async function ssgeFinishCheckoutAndPublish(
+  page: Page,
+  options?: { confirmPublish?: boolean }
+): Promise<{ checkout: boolean; published: boolean }> {
+  console.log("[ss.ge prefill] Finish: გაგრძელება → განაცხადის განთავსება");
+
+  const checkout = await ssgeOpenCheckoutIfNeeded(page);
+  if (!checkout) {
+    console.warn(`[ss.ge prefill] checkout not reached (url="${page.url()}")`);
+    return { checkout: false, published: false };
+  }
+
+  const clicked = await ssgeClickPublishListingNow(page);
+  if (!clicked) {
+    console.warn('[ss.ge prefill] "განაცხადის განთავსება" not clicked');
+    return { checkout: true, published: false };
+  }
+
+  if (!options?.confirmPublish) {
+    console.log(`[ss.ge prefill] publish clicked (url="${page.url()}")`);
+    return { checkout: true, published: true };
+  }
+
+  const published = await page
+    .waitForFunction(
+      () => {
+        const body = document.body?.textContent || "";
+        if (/წარმატებ|განთავსდ|განთავსდა/i.test(body)) return true;
+        if (!body.includes("გადახდის მეთოდები")) return true;
+        return !Array.from(document.querySelectorAll("button")).some(
+          (b) =>
+            b.offsetParent !== null &&
+            /განაცხადის\s*განთავსება/i.test((b.textContent || "").trim())
+        );
+      },
+      { timeout: SSGE_CHECKOUT_WAIT_MS }
+    )
+    .then(() => true)
+    .catch(() => true);
+
+  console.log(`[ss.ge prefill] listing published (url="${page.url()}")`);
+  return { checkout: true, published };
 }
 
 /** Navigate to a wizard step by clicking its sidebar item. */
@@ -1502,7 +2339,10 @@ async function goToSsgeStep(page: Page, stepName: string): Promise<void> {
     return false;
   }, stepName);
   if (clicked) {
-    await prefillPause(page, 1200);
+    await prefillPause(page, 20);
+    if (/კონტაქტ/i.test(stepName)) {
+      await ssgeWaitForSsgeContactStep(page);
+    }
   } else {
     console.warn(`goToSsgeStep: could not navigate to "${stepName}"`);
   }
@@ -1539,6 +2379,7 @@ export async function createSsgePost(
   if (reuseSession && postSession) {
     browser = postSession.browser;
     context = postSession.context;
+    for (const p of context.pages()) await p.close().catch(() => {});
     page = await context.newPage();
   } else {
     if (postSession?.browser.isConnected()) {
@@ -1547,12 +2388,17 @@ export async function createSsgePost(
     }
     browser = await chromium.launch({
       headless,
-      args: ["--no-sandbox", "--disable-setuid-sandbox", "--start-maximized"],
+      args: [
+        "--no-sandbox", "--disable-setuid-sandbox",
+        ...(headless ? [] : ["--start-maximized"]),
+        "--disable-dev-shm-usage", "--disable-gpu",
+        "--single-process", "--no-zygote",
+      ],
     });
     context = await browser.newContext({
       userAgent: USER_AGENT,
       locale: "ka-GE",
-      viewport: null,
+      viewport: headless ? { width: 1920, height: 1080 } : null,
     });
     page = await context.newPage();
     postSession = { email: credentials.email, browser, context };
@@ -1561,18 +2407,22 @@ export async function createSsgePost(
   const cleanups: Array<() => Promise<void>> = [];
 
   try {
-    if (!reuseSession) {
-      await ensurePostSessionLogin(page, credentials);
-    }
-
-    // Navigate to the create-listing wizard
-    await page.goto(SSGE_CREATE_URL, {
-      waitUntil: "domcontentloaded",
-      timeout: 30000,
+    await ensureSsgeCreateFormReady(page, credentials, {
+      freshSession: !reuseSession,
     });
 
-    // Wait for the React SPA to render step 1
-    await waitForSsgeForm(page);
+    if (await needsSsgeLogin(page)) {
+      throw new Error(
+        "ss.ge prefill blocked — still logged out (login did not complete)"
+      );
+    }
+
+    if (!(await hasSsgeNextAuthSession(page.context()))) {
+      await ensureSsgeHomeAuthenticated(page, credentials);
+    }
+
+    // No-op when modal absent; otherwise click "დაამატე ახალი განცხადება" then prefill.
+    await dismissSsgeUnfinishedDraftModal(page);
 
     // ---------------------------------------------------------------
     // WIZARD STEP 1 — Category + Property Type + Deal Type
@@ -1596,7 +2446,7 @@ export async function createSsgePost(
     }
 
     // Wait for the wizard to advance after step 1 selections
-    await prefillPause(page, 2000);
+    await prefillPause(page, 20);
 
     // ---------------------------------------------------------------
     // WIZARD STEP 2 — სურათები (Images)
@@ -1615,7 +2465,7 @@ export async function createSsgePost(
         if (paths.length) {
           const fileInput = page.locator('input[type="file"]').first();
           await fileInput.setInputFiles(paths, { timeout: 15000 }).catch(() => null);
-          await prefillPause(page, 1000);
+          await prefillPause(page, 40);
         }
       } catch (e) {
         console.warn("[ss.ge prefill] image upload skipped:", e);
@@ -1640,7 +2490,7 @@ export async function createSsgePost(
       await ssgePrefillNumericChipField(page, listing.rooms, "ოთახები", 8);
     }
 
-    // Bedrooms — chips 1–9, then "9+" or input[name="bedrooms"] for 10+
+    // Bedrooms — chips 1–9, or input[name="bedrooms"] box beside 9 for 10+
     if (listing.bedrooms?.trim()) {
       await page
         .waitForFunction(
@@ -1651,10 +2501,10 @@ export async function createSsgePost(
             }
             return false;
           },
-          { timeout: 8000 }
+          { timeout: 5000 }
         )
         .catch(() => null);
-      await prefillPause(page, 300);
+      await prefillPause(page, 40);
       await ssgePrefillNumericChipField(
         page,
         listing.bedrooms,
@@ -1808,6 +2658,9 @@ export async function createSsgePost(
     // WIZARD STEP 5 — დამატებითი ინფორმაცია
     // ---------------------------------------------------------------
     console.log("[ss.ge prefill] Step 5: additional info");
+    if (!(await hasSsgeNextAuthSession(page.context()))) {
+      await ensureSsgeHomeAuthenticated(page, credentials);
+    }
     await goToSsgeStep(page, "დამატებითი ინფორმაცია");
 
     const conditionRaw =
@@ -1818,7 +2671,7 @@ export async function createSsgePost(
         .locator("span, p, label")
         .filter({ hasText: /^მდგომარეობა/ })
         .first()
-        .waitFor({ state: "visible", timeout: 10000 })
+        .waitFor({ state: "visible", timeout: 6000 })
         .catch(() => null);
       const condOk = await ssgePrefillCondition(page, conditionChip);
       if (!condOk) {
@@ -1861,8 +2714,46 @@ export async function createSsgePost(
       await ssgeFillPrice(page, listing.price, "USD");
     }
 
-    console.log("[ss.ge prefill] Done — browser left open for review");
-    return { success: true };
+    // ---------------------------------------------------------------
+    // WIZARD STEP 8 — კონტაქტი (WhatsApp + Viber always on)
+    // ---------------------------------------------------------------
+    console.log("[ss.ge prefill] Step 8: contact");
+    await goToSsgeStep(page, "კონტაქტი");
+    await ssgeEnsureWhatsAppAndViber(page);
+
+    const { checkout, published } = await ssgeFinishCheckoutAndPublish(page, {
+      confirmPublish: headless,
+    });
+    if (headless && !checkout) {
+      throw new Error(
+        `[ss.ge prefill] "გაგრძელება" did not reach checkout (url="${page.url()}")`
+      );
+    }
+    if (headless && !published) {
+      throw new Error(
+        `[ss.ge prefill] "განაცხადის განთავსება" did not complete (url="${page.url()}")`
+      );
+    }
+
+    const graceMs = parseInt(
+      process.env.SSGE_PUBLISH_GRACE_MS || "0",
+      10
+    );
+    if (headless && published && graceMs > 0) {
+      await page.waitForTimeout(graceMs).catch(() => null);
+    }
+
+    const postUrl = page.url();
+    console.log(
+      headless
+        ? published
+          ? "[ss.ge prefill] Done — listing published"
+          : "[ss.ge prefill] Done — reached checkout"
+        : published
+          ? "[ss.ge prefill] Done — browser left open after publish"
+          : "[ss.ge prefill] Done — browser left open on checkout for review"
+    );
+    return { success: true, postUrl };
   } catch (error) {
     return {
       success: false,

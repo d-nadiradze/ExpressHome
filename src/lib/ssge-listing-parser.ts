@@ -1,6 +1,6 @@
 import "@/lib/esbuild-shim";
-import { chromium, type Browser } from "playwright";
 import type { MyhomeListing } from "@/lib/myhome-parser";
+import { blockParseResources, getParseBrowser } from "@/lib/parse-browser";
 
 const USER_AGENT =
   "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36";
@@ -8,17 +8,8 @@ const USER_AGENT =
 const BROWSER_EVALUATE_SHIM =
   "globalThis.__name = globalThis.__name || function (t) { return t; };";
 
-let browserInstance: Browser | null = null;
-
-async function getBrowser(): Promise<Browser> {
-  if (!browserInstance || !browserInstance.isConnected()) {
-    browserInstance = await chromium.launch({
-      headless: true,
-      args: ["--no-sandbox", "--disable-setuid-sandbox"],
-    });
-  }
-  return browserInstance;
-}
+const PARSE_GOTO_MS = parseInt(process.env.PARSE_GOTO_TIMEOUT_MS || "20000", 10);
+const PARSE_DATA_WAIT_MS = parseInt(process.env.PARSE_DATA_WAIT_MS || "6000", 10);
 
 const DEAL_TYPE_KEYWORDS: [RegExp, string][] = [
   [/ქირავდება\s+დღიურად/i, "ქირავდება დღიურად"],
@@ -43,27 +34,32 @@ export async function parseSsgeListing(url: string): Promise<{
   data?: MyhomeListing;
   error?: string;
 }> {
-  const browser = await getBrowser();
+  const browser = await getParseBrowser();
   const context = await browser.newContext({
     userAgent: USER_AGENT,
     locale: "ka-GE",
   });
   await context.addInitScript(BROWSER_EVALUATE_SHIM);
-  await context.route("**/*", (route) => {
-    const type = route.request().resourceType();
-    if (type === "media" || type === "font") route.abort();
-    else route.continue();
-  });
+  await context.route("**/*", blockParseResources);
   const page = await context.newPage();
 
   try {
-    await page.goto(url, { waitUntil: "domcontentloaded", timeout: 30000 });
+    await page.goto(url, { waitUntil: "domcontentloaded", timeout: PARSE_GOTO_MS });
     await page
-      .waitForSelector("#details_desc, h1", { timeout: 15000 })
-      .catch(() => null);
-    await page
-      .waitForSelector("img[src*='static.ss.ge']", { timeout: 8000 })
-      .catch(() => page.waitForTimeout(2000));
+      .waitForFunction(() => {
+        const raw = document.querySelector("#__NEXT_DATA__")?.textContent;
+        if (!raw) return false;
+        try {
+          const app =
+            JSON.parse(raw)?.props?.pageProps?.applicationData ?? null;
+          return Boolean(app?.title || app?.appImages?.length);
+        } catch {
+          return false;
+        }
+      }, { timeout: PARSE_DATA_WAIT_MS })
+      .catch(() =>
+        page.waitForSelector("#details_desc, h1", { timeout: 2500 }).catch(() => null)
+      );
 
     await page.evaluate(BROWSER_EVALUATE_SHIM);
 

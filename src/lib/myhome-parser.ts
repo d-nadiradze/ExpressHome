@@ -15,12 +15,20 @@ import {
   PREFILL_NUMERIC_LABELS,
   RAW_DATA_HANDLED_LABELS,
 } from "@/lib/additional-params";
-import { normalizeListingForMyhomePrefill } from "@/lib/cross-platform-prefill";
+import {
+  isMyhomeSourceUrl,
+  normalizeListingForMyhomePrefill,
+} from "@/lib/cross-platform-prefill";
 import {
   mapLandPlotStatusForMyhome,
+  PROJECT_TYPE_TO_SSGE,
   resolveProjectTypeCanonical,
 } from "@/lib/ssge-mappings";
 import { resolveImagesForPlaywright } from "@/lib/listing-images";
+import { blockParseResources, getParseBrowser } from "@/lib/parse-browser";
+import { resolveListingDistrict } from "@/lib/parser-districts";
+
+const PARSE_GOTO_MS = parseInt(process.env.PARSE_GOTO_TIMEOUT_MS || "20000", 10);
 
 export interface MyhomeListing {
   title: string;
@@ -55,8 +63,6 @@ export interface MyhomeCredentials {
   email: string;
   password: string;
 }
-
-let browserInstance: Browser | null = null;
 
 /** Reused visible browser session so repeat pre-fills skip login (~5–15s). */
 let postSession: {
@@ -139,9 +145,26 @@ const PROJECT_TYPE_ALIASES: Record<string, string[]> = {
   "საერთო საცხოვრებელი": ["საერთო საცხოვრებელი"],
   "დუპლექსი": ["დუპლექსი", "დუპლექს"],
   "ტრიპლექსი": ["ტრიპლექსი", "ტრიპლექს"],
-  "m2-ის კომპლექსი": ["m2-ის კომპლექსი", "m2 კომპლექსი", "m2-ს კომპლექსი"],
+  "m2-ის კომპლექსი": [
+    "m2-ის კომპლექსი",
+    "m2 კომპლექსი",
+    "m2-ს კომპლექსი",
+    // Parsed on listing pages as „მ2 დეველოპმენტ“ (Georgian მ) → create-form option
+    "მ2 დეველოპმენტ",
+    "მ2 დეველოპმენტი",
+    "m2 დეველოპმენტ",
+    "m2 დეველოპმენტი",
+    "M2 დეველოპმენტ",
+    "M2 დეველოპმენტი",
+  ],
   "OPTIMA m2-ისკან": ["OPTIMA m2-ისკან", "optima m2-ისკან", "ოპტიმა m2"],
-  "METRA PARK": ["METRA PARK", "metra park", "მეტრა პარკი"],
+  "METRA PARK": [
+    "METRA PARK",
+    "metra park",
+    "მეტრა პარკი",
+    "METRA PARK (მეტრა პარკი)",
+    "metra park (მეტრა პარკი)",
+  ],
 };
 
 /** All known მისაღები dropdown options with aliases. */
@@ -357,6 +380,36 @@ function getFlexChipPrefillValue(
   return "";
 }
 
+/** Georgian „მ“ (U+10DB) is often parsed instead of Latin „m“ in „m2“ project names. */
+function normalizeM2ProjectPrefix(value: string): string {
+  return value.replace(/^[\u10DBmM]\s*2\b/iu, "m2");
+}
+
+function projectTypeParseCandidates(raw: string): string[] {
+  const v = normFieldLabel(dedupeRepeatedLabelValue(raw));
+  if (!v) return [];
+  const out = new Set<string>([v]);
+  const m2Latin = normalizeM2ProjectPrefix(v);
+  if (m2Latin !== v) out.add(m2Latin);
+  const paren = v.match(/^(.+?)\s*\(([^)]+)\)\s*$/u);
+  if (paren) {
+    out.add(paren[1].trim());
+    out.add(paren[2].trim());
+  }
+  const stripped = v.replace(/\s*\([^)]*\)\s*/g, " ").replace(/\s+/g, " ").trim();
+  if (stripped) out.add(stripped);
+  if (/^[\u10DBmM]\s*2.*დეველოპმენტ/i.test(v) || /^m2.*დეველოპმენტ/i.test(m2Latin)) {
+    out.add("m2-ის კომპლექსი");
+  }
+  return [...out];
+}
+
+/** Map parsed project label → exact myhome create-form dropdown option. */
+function resolveProjectTypeDropdownLabel(raw: string): string | null {
+  const fromAliases = resolveAliasVariantsFromCandidates(raw, PROJECT_TYPE_ALIASES);
+  return fromAliases?.[0] ?? null;
+}
+
 function resolveAliasVariants(
   raw: string,
   aliasMap: Record<string, string[]>
@@ -379,12 +432,25 @@ function resolveAliasVariants(
   return null;
 }
 
+function resolveAliasVariantsFromCandidates(
+  raw: string,
+  aliasMap: Record<string, string[]>
+): string[] | null {
+  for (const candidate of projectTypeParseCandidates(raw)) {
+    const hit = resolveAliasVariants(candidate, aliasMap);
+    if (hit) return hit;
+  }
+  return null;
+}
+
 /** Dropdown option variants — prefer listing form (often genitive: თუხარელის). */
 function projectTypeOptionVariants(value: string): string[] {
   const raw = normFieldLabel(dedupeRepeatedLabelValue(value));
   if (!raw) return [];
 
-  const fromAliases = resolveAliasVariants(raw, PROJECT_TYPE_ALIASES);
+  const fromAliases =
+    resolveAliasVariantsFromCandidates(raw, PROJECT_TYPE_ALIASES) ||
+    resolveAliasVariants(raw, PROJECT_TYPE_ALIASES);
   if (fromAliases) return fromAliases;
 
   const ordered: string[] = [raw];
@@ -719,13 +785,65 @@ function normalizeStreetKey(raw: string): string {
     .replace(/ქ$/u, "ქ");
 }
 
+/** Name without leading initial (ვ.) and street-type suffix — for ss.ge → myhome matching. */
+function streetCoreForMatch(raw: string): string {
+  return raw
+    .replace(/\s+/g, " ")
+    .trim()
+    .replace(/^[ა-ჰ]\.\s*/iu, "")
+    .replace(/^[ა-ჰ]{1,2}\.\s*/iu, "")
+    .replace(/\s+(ქ\.?|ქუჩა|შესახვევი|ჩიხი|გამზ\.?)\s*$/iu, "")
+    .trim();
+}
+
+function streetInitialLetter(raw: string): string | null {
+  const m = raw.trim().match(/^([ა-ჰ])\./iu);
+  return m ? m[1].toLowerCase() : null;
+}
+
+function streetLineFromOptionText(option: string): string {
+  const lines = option
+    .split(/\n+/)
+    .map((l) => l.replace(/\s+/g, " ").trim())
+    .filter(Boolean);
+  if (lines.length > 1) return lines[0];
+
+  const normalized = option.replace(/\s+/g, " ").trim();
+  const slashIdx = normalized.search(/\s+\S+\s*\/\s*\S+/u);
+  if (slashIdx > 0) return normalized.slice(0, slashIdx).trim();
+
+  return normalized;
+}
+
 function streetMatchScore(want: string, option: string): number {
+  return streetMatchScoreBase(want, streetLineFromOptionText(option));
+}
+
+function streetMatchScoreBase(want: string, option: string): number {
   const a = normalizeStreetKey(want);
   const b = normalizeStreetKey(option);
   if (!a || !b) return 0;
   if (a === b) return 1000;
   if (b.startsWith(a) || a.startsWith(b)) return 900;
   if (b.includes(a) || a.includes(b)) return Math.min(a.length, b.length) * 8;
+
+  const coreA = normalizeStreetKey(streetCoreForMatch(want));
+  const coreB = normalizeStreetKey(streetCoreForMatch(option));
+  if (coreA && coreB) {
+    const initial = streetInitialLetter(want);
+    const firstWord = (option.trim().split(/\s+/)[0] || "").replace(/\./g, "");
+    const initialOk =
+      !initial || firstWord.toLowerCase().startsWith(initial);
+
+    if (coreA === coreB) {
+      return initialOk ? 980 : 920;
+    }
+    if (coreB.includes(coreA) || coreA.includes(coreB)) {
+      const overlap = Math.min(coreA.length, coreB.length) * 10 + 850;
+      return initialOk ? overlap + 60 : overlap;
+    }
+  }
+
   let prefix = 0;
   const max = Math.min(a.length, b.length);
   while (prefix < max && a[prefix] === b[prefix]) prefix++;
@@ -736,7 +854,14 @@ function streetAutocompleteQueries(street: string): string[] {
   const s = street.replace(/\s+/g, " ").trim();
   if (!s) return [];
 
+  const prioritized: string[] = [];
   const queries: string[] = [s];
+
+  const core = streetCoreForMatch(s);
+  if (streetInitialLetter(s) && core) {
+    prioritized.push(core, `${core} ქ`, `${core} ქ.`, `${core} ქუჩა`);
+  }
+
   if (isMicrodistrictOrBlockAddressLine(s) || isPinLandmarkLine(s)) {
     if (isMicrodistrictOrBlockAddressLine(s)) {
       const beforeDash = s.split(/\s-\s/)[0]?.trim();
@@ -744,7 +869,7 @@ function streetAutocompleteQueries(street: string): string[] {
       const noUnit = s.replace(/\s*(?:კვარტ\.?|კორპ\.?|№)\s*\d+\s*$/iu, "").trim();
       if (noUnit && noUnit !== s) queries.push(noUnit);
     }
-    return [...new Set(queries.filter((q) => q.length > 0))];
+    return [...new Set([...prioritized, ...queries].filter((q) => q.length > 0))];
   }
   const withoutInitial = s.replace(/^[ა-ჰ]{1,2}\.\s*/iu, "").trim();
   if (withoutInitial && withoutInitial !== s) {
@@ -781,7 +906,7 @@ function streetAutocompleteQueries(street: string): string[] {
     }
   }
 
-  return [...new Set(queries.filter((q) => q.length > 0))];
+  return [...new Set([...prioritized, ...queries].filter((q) => q.length > 0))];
 }
 
 /** Parsed rawData may use გათბობა; tolerate old typo key გათბომა. */
@@ -1145,7 +1270,7 @@ async function prefillBalconyFields(
   }
 
   await scrollToFormField(page, "აივანი");
-  await prefillPause(page, 120);
+  await prefillPause(page, 50);
 
   if (count) {
     await fillInputInNestedSection(page, "აივანი", "აივნის რაოდენობა", count);
@@ -1257,7 +1382,7 @@ async function prefillLoggiaFields(
   if (!area) return;
 
   await scrollToFormField(page, "ლოჯია");
-  await prefillPause(page, 120);
+  await prefillPause(page, 50);
   await fillInputInNestedSection(page, "ლოჯია", "ფართი", area);
 }
 
@@ -1292,7 +1417,7 @@ async function prefillVerandaFields(
   if (!area) return;
 
   await scrollToFormField(page, "ვერანდა");
-  await prefillPause(page, 120);
+  await prefillPause(page, 50);
   await fillInputInNestedSection(page, "ვერანდა", "ფართი", area);
 }
 
@@ -1321,7 +1446,7 @@ async function prefillYardAreaFields(
   if (!area) return;
 
   await scrollToFormField(page, YARD_SECTION_KEY);
-  await prefillPause(page, 120);
+  await prefillPause(page, 50);
   await fillInputInNestedSection(page, YARD_SECTION_KEY, "ფართი", area);
 }
 
@@ -1579,7 +1704,7 @@ async function prefillCeilingHeightFields(
   if (!height) return;
 
   await scrollToFormField(page, CEILING_HEIGHT_FIELD_LABEL);
-  await prefillPause(page, 200);
+  await prefillPause(page, 80);
 
   if (await fillCeilingHeightField(page, height)) return;
 
@@ -2250,8 +2375,26 @@ async function prefillLukDropdownField(
       await select.click({ timeout: CHIP_CLICK_TIMEOUT_MS, force: true }).catch(() => {});
     }
 
-    await prefillPause(page, LUK_DROPDOWN_PAUSE_MS);
-    await markLukFieldMenu(page);
+    // Instead of a fixed sleep, wait briefly for the menu to actually mount.
+    // This reduces stalls when dropdown render is slow.
+    let menuMarked = false;
+    for (let j = 0; j < 10; j++) {
+      await markLukFieldMenu(page);
+      const menuReady = await page
+        .locator("[data-prefill-luk-menu='1']")
+        .isVisible({ timeout: 150 })
+        .then(() => true)
+        .catch(() => false);
+      if (menuReady) {
+        menuMarked = true;
+        break;
+      }
+      await prefillPause(page, 30);
+    }
+    if (!menuMarked) {
+      await prefillPause(page, LUK_DROPDOWN_PAUSE_MS);
+      await markLukFieldMenu(page);
+    }
 
     const menu = page.locator("[data-prefill-luk-menu='1']");
     for (const variant of variants) {
@@ -2263,13 +2406,13 @@ async function prefillLukDropdownField(
         if (!optionTextMatchesVariant(text, variant)) continue;
         await opt.scrollIntoViewIfNeeded().catch(() => {});
         await opt.click({ timeout: CHIP_CLICK_TIMEOUT_MS, force: true });
-        await prefillPause(page, 120);
+        await prefillPause(page, 50);
         if (await lukFieldShowsValue(page, sectionLabel, variants)) return true;
         await markLukFieldMenu(page);
       }
 
       if (await clickLukMenuOption(page, variant)) {
-        await prefillPause(page, 120);
+        await prefillPause(page, 50);
         if (await lukFieldShowsValue(page, sectionLabel, variants)) return true;
         await markLukFieldMenu(page);
       }
@@ -2281,7 +2424,7 @@ async function prefillLukDropdownField(
         .first();
       if (await searchInput.isVisible({ timeout: 400 }).catch(() => false)) {
         await searchInput.fill(variants[0]);
-        await prefillPause(page, 200);
+        await prefillPause(page, 80);
         const filtered = menu.locator('[role="option"], [class*="option"]').first();
         if (await filtered.isVisible({ timeout: 500 }).catch(() => false)) {
           const text = ((await filtered.textContent().catch(() => "")) || "").trim();
@@ -2571,7 +2714,7 @@ async function clickMarkedLukOption(page: Page): Promise<boolean> {
   } else {
     await opt.click({ force: true, timeout: CHIP_CLICK_TIMEOUT_MS });
   }
-  await prefillPause(page, 220);
+  await prefillPause(page, 80);
   return true;
 }
 
@@ -2665,7 +2808,7 @@ async function playwrightClickLukVariants(
         } else {
           await target.click({ force: true, timeout: CHIP_CLICK_TIMEOUT_MS });
         }
-        await prefillPause(page, 280);
+        await prefillPause(page, 40);
         return true;
       }
     }
@@ -2679,20 +2822,25 @@ async function tryPickLukVariants(
   variants: string[],
   menuLocator?: Locator
 ): Promise<boolean> {
+  const allowEnterFallback = sectionLabel !== "პროექტის ტიპი";
   if (await playwrightClickLukVariants(page, variants, menuLocator)) {
     if (await lukSelectSelectionApplied(page, sectionLabel, variants)) return true;
-    await page.keyboard.press("Enter").catch(() => {});
-    await prefillPause(page, 200);
-    if (await lukSelectSelectionApplied(page, sectionLabel, variants)) return true;
+    if (allowEnterFallback) {
+      await page.keyboard.press("Enter").catch(() => {});
+      await prefillPause(page, 80);
+      if (await lukSelectSelectionApplied(page, sectionLabel, variants)) return true;
+    }
   }
   for (const variant of variants) {
     if (await markLukSelectOption(page, [variant])) {
       await clickMarkedLukOption(page);
       await prefillPause(page, LUK_CLICK_VERIFY_MS);
       if (await lukSelectSelectionApplied(page, sectionLabel, variants)) return true;
-      await page.keyboard.press("Enter").catch(() => {});
-      await prefillPause(page, 60);
-      if (await lukSelectSelectionApplied(page, sectionLabel, variants)) return true;
+      if (allowEnterFallback) {
+        await page.keyboard.press("Enter").catch(() => {});
+        await prefillPause(page, 60);
+        if (await lukSelectSelectionApplied(page, sectionLabel, variants)) return true;
+      }
     }
   }
   return false;
@@ -2864,7 +3012,7 @@ async function clickVisibleLukMenuItem(
     } else {
       await opt.click({ force: true, timeout: CHIP_CLICK_TIMEOUT_MS });
     }
-    await prefillPause(page, 350);
+    await prefillPause(page, 50);
     return true;
   }
 
@@ -2931,7 +3079,7 @@ async function prefillLukSelectByLabel(
   }
 
   await waitForLukSelectOptions(page, 1);
-  await prefillPause(page, 100);
+  await prefillPause(page, 40);
 
   if (await pickFromLukOptionsList(page, sectionLabel, variants)) return true;
 
@@ -3027,7 +3175,7 @@ async function prefillViewField(page: Page, listing: MyhomeListing): Promise<voi
   await scrollToFormField(page, "ხედი");
   for (const opt of options) {
     await prefillLukSelectByLabel(page, "ხედი", opt);
-    await prefillPause(page, 100);
+    await prefillPause(page, 40);
   }
 }
 
@@ -3585,7 +3733,7 @@ async function prefillSectionChipPlaywright(
         if (!(await chipEl.isVisible({ timeout: 400 }).catch(() => false))) continue;
         await chipEl.scrollIntoViewIfNeeded().catch(() => {});
         await chipEl.click({ timeout: CHIP_CLICK_TIMEOUT_MS, force: true });
-        await prefillPause(page, 100);
+        await prefillPause(page, 40);
         return true;
       }
       const parent = scope.locator("xpath=..");
@@ -3845,15 +3993,28 @@ async function fillMainAreaInputPlaywright(
   return false;
 }
 
-function getProjectTypeValue(listing: MyhomeListing): string {
+function getProjectTypeValue(
+  listing: MyhomeListing,
+  options?: { sourceUrl?: string | null }
+): string {
   const raw = dedupeRepeatedLabelValue(
     listing.projectType ||
       listing.rawData?.["პროექტის ტიპი"] ||
       listing.rawData?.["პროექტი"] ||
       ""
   );
+  if (!raw) return "";
+
+  // myhome → myhome: only map known parsed labels to dropdown options; otherwise keep raw.
+  if (isMyhomeSourceUrl(options?.sourceUrl)) {
+    return resolveProjectTypeDropdownLabel(raw) ?? raw;
+  }
+
   return resolveProjectTypeCanonical(raw, listing.rawData || {});
 }
+
+/** Listing-page project chips (ss.ge labels shown under English „Project“ row). */
+const MYHOME_LISTING_PROJECT_CHIPS = Object.keys(PROJECT_TYPE_TO_SSGE);
 
 /** Listing UI often duplicates chip text: „თუხარელისთუხარელის“ → „თუხარელის“. */
 function dedupeRepeatedLabelValue(value: string): string {
@@ -3863,6 +4024,40 @@ function dedupeRepeatedLabelValue(value: string): string {
     if (v.slice(0, len) === v.slice(len, len * 2)) return v.slice(0, len);
   }
   return v;
+}
+
+/** Fix glued status text accidentally parsed as project type (→ „Project ქალაქური“). */
+function matchKnownProjectChip(text: string): string {
+  const t = dedupeRepeatedLabelValue((text || "").replace(/\s+/g, " ").trim());
+  if (!t) return "";
+  for (const chip of MYHOME_LISTING_PROJECT_CHIPS) {
+    if (t === chip || t.includes(chip)) return chip;
+  }
+  return "";
+}
+
+function isParsedProjectStatusNoise(text: string): boolean {
+  const t = (text || "").replace(/\s+/g, " ").trim();
+  if (!t || /^Project$/i.test(t)) return true;
+  if (matchKnownProjectChip(t)) return false;
+  return /სტატუსი|ახალი|აშენებული|მშენებარე|ძველი/i.test(t);
+}
+
+function sanitizeParsedProjectType(raw: string): string {
+  const v = dedupeRepeatedLabelValue((raw || "").replace(/\s+/g, " ").trim());
+  if (!v) return "";
+
+  const hasProjectWord = /\bProject\b/i.test(v);
+  for (const chip of MYHOME_LISTING_PROJECT_CHIPS) {
+    if (!v.includes(chip)) continue;
+    return hasProjectWord ? `Project ${chip}` : chip;
+  }
+
+  if (/^Project\s+\S+/i.test(v)) return v;
+
+  if (isParsedProjectStatusNoise(v)) return "";
+
+  return matchKnownProjectChip(v);
 }
 
 /** Match create-form count chips (1, 2, 10+). */
@@ -4480,7 +4675,7 @@ async function prefillMyhomeOverflowCountInput(
   if (!chipClicked) {
     await clickChipInSectionLabels(page, sectionLabels, "10+");
   }
-  await prefillPause(page, 250);
+  await prefillPause(page, 40);
 
   const filled = await page.evaluate(
     ({ sectionLabels, digits }) => {
@@ -4543,7 +4738,7 @@ async function prefillMyhomeOverflowCountInput(
     { sectionLabels, digits }
   );
 
-  if (filled) await prefillPause(page, 150);
+  if (filled) await prefillPause(page, 60);
   return filled;
 }
 
@@ -4789,6 +4984,8 @@ async function fillInputByLabelEvaluate(
         if (norm(labelText) === "ფართი" && isNestedFeatureAreaInput(input)) {
           return false;
         }
+        const cur = (input.value || "").trim();
+        if (cur === val) return true;
         input.focus();
         inputSetter!.call(input, val);
         input.dispatchEvent(
@@ -4922,6 +5119,66 @@ async function prefillMainAreaField(
   }, area);
 }
 
+async function readOptionTextsFromMenu(
+  menu: Locator,
+  rowSelector: string
+): Promise<string[]> {
+  return menu.locator(rowSelector).evaluateAll((els) =>
+    els
+      .map((el) => {
+        const node = el as HTMLElement;
+        return (node.innerText || node.textContent || "")
+          .replace(/\r/g, "")
+          .replace(/\s*\n\s*/g, "\n")
+          .replace(/[ \t]+/g, " ")
+          .trim();
+      })
+      .filter(Boolean)
+  );
+}
+
+/** myhome street menu is ul.options-list > li; other fields may use role=listbox. */
+async function locateVisibleStreetOptionsMenu(page: Page): Promise<{
+  menu: Locator;
+  rowSelector: string;
+} | null> {
+  const lukList = page.locator(LUK_OPTIONS_LIST_SELECTOR).filter({ visible: true }).last();
+  if (await lukList.isVisible({ timeout: 800 }).catch(() => false)) {
+    if ((await lukList.locator("li").count()) > 0) {
+      return { menu: lukList, rowSelector: "li" };
+    }
+  }
+
+  const listbox = page.locator('[role="listbox"]:visible').first();
+  if (await listbox.isVisible({ timeout: 800 }).catch(() => false)) {
+    if ((await listbox.locator('[role="option"]').count()) > 0) {
+      return { menu: listbox, rowSelector: '[role="option"]' };
+    }
+  }
+
+  return null;
+}
+
+async function readVisibleStreetOptionTexts(page: Page): Promise<{
+  menu: Locator;
+  rowSelector: string;
+  texts: string[];
+} | null> {
+  const located = await locateVisibleStreetOptionsMenu(page);
+  if (!located) return null;
+
+  const texts = await readOptionTextsFromMenu(located.menu, located.rowSelector);
+  if (texts.length === 0) return null;
+
+  return { ...located, texts };
+}
+
+async function readVisibleAutocompleteOptions(
+  listbox: Locator
+): Promise<string[]> {
+  return readOptionTextsFromMenu(listbox, '[role="option"]');
+}
+
 async function selectAutocompleteOption(
   page: Page,
   value: string,
@@ -4931,9 +5188,36 @@ async function selectAutocompleteOption(
   const text = value.trim();
   await prefillPause(page, 40);
 
+  const menuData = await readVisibleStreetOptionTexts(page);
+  if (menuData) {
+    let bestIdx = -1;
+    let bestScore = 0;
+    for (let i = 0; i < menuData.texts.length; i++) {
+      const sc = streetMatchScore(text, menuData.texts[i]);
+      if (sc > bestScore) {
+        bestScore = sc;
+        bestIdx = i;
+      }
+    }
+    if (bestIdx >= 0 && bestScore >= 40) {
+      await menuData.menu
+        .locator(menuData.rowSelector)
+        .nth(bestIdx)
+        .click({ timeout: CHIP_CLICK_TIMEOUT_MS });
+      return true;
+    }
+    if (options?.pickFirst) {
+      const first = menuData.menu.locator(menuData.rowSelector).first();
+      if (await first.isVisible({ timeout: 800 }).catch(() => false)) {
+        await first.click({ timeout: CHIP_CLICK_TIMEOUT_MS });
+        return true;
+      }
+    }
+  }
+
   const listbox = page.locator('[role="listbox"]:visible').first();
   if (await listbox.isVisible({ timeout: 1000 }).catch(() => false)) {
-    const optionTexts = await listbox.locator('[role="option"]').allTextContents();
+    const optionTexts = await readVisibleAutocompleteOptions(listbox);
     let bestIdx = -1;
     let bestScore = 0;
     for (let i = 0; i < optionTexts.length; i++) {
@@ -5027,6 +5311,7 @@ async function selectAutocompleteOption(
   const optionLoc = page.locator(
     "[role='listbox']:visible [role='option'], [role='option'], [class*='option'], li, [class*='menu-item']"
   );
+
   const exact = optionLoc
     .filter({ hasText: new RegExp(`^${escapeRegExp(text)}`, "u") })
     .first();
@@ -5057,32 +5342,33 @@ async function selectBestStreetAutocompleteOption(
   const want = street.trim();
   if (!want) return false;
 
-  const listbox = page.locator('[role="listbox"]:visible').first();
-  if (!(await listbox.isVisible({ timeout: 2500 }).catch(() => false))) return false;
+  const menuData = await readVisibleStreetOptionTexts(page);
+  if (!menuData) return false;
 
-  const optionTexts = await listbox.locator('[role="option"]').allTextContents();
-  if (optionTexts.length === 0) return false;
+  const { menu, rowSelector, texts: optionTexts } = menuData;
 
   let bestIdx = 0;
   let bestScore = -1;
   for (let i = 0; i < optionTexts.length; i++) {
-    const opt = (optionTexts[i] || "").replace(/\s+/g, " ").trim();
-    if (!opt) continue;
-    const sc = streetMatchScore(want, opt);
+    const sc = streetMatchScore(want, optionTexts[i]);
     if (sc > bestScore) {
       bestScore = sc;
       bestIdx = i;
     }
   }
 
-  const minScore = optionTexts.length === 1 ? 1 : 40;
+  const minScore =
+    optionTexts.length === 1 ? 1 : bestScore >= 800 ? 1 : 40;
   if (bestScore < minScore) return false;
 
-  await listbox
-    .locator('[role="option"]')
+  const picked = optionTexts[bestIdx].replace(/\n/g, " / ").trim();
+  console.log(`[myhome prefill] street "${want}" → selected "${picked}" (score ${bestScore})`);
+
+  await menu
+    .locator(rowSelector)
     .nth(bestIdx)
     .click({ timeout: CHIP_CLICK_TIMEOUT_MS });
-  await prefillPause(page, 200);
+  await prefillPause(page, 80);
   return true;
 }
 
@@ -5211,10 +5497,12 @@ async function commitStreetAutocompleteInput(
   input: Locator,
   street: string,
   query: string
-): Promise<void> {
+): Promise<boolean> {
+  const core = streetCoreForMatch(street) || streetCoreForMatch(query);
   const picked =
     (await selectBestStreetAutocompleteOption(page, street)) ||
     (await selectBestStreetAutocompleteOption(page, query)) ||
+    (core ? await selectBestStreetAutocompleteOption(page, core) : false) ||
     (await selectAutocompleteOption(page, query, { pickFirst: false })) ||
     (await selectAutocompleteOption(page, query, { pickFirst: true }));
 
@@ -5230,9 +5518,13 @@ async function commitStreetAutocompleteInput(
   await page.keyboard.press("Tab").catch(() => {});
   await prefillPause(page, 40);
   await closeOpenDropdowns(page);
+  return picked;
 }
 
-async function fillStreetAutocompleteField(page: Page, street: string): Promise<void> {
+async function fillStreetAutocompleteField(
+  page: Page,
+  street: string
+): Promise<void> {
   const queries = streetAutocompleteQueries(street);
   if (queries.length === 0) return;
 
@@ -5258,16 +5550,23 @@ async function fillStreetAutocompleteField(page: Page, street: string): Promise<
 
 async function fillLocationFields(
   page: Page,
-  listing: Pick<MyhomeListing, "city" | "street" | "streetNumber" | "cadastralCode">
+  listing: Pick<
+    MyhomeListing,
+    "city" | "street" | "streetNumber" | "address" | "cadastralCode" | "rawData"
+  >
 ): Promise<void> {
   const city = listing.city?.trim() || "";
   const resolved = resolveStreetForPrefill(
-    listing.street || "",
-    listing.streetNumber || ""
+    listing.street || listing.rawData?.["ქუჩა"] || "",
+    listing.streetNumber || listing.rawData?.["ქუჩის ნომერი"] || ""
   );
   const street = resolved.street;
   const streetNumber = resolved.streetNumber;
   const cadastralCode = listing.cadastralCode?.trim() || "";
+
+  const fullStreetAddress = [street, streetNumber].filter(Boolean).join(" ").trim()
+    || listing.address?.trim()
+    || "";
 
   await page.evaluate(() => {
     for (const el of document.querySelectorAll("span, label, h2, h3")) {
@@ -5281,14 +5580,11 @@ async function fillLocationFields(
   const cityQuery = cityForPrefill(city);
   if (cityQuery) {
     await fillLocationAutocompleteField(page, "მდებარეობა", cityQuery);
+    await prefillPause(page, 80);
   }
 
-  if (street) {
-    await fillStreetAutocompleteField(page, street);
-  }
-
-  if (streetNumber && !isMicrodistrictOrBlockAddressLine(street)) {
-    await fillLabeledInput(page, "ქუჩის ნომერი", streetNumber);
+  if (fullStreetAddress) {
+    await fillStreetAutocompleteField(page, fullStreetAddress);
   }
 
   if (cadastralCode) {
@@ -5341,7 +5637,9 @@ function listingLocation(listing: MyhomeListing) {
     city: listing.city || listing.rawData?.["მდებარეობა"] || "",
     street: resolved.street,
     streetNumber: resolved.streetNumber,
+    address: listing.address || "",
     cadastralCode: listing.cadastralCode || listing.rawData?.["საკადასტრო კოდი"] || "",
+    rawData: listing.rawData,
   };
 }
 
@@ -5402,7 +5700,7 @@ function buildPostExpandChipTasks(listing: MyhomeListing): ChipClickTask[] {
 async function applyAdditionalParametersPrefill(
   page: Page,
   listing: MyhomeListing,
-  options?: { skipStatusAndCondition?: boolean }
+  options?: { skipStatusAndCondition?: boolean; sourceUrl?: string | null }
 ): Promise<void> {
   await expandCreateFormSections(page);
   if (!options?.skipStatusAndCondition) {
@@ -5533,7 +5831,9 @@ async function applyAdditionalParametersPrefill(
       }
     }
 
-    const projectType = getProjectTypeValue(listing);
+    const projectType = getProjectTypeValue(listing, {
+      sourceUrl: options?.sourceUrl,
+    });
     if (projectType) {
       await closeOpenDropdowns(page);
       await prefillProjectTypeField(page, projectType);
@@ -5545,7 +5845,7 @@ async function applyAdditionalParametersPrefill(
 
 /** Close cookie/modals that block clicks on the listing page. */
 async function dismissBlockingOverlays(page: Page): Promise<void> {
-  for (let i = 0; i < 4; i++) {
+  for (let i = 0; i < 2; i++) {
     const hadOverlay = await page.evaluate(() => {
       let closed = false;
       const acceptLabels = [
@@ -5590,11 +5890,11 @@ async function dismissBlockingOverlays(page: Page): Promise<void> {
     });
 
     if (!hadOverlay) break;
-    await page.waitForTimeout(350);
+    await page.waitForTimeout(80);
   }
 
   await page.keyboard.press("Escape").catch(() => {});
-  await page.waitForTimeout(200);
+  await page.waitForTimeout(50);
 }
 
 async function isListingPriceUsd(page: Page): Promise<boolean> {
@@ -5766,13 +6066,13 @@ async function switchPriceFieldToUsd(
   state = await evaluatePriceRowCurrency(page, anchorSelector, "toggle");
   if (!state.isUsd) {
     await clickUsdTogglePlaywright(page, anchorSelector);
-    await prefillPause(page, 120);
+    await prefillPause(page, 50);
     state = await evaluatePriceRowCurrency(page, anchorSelector, "check");
   }
 
   if (!state.isUsd) {
     await clickUsdTogglePlaywright(page, anchorSelector);
-    await prefillPause(page, 120);
+    await prefillPause(page, 50);
     await evaluatePriceRowCurrency(page, anchorSelector, "toggle");
   }
 }
@@ -5849,19 +6149,9 @@ async function switchListingPriceToUsd(page: Page): Promise<void> {
         const sw = document.querySelector('[role="switch"][aria-label*="ვალუტა"]');
         return sw?.getAttribute("aria-checked") === "true";
       },
-      { timeout: 8000 }
+      { timeout: 2500 }
     )
-    .catch(() => page.waitForTimeout(800));
-}
-
-async function getBrowser(): Promise<Browser> {
-  if (!browserInstance || !browserInstance.isConnected()) {
-    browserInstance = await chromium.launch({
-      headless: true,
-      args: ["--no-sandbox", "--disable-setuid-sandbox"],
-    });
-  }
-  return browserInstance;
+    .catch(() => page.waitForTimeout(120));
 }
 
 // Login to myhome.ge with user's credentials
@@ -5870,7 +6160,7 @@ export async function loginToMyhome(credentials: MyhomeCredentials): Promise<{
   cookies?: string;
   error?: string;
 }> {
-  const browser = await getBrowser();
+  const browser = await getParseBrowser();
   const context = await browser.newContext({
     userAgent:
       "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
@@ -5897,7 +6187,7 @@ export async function loginToMyhome(credentials: MyhomeCredentials): Promise<{
     await page.click('[data-testid="login-form__button-submit"]');
     try {
       await page.waitForURL((url) => !url.href.includes("auth.tnet.ge"), {
-        timeout: 20000,
+        timeout: 12000,
       });
     } catch {
       return { success: false, error: "Invalid credentials or login failed" };
@@ -6011,46 +6301,49 @@ export async function parseListing(url: string): Promise<{
   data?: MyhomeListing;
   error?: string;
 }> {
-  const browser = await getBrowser();
+  const browser = await getParseBrowser();
   const context = await browser.newContext({
     userAgent:
       "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
     locale: "ka-GE",
   });
   await addBrowserEvaluateShim(context);
-  await context.route("**/*", (route) => {
-    const type = route.request().resourceType();
-    if (type === "media" || type === "font") route.abort();
-    else route.continue();
-  });
+  await context.route("**/*", blockParseResources);
   const page = await context.newPage();
 
   try {
-    await page.goto(url, { waitUntil: "domcontentloaded", timeout: 30000 });
-    await dismissBlockingOverlays(page);
-
-    // Wait for the SPA to render listing content
-    await page.waitForSelector("h1, h3", { timeout: 15000 }).catch(() => null);
+    await page.goto(url, { waitUntil: "domcontentloaded", timeout: PARSE_GOTO_MS });
+    await Promise.all([
+      page.waitForSelector("h1", { timeout: 6000 }).catch(() => null),
+      dismissBlockingOverlays(page),
+    ]);
     await page
-      .waitForSelector(".swiper-slide img, [class*='price']", { timeout: 8000 })
-      .catch(() => page.waitForTimeout(1500));
+      .waitForSelector(".swiper-slide img, [class*='price']", { timeout: 2500 })
+      .catch(() => page.waitForTimeout(200));
 
     await switchListingPriceToUsd(page);
 
-    await page
-      .getByRole("button", { name: /მეტის ნახვა/i })
+    const hasExtraParams = await page
+      .getByText("დამატებითი პარამეტრები", { exact: false })
       .first()
-      .click({ timeout: 3000 })
-      .catch(() =>
-        page.evaluate(() => {
-          document.querySelectorAll("button, a, span").forEach((el) => {
-            if ((el.textContent?.trim() || "") === "მეტის ნახვა") {
-              (el as HTMLElement).click();
-            }
-          });
-        })
-      );
-    await page.waitForTimeout(600);
+      .isVisible({ timeout: 400 })
+      .catch(() => false);
+    if (!hasExtraParams) {
+      await page
+        .getByRole("button", { name: /მეტის ნახვა/i })
+        .first()
+        .click({ timeout: 1500 })
+        .catch(() =>
+          page.evaluate(() => {
+            document.querySelectorAll("button, a, span").forEach((el) => {
+              if ((el.textContent?.trim() || "") === "მეტის ნახვა") {
+                (el as HTMLElement).click();
+              }
+            });
+          })
+        );
+      await page.waitForTimeout(120);
+    }
     await page
       .getByText("დამატებითი პარამეტრები", { exact: false })
       .first()
@@ -6064,6 +6357,7 @@ export async function parseListing(url: string): Promise<{
       furnitureLabels: [...FURNITURE_LABELS],
       preferenceLabels: [...PREFERENCE_PARAM_LABELS],
       labelCanonical: LABEL_CANONICAL,
+      projectTypeChips: MYHOME_LISTING_PROJECT_CHIPS,
       flexChipFields: Object.fromEntries(
         Object.entries(FLEX_CHIP_ROW_CONFIGS).map(([label, config]) => [
           label,
@@ -6078,6 +6372,7 @@ export async function parseListing(url: string): Promise<{
       const preferenceLabels: string[] = opts.preferenceLabels;
       const labelCanonical: Record<string, string> = opts.labelCanonical;
       const flexChipFields: Record<string, string[]> = opts.flexChipFields || {};
+      const projectTypeChips = new Set<string>(opts.projectTypeChips || []);
       const WHITELIST = new Set(additionalLabels);
       const PREFERENCE_LABELS = new Set(preferenceLabels);
 
@@ -6089,9 +6384,25 @@ export async function parseListing(url: string): Promise<{
         /^საძინებელი/i.test(text.replace(/\s+/g, " ").trim()) &&
         text.length <= 25;
 
-      const isProjectTypeLabel = (text: string) =>
-        /^პროექტის\s*ტიპი/i.test(text.replace(/\s+/g, " ").trim()) &&
-        text.length <= 30;
+      const isEnglishProjectLabel = (text: string) =>
+        /^Project$/i.test(text.replace(/\s+/g, " ").trim());
+
+      const isProjectTypeLabel = (text: string) => {
+        const t = text.replace(/\s+/g, " ").trim();
+        if (isEnglishProjectLabel(t)) return true;
+        return /^პროექტის\s*ტიპი/i.test(t) && t.length <= 30;
+      };
+
+      const isProjectStatusNoise = (text: string) => {
+        const t = text.replace(/\s+/g, " ").trim();
+        if (!t || /^Project$/i.test(t)) return true;
+        for (const chip of projectTypeChips) {
+          if (t === chip || t.includes(chip)) return false;
+        }
+        return /სტატუსი|ახალი|აშენებული|მშენებარე|ძველი/i.test(t);
+      };
+
+      const isYesNo = (v: string) => v === "კი" || v === "არა";
 
       const dedupeRepeated = (value: string): string => {
         const v = value.replace(/\s+/g, " ").trim();
@@ -6100,6 +6411,21 @@ export async function parseListing(url: string): Promise<{
           if (v.slice(0, len) === v.slice(len, len * 2)) return v.slice(0, len);
         }
         return v;
+      };
+
+      const extractProjectTypeChip = (text: string): string => {
+        const t = text.replace(/\s+/g, " ").trim();
+        if (!t || isProjectStatusNoise(t)) return "";
+        for (const chip of projectTypeChips) {
+          if (t === chip || t.includes(chip)) return chip;
+        }
+        return "";
+      };
+
+      const formatProjectTypeValue = (label: string, value: string): string => {
+        const chip = extractProjectTypeChip(value);
+        if (!chip) return "";
+        return isEnglishProjectLabel(label) ? `Project ${chip}` : dedupeRepeated(chip);
       };
 
       const canonicalLabel = (label: string) => {
@@ -6115,8 +6441,6 @@ export async function parseListing(url: string): Promise<{
         isWetPointLabel(text) ||
         isBedroomLabel(text) ||
         isProjectTypeLabel(text);
-
-      const isYesNo = (v: string) => v === "კი" || v === "არა";
 
       const pickBestValue = (canon: string, candidates: string[]): string => {
         const usable = candidates.filter((v) => v && v.length <= 150 && v !== "არა");
@@ -6146,6 +6470,14 @@ export async function parseListing(url: string): Promise<{
           if (withHeight) return withHeight;
         }
         if (canon === "პროექტის ტიპი" || PREFERENCE_LABELS.has(canon)) {
+          if (canon === "პროექტის ტიპი") {
+            for (const v of usable) {
+              if (isYesNo(v)) continue;
+              const chip = extractProjectTypeChip(v);
+              if (chip) return chip;
+            }
+            return "";
+          }
           if (canon === "სათავსო" || canon === "მისაღები") {
             const typeHint =
               canon === "სათავსო" ? /^სათავსოს\s*ტიპი$/i : /^მისაღების\s*ტიპი$/i;
@@ -6180,7 +6512,24 @@ export async function parseListing(url: string): Promise<{
           return;
         }
         if (PREFERENCE_LABELS.has(canon)) {
-          if (isYesNo(existing) && !isYesNo(val)) out[canon] = val;
+          if (isYesNo(existing) && !isYesNo(val)) {
+            out[canon] = val;
+            return;
+          }
+          if (canon === "პროექტის ტიპი") {
+            const valOk =
+              /^Project\s+\S+/i.test(val) || Boolean(extractProjectTypeChip(val));
+            const existingBad =
+              !existing ||
+              isProjectStatusNoise(existing) ||
+              !(
+                /^Project\s+\S+/i.test(existing) ||
+                Boolean(extractProjectTypeChip(existing))
+              );
+            if (valOk && (existingBad || /^Project\s+\S+/i.test(val))) {
+              out[canon] = val;
+            }
+          }
           return;
         }
         if (existing === "კი" && val !== "კი") out[canon] = val;
@@ -6336,27 +6685,30 @@ export async function parseListing(url: string): Promise<{
         const canon = "პროექტის ტიპი";
 
         root.querySelectorAll("span,label,p,motion.div,div").forEach((el) => {
+          if (out[canon]) return;
           const t = (el.textContent || "").replace(/\s+/g, " ").trim();
           if (!isProjectTypeLabel(t)) return;
-          if (el.children.length > 2) return;
+          if (el.children.length > 1) return;
+
+          const tryValue = (raw: string): boolean => {
+            const formatted = formatProjectTypeValue(t, raw);
+            if (!formatted || isProjectStatusNoise(formatted)) return false;
+            out[canon] = formatted;
+            return true;
+          };
+
+          const sibling = el.nextElementSibling;
+          if (sibling && tryValue(sibling.textContent || "")) return;
 
           const parent = el.parentElement;
-          if (!parent) return;
-
-          const joined = (parent.textContent || "").replace(/\s+/g, "");
-          const glued = joined.match(/^პროექტისტიპი(.+)$/iu);
-          if (glued) {
-            const val = dedupeRepeated(glued[1]);
-            if (val && !isYesNo(val)) out[canon] = val;
-            return;
-          }
+          if (!parent || parent.children.length > 4) return;
 
           for (const child of parent.children) {
+            if (child === el) continue;
             const ct = (child.textContent || "").replace(/\s+/g, " ").trim();
-            if (!ct || ct === t || isYesNo(ct)) continue;
-            if (ct.length > 40) continue;
-            out[canon] = dedupeRepeated(ct);
-            return;
+            if (!ct || ct === t || isYesNo(ct) || isProjectTypeLabel(ct)) continue;
+            if (isProjectStatusNoise(ct)) continue;
+            if (tryValue(ct)) return;
           }
         });
 
@@ -6376,7 +6728,20 @@ export async function parseListing(url: string): Promise<{
             if (!isWhitelisted(text)) continue;
             const canon = canonicalLabel(text);
             const candidates = texts.filter((v) => v !== text && v !== canon);
-            const val = pickBestValue(canon, candidates);
+            let val = pickBestValue(canon, candidates);
+            if (canon === "პროექტის ტიპი" && isEnglishProjectLabel(text)) {
+              if (!val) {
+                for (const c of candidates) {
+                  const chip = extractProjectTypeChip(c);
+                  if (chip) {
+                    val = formatProjectTypeValue(text, chip);
+                    break;
+                  }
+                }
+              } else {
+                val = formatProjectTypeValue(text, val);
+              }
+            }
             mergeParamValue(out, canon, val);
           }
         });
@@ -6400,10 +6765,6 @@ export async function parseListing(url: string): Promise<{
         const params = collectLabelValuePairs(
           findSectionRoot("დამატებითი პარამეტრები")
         );
-        const bodyParams = collectLabelValuePairs(document.body);
-        for (const [k, v] of Object.entries(bodyParams)) {
-          mergeParamValue(params, k, v);
-        }
 
         const wetPoint = collectWetPointFromFlexRows(document.body);
         for (const [k, v] of Object.entries(wetPoint)) {
@@ -6431,31 +6792,53 @@ export async function parseListing(url: string): Promise<{
           canon: string
         ) => {
           const out: Record<string, string> = {};
+          const labelMatches = (t: string) =>
+            t === label ||
+            (label === "Project" && isEnglishProjectLabel(t));
 
-          root.querySelectorAll("span,label,p,motion.div,motion.div,motion.div,motion.div,motion.div,motion.div,div").forEach((el) => {
+          root.querySelectorAll("span,label,p,motion.div,div").forEach((el) => {
+            if (out[canon]) return;
             const t = (el.textContent || "").replace(/\s+/g, " ").trim();
-            if (t !== label) return;
+            if (!labelMatches(t)) return;
             if (el.children.length > 3) return;
+
+            if (canon === "პროექტის ტიპი") {
+              const sibling = el.nextElementSibling;
+              if (sibling) {
+                const formatted = formatProjectTypeValue(t, sibling.textContent || "");
+                if (formatted) {
+                  out[canon] = formatted;
+                  return;
+                }
+              }
+            }
 
             const parent = el.parentElement;
             if (!parent) return;
 
-            const joined = (parent.textContent || "").replace(/\s+/g, "");
-            let glued: RegExpMatchArray | null = null;
-            if (label === "სტატუსი") glued = joined.match(/^სტატუსი(.+)$/iu);
-            else if (label === "მდგომარეობა") glued = joined.match(/^მდგომარეობა(.+)$/iu);
-            if (glued) {
-              const val = dedupeRepeated(glued[1]);
-              if (val && !isYesNo(val)) out[canon] = val;
-              return;
-            }
-
             for (const child of parent.children) {
               const ct = (child.textContent || "").replace(/\s+/g, " ").trim();
               if (!ct || ct === t || isYesNo(ct)) continue;
+              if (canon === "პროექტის ტიპი" && isProjectStatusNoise(ct)) continue;
               if (ct.length > 80) continue;
+              if (canon === "პროექტის ტიპი") {
+                const formatted = formatProjectTypeValue(t, ct);
+                if (formatted) {
+                  out[canon] = formatted;
+                  return;
+                }
+                continue;
+              }
               out[canon] = dedupeRepeated(ct);
               return;
+            }
+
+            const siblings = el.nextElementSibling;
+            if (siblings) {
+              const st = (siblings.textContent || "").replace(/\s+/g, " ").trim();
+              if (st && st !== t && !isYesNo(st) && st.length <= 80) {
+                out[canon] = dedupeRepeated(st);
+              }
             }
           });
 
@@ -6477,6 +6860,20 @@ export async function parseListing(url: string): Promise<{
           "მდგომარეობა"
         );
         for (const [k, v] of Object.entries(conditionFlex)) {
+          mergeParamValue(params, k, v);
+        }
+
+        const projectEnglishFlex = collectGluedPreferenceFromFlexRows(
+          document.body,
+          "Project",
+          "პროექტის ტიპი"
+        );
+        for (const [k, v] of Object.entries(projectEnglishFlex)) {
+          mergeParamValue(params, k, v);
+        }
+
+        const bodyParams = collectLabelValuePairs(document.body);
+        for (const [k, v] of Object.entries(bodyParams)) {
           mergeParamValue(params, k, v);
         }
 
@@ -7698,7 +8095,10 @@ export async function parseListing(url: string): Promise<{
           if (!condition) condition = dedupeRepeated(v);
         },
         "პროექტის ტიპი": (v) => {
-          if (!projectType) projectType = dedupeRepeated(v);
+          if (!projectType) {
+            const chip = v.replace(/\s+/g, " ").trim();
+            if (chip && !/^Project$/i.test(chip)) projectType = dedupeRepeated(chip);
+          }
         },
         "საძინებელი": (v) => {
           if (!bedrooms) bedrooms = v.replace(/[^\d]/g, "") || v;
@@ -7848,6 +8248,12 @@ export async function parseListing(url: string): Promise<{
           delete data.rawData["ქუჩის ნომერი"];
         }
       }
+      const district = resolveListingDistrict(data);
+      if (district) {
+        if (!data.rawData) data.rawData = {};
+        data.rawData["უბანი"] = district;
+        console.log(`[myhome parse] district="${district}" from listing text/street`);
+      }
       if (data.buildingStatus) {
         data.buildingStatus = dedupeRepeatedLabelValue(data.buildingStatus);
       }
@@ -7865,11 +8271,11 @@ export async function parseListing(url: string): Promise<{
         if (!data.condition) data.condition = data.rawData["მდგომარეობა"];
       }
       if (data.projectType) {
-        data.projectType = dedupeRepeatedLabelValue(data.projectType);
+        data.projectType = sanitizeParsedProjectType(data.projectType);
       }
       const rawProject = data.rawData?.["პროექტის ტიპი"];
       if (rawProject) {
-        data.rawData["პროექტის ტიპი"] = dedupeRepeatedLabelValue(rawProject);
+        data.rawData["პროექტის ტიპი"] = sanitizeParsedProjectType(rawProject);
         if (!data.projectType) data.projectType = data.rawData["პროექტის ტიპი"];
       }
       if (!data.bedrooms && data.rawData?.["საძინებელი"]) {
@@ -7905,8 +8311,162 @@ async function ensurePostSessionLogin(
     await page.fill('input[name="Password"]', credentials.password);
     await page.click('[data-testid="login-form__button-submit"]');
     await page.waitForURL((url) => !url.href.includes("auth.tnet.ge"), {
-      timeout: 20000,
+      timeout: 12000,
     });
+}
+
+/** Display name next to header avatar (www.myhome.ge / shared shell). Used to prefill სახელი on statement create. */
+async function tryReadMyhomeHeaderDisplayName(page: Page): Promise<string | null> {
+  const name = await page.evaluate(() => {
+    const img = document.querySelector(
+      'img[alt="auth-user"]'
+    ) as HTMLImageElement | null;
+    if (!img || img.offsetParent === null) return null;
+    const btn = img.closest("button");
+    const root = btn || img.parentElement;
+    if (!root) return null;
+    const candidates: string[] = [];
+    for (const span of root.querySelectorAll("span")) {
+      const cls = typeof span.className === "string" ? span.className : "";
+      const t = (span.textContent || "").replace(/\s+/g, " ").trim();
+      if (t.length < 1 || t.length > 120) continue;
+      if (/^(menu|მენიუ|login|logout)/iu.test(t)) continue;
+      if (cls.includes("truncate") || cls.includes("max-w"))
+        candidates.unshift(t);
+      else candidates.push(t);
+    }
+    return candidates[0] ?? null;
+  });
+  return name || null;
+}
+
+/**
+ * Read the signed-in account label from myhome header, opening www.myhome.ge if needed.
+ */
+async function getMyhomeAccountDisplayName(page: Page): Promise<string | null> {
+  let name = await tryReadMyhomeHeaderDisplayName(page);
+  if (name) return name;
+  await page
+    .goto("https://www.myhome.ge/", {
+      waitUntil: "domcontentloaded",
+      timeout: 30000,
+    })
+    .catch(() => null);
+  await page.waitForSelector('img[alt="auth-user"]', { timeout: 12000 }).catch(() => null);
+  await prefillPause(page, 200);
+  name = await tryReadMyhomeHeaderDisplayName(page);
+  return name;
+}
+
+function isMyhomeCheckoutUrl(url: string): boolean {
+  return /statements\.myhome\.ge\/ka\/checkout-page|\/checkout-page/i.test(url);
+}
+
+/** Select balance payment and click გადახდა და ატვირთვა on statements.myhome.ge checkout. */
+async function myhomeCompleteCheckoutPayment(page: Page): Promise<boolean> {
+  console.log("[myhome prefill] Checkout: ბალანსით გადახდა → გადახდა და ატვირთვა");
+
+  // Ensure we really are on the checkout page before doing anything.
+  if (!isMyhomeCheckoutUrl(page.url())) {
+    await page
+      .waitForURL((url) => isMyhomeCheckoutUrl(url.href), { timeout: 8000 })
+      .catch(() => null);
+  }
+  if (!isMyhomeCheckoutUrl(page.url())) {
+    console.warn(`[myhome prefill] not on checkout (url="${page.url()}")`);
+    return false;
+  }
+
+  // Wait for payment options to mount.
+  await page
+    .locator("text=/ბალანსით\s*გადახდა/i")
+    .first()
+    .waitFor({ state: "visible", timeout: 8000 })
+    .catch(() => null);
+
+  // 1) Click the balance radio / row using evaluate — handles any DOM structure.
+  const balanceClicked = await page.evaluate(() => {
+    const norm = (s: string) => s.replace(/\s+/g, " ").trim();
+    // Try clicking the radio input directly first.
+    for (const el of document.querySelectorAll<HTMLInputElement>('input[type="radio"]')) {
+      const label =
+        el.closest("label") ||
+        document.querySelector(`label[for="${el.id}"]`) ||
+        el.closest("div[class]");
+      const text = norm(label?.textContent || el.value || "");
+      if (/ბალანსით\s*გადახდა/i.test(text)) {
+        el.click();
+        if (label) (label as HTMLElement).click();
+        return true;
+      }
+    }
+    // Fallback: find any clickable element containing the text.
+    for (const el of document.querySelectorAll<HTMLElement>("label, div[class], li")) {
+      if (!/ბალანსით\s*გადახდა/i.test(norm(el.textContent || ""))) continue;
+      // Avoid clicking large wrappers that contain the pay button too.
+      if ((el.textContent || "").includes("გადახდა და ატვირთვა")) continue;
+      el.click();
+      return true;
+    }
+    return false;
+  });
+
+  if (!balanceClicked) {
+    console.warn("[myhome prefill] balance payment option not found in DOM");
+    return false;
+  }
+  console.log("[myhome prefill] balance option clicked");
+
+  // Wait for the pay button to become enabled (it starts disabled).
+  await page
+    .waitForFunction(() => {
+      for (const btn of document.querySelectorAll<HTMLButtonElement>("button")) {
+        if (!/გადახდა\s*და\s*ატვირთვა/i.test((btn.textContent || "").replace(/\s+/g, " ")))
+          continue;
+        return !btn.disabled && btn.getAttribute("aria-disabled") !== "true";
+      }
+      return false;
+    }, { timeout: 5000 })
+    .catch(() => null);
+
+  // 2) Click "გადახდა და ატვირთვა" via evaluate so it always hits the right element.
+  const payClicked = await page.evaluate(() => {
+    const norm = (s: string) => s.replace(/\s+/g, " ").trim();
+    for (const btn of document.querySelectorAll<HTMLButtonElement>("button")) {
+      if (!/გადახდა\s*და\s*ატვირთვა/i.test(norm(btn.textContent || ""))) continue;
+      btn.scrollIntoView({ block: "center", behavior: "instant" });
+      btn.click();
+      return true;
+    }
+    return false;
+  });
+
+  if (!payClicked) {
+    console.warn('[myhome prefill] "გადახდა და ატვირთვა" button not found');
+    return false;
+  }
+  console.log('[myhome prefill] "გადახდა და ატვირთვა" clicked');
+
+  // 3) Best-effort confirmation.
+  const done = await page
+    .waitForURL((url) => !isMyhomeCheckoutUrl(url.href), { timeout: 10000 })
+    .then(() => true)
+    .catch(() =>
+      page
+        .locator("text=/წარმატებ|ატვირთ|განთავს|success/i")
+        .first()
+        .isVisible({ timeout: 4000 })
+        .catch(() => false)
+    );
+
+  if (done) {
+    console.log(`[myhome prefill] checkout payment done (url="${page.url()}")`);
+  } else {
+    console.warn(
+      `[myhome prefill] checkout payment may not have completed (url="${page.url()}")`
+    );
+  }
+  return done;
 }
 
 // Navigate to the photo gallery step and upload images via the hidden file input.
@@ -7928,7 +8488,7 @@ export async function uploadListingImages(
       .first();
     if (await photoStep.isVisible({ timeout: 3000 })) {
       await photoStep.click();
-      await page.waitForTimeout(1000);
+      await page.waitForTimeout(300);
     }
   } catch {
     /* step may already be visible */
@@ -7943,7 +8503,7 @@ export async function uploadListingImages(
       .first();
     if (await nextBtn.isVisible({ timeout: 1000 }).catch(() => false)) {
       await nextBtn.click();
-      await page.waitForTimeout(800);
+      await page.waitForTimeout(250);
     } else {
       break;
     }
@@ -7956,8 +8516,8 @@ export async function uploadListingImages(
   await page
     .locator(".document-uploader img, .document-uploader [class*='preview']")
     .first()
-    .waitFor({ state: "visible", timeout: 60000 })
-    .catch(() => page.waitForTimeout(5000));
+    .waitFor({ state: "visible", timeout: 20000 })
+    .catch(() => page.waitForTimeout(1500));
 }
 
 // Login, navigate to create form, pre-fill fields, and upload photos.
@@ -7983,6 +8543,7 @@ export async function createMyhomePost(
   if (reuseSession && postSession) {
     browser = postSession.browser;
     context = postSession.context;
+    for (const p of context.pages()) await p.close().catch(() => {});
     page = await context.newPage();
     await ensureBrowserEvaluateShim(page);
   } else {
@@ -7992,13 +8553,18 @@ export async function createMyhomePost(
     }
     browser = await chromium.launch({
       headless,
-      args: ["--no-sandbox", "--disable-setuid-sandbox", "--start-maximized"],
+      args: [
+        "--no-sandbox", "--disable-setuid-sandbox", "--start-maximized",
+        "--disable-dev-shm-usage", "--disable-gpu",
+        "--single-process", "--no-zygote",
+        ...(headless ? ["--window-size=1920,1080"] : []),
+      ],
     });
     context = await browser.newContext({
       userAgent:
         "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
       locale: "ka-GE",
-      viewport: null,
+      viewport: headless ? { width: 1920, height: 1080 } : null,
     });
     await context.route("**/*", (route) => {
       const type = route.request().resourceType();
@@ -8024,11 +8590,13 @@ export async function createMyhomePost(
       await ensurePostSessionLogin(page, credentials);
     }
 
+    const accountDisplayName = await getMyhomeAccountDisplayName(page);
+
     await page.goto(
       "https://statements.myhome.ge/ka/statement/create?referrer=myhome",
       { waitUntil: "domcontentloaded", timeout: 30000 }
     );
-    await page.waitForSelector("#total_price", { timeout: 20000 });
+    await page.waitForSelector("#total_price", { timeout: 12000 });
     await dismissBlockingOverlays(page);
     await prefillPause(page, 60);
 
@@ -8290,7 +8858,7 @@ export async function createMyhomePost(
     };
 
     await batchPrefillChips(page, buildEarlyPropertyChipTasks(listing));
-    await prefillPause(page, 100);
+    await prefillPause(page, 40);
     await prefillBuildingStatusAndCondition(page, listing);
 
     await fillLocationFields(page, listingLocation(listing));
@@ -8323,7 +8891,11 @@ export async function createMyhomePost(
     try {
       await applyAdditionalParametersPrefill(page, listing, {
         skipStatusAndCondition: true,
+        sourceUrl: options.sourceUrl,
       });
+      if (accountDisplayName) {
+        await fillLabeledInput(page, "სახელი", accountDisplayName);
+      }
     } catch (e) {
       console.warn(
         "[myhome prefill] additional parameters warning:",
@@ -8355,9 +8927,92 @@ export async function createMyhomePost(
       }
     }
 
+    // Optionally click Publish ("გამოქვეყნება") to proceed to checkout step.
+    // Kept behind a flag to avoid accidental auto-publish in visible sessions.
+    if (process.env.MYHOME_AUTO_PUBLISH === "true") {
+      const publishBtn = page
+        .locator("button, a, [role='button']")
+        .filter({ hasText: /გამოქვეყნება/ })
+        .first();
+      const canClick = await publishBtn
+        .isVisible({ timeout: 2000 })
+        .then(() => true)
+        .catch(() => false);
+      if (canClick) {
+        // In headless the publish button can be below the fold; scroll to ensure it's in view.
+        await page
+          .evaluate(() => window.scrollTo(0, document.body.scrollHeight))
+          .catch(() => null);
+        await prefillPause(page, 200);
+        await publishBtn.scrollIntoViewIfNeeded().catch(() => null);
+        await page
+          .waitForFunction(() => {
+            const candidates = Array.from(
+              document.querySelectorAll<HTMLElement>("button, a, [role='button']")
+            ).filter((el) => (el.textContent || "").includes("გამოქვეყნება"));
+            return candidates.some((el) => {
+              const disabledAttr = el.getAttribute("disabled");
+              const ariaDisabled = el.getAttribute("aria-disabled");
+              const isDisabled =
+                disabledAttr !== null ||
+                ariaDisabled === "true" ||
+                el.className?.toString().includes("disabled");
+              return !isDisabled;
+            });
+          }, { timeout: 10000 })
+          .catch(() => null);
+        await publishBtn.click({ timeout: 8000 }).catch(async () => {
+          await publishBtn.evaluate((el) => (el as HTMLElement).click()).catch(() => null);
+        });
+        // Wait for checkout page (or any navigation away from create form).
+        // IMPORTANT: in headless mode we require checkout, otherwise unpaid entry may never be created.
+        const leftCreate = await page
+          .waitForURL((url) => !url.href.includes("/statement/create"), {
+            timeout: 20000,
+          })
+          .then(() => true)
+          .catch(() => false);
+
+        const onCheckout = await page
+          .waitForURL((url) => url.href.includes("/checkout"), { timeout: 20000 })
+          .then(() => true)
+          .catch(() => false);
+
+        if (headless && (!leftCreate || !onCheckout)) {
+          throw new Error(
+            `[myhome prefill] publish did not reach checkout (url="${page.url()}")`
+          );
+        }
+      } else {
+        console.warn('[myhome prefill] "გამოქვეყნება" button not visible');
+      }
+    }
+
+    // After publish, wait up to 8s for statements.myhome.ge/ka/checkout-page then pay.
+    const onCheckout =
+      isMyhomeCheckoutUrl(page.url()) ||
+      (await page
+        .waitForURL((url) => isMyhomeCheckoutUrl(url.href), { timeout: 8000 })
+        .then(() => true)
+        .catch(() => false));
+    if (onCheckout) {
+      const paid = await myhomeCompleteCheckoutPayment(page);
+      if (headless && !paid) {
+        throw new Error(
+          `[myhome prefill] checkout payment failed (url="${page.url()}")`
+        );
+      }
+    } else {
+      console.warn(
+        `[myhome prefill] checkout page not reached after publish (url="${page.url()}")`
+      );
+    }
+
     const postUrl = page.url();
 
     if (headless) {
+      const graceMs = parseInt(process.env.MYHOME_CHECKOUT_GRACE_MS || "500", 10);
+      if (graceMs > 0) await page.waitForTimeout(graceMs).catch(() => null);
       await browser.close();
     }
 

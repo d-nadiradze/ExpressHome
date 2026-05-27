@@ -203,6 +203,66 @@ function normProjectLabel(s: string): string {
   return s.replace(/\s+/g, " ").trim();
 }
 
+/** Sync with myhome-parser PROJECT_TYPE_ALIASES. */
+const MYHOME_PROJECT_TYPE_ALIASES: Record<string, string[]> = {
+  "არასტანდარტული": ["არასტანდარტული"],
+  "თუხარელის": ["თუხარელის", "თუხარელი"],
+  "იტალიური ეზო": ["იტალიური ეზო"],
+  "ლენინგრადის": ["ლენინგრადის", "ლენინგრადი"],
+  "ყავლაშვილის": ["ყავლაშვილის", "ყავლაშვილი"],
+  "ჩეხური": ["ჩეხური"],
+  "ხრუშოვის": ["ხრუშოვის", "ხრუშოვი", "ხრუშოვკა"],
+  "საერთო საცხოვრებელი": ["საერთო საცხოვრებელი"],
+  "დუპლექსი": ["დუპლექსი", "დუპლექს"],
+  "ტრიპლექსი": ["ტრიპლექსი", "ტრიპლექს"],
+  "m2-ის კომპლექსი": [
+    "m2-ის კომპლექსი",
+    "m2 კომპლექსი",
+    "m2-ს კომპლექსი",
+    "მ2 დეველოპმენტ",
+    "მ2 დეველოპმენტი",
+    "m2 დეველოპმენტ",
+    "m2 დეველოპმენტი",
+    "M2 დეველოპმენტ",
+    "M2 დეველოპმენტი",
+  ],
+  "OPTIMA m2-ისკან": ["OPTIMA m2-ისკან", "optima m2-ისკან", "ოპტიმა m2"],
+  "METRA PARK": [
+    "METRA PARK",
+    "metra park",
+    "მეტრა პარკი",
+    "METRA PARK (მეტრა პარკი)",
+    "metra park (მეტრა პარკი)",
+  ],
+};
+
+function projectTypeParseCandidates(raw: string): string[] {
+  const v = normProjectLabel(raw);
+  if (!v) return [];
+  const out = new Set<string>([v]);
+  const paren = v.match(/^(.+?)\s*\(([^)]+)\)\s*$/u);
+  if (paren) {
+    out.add(paren[1].trim());
+    out.add(paren[2].trim());
+  }
+  const stripped = v.replace(/\s*\([^)]*\)\s*/g, " ").replace(/\s+/g, " ").trim();
+  if (stripped) out.add(stripped);
+  return [...out];
+}
+
+function resolveMyhomeProjectTypeFromAliases(raw: string): string | null {
+  for (const candidate of projectTypeParseCandidates(raw)) {
+    const lower = candidate.toLowerCase();
+    for (const [option, aliases] of Object.entries(MYHOME_PROJECT_TYPE_ALIASES)) {
+      if (option.toLowerCase() === lower) return option;
+      for (const alias of aliases) {
+        if (alias.toLowerCase() === lower) return option;
+      }
+    }
+  }
+  return null;
+}
+
 function isKnownSsgeProjectLabel(value: string): boolean {
   const v = normProjectLabel(value);
   if (!v) return false;
@@ -220,9 +280,6 @@ function isKnownMyhomeProjectLabel(value: string): boolean {
   if (!v) return false;
   if (MYHOME_PROJECT_TYPE_LABELS.has(v)) return true;
   if (isKnownSsgeProjectLabel(v)) return true;
-  for (const label of MYHOME_PROJECT_TYPE_LABELS) {
-    if (v.includes(label) || label.includes(v)) return true;
-  }
   return false;
 }
 
@@ -238,12 +295,15 @@ export function resolveProjectTypeCanonical(
   ].filter(Boolean) as string[];
 
   for (const raw of candidates) {
+    const fromAlias = resolveMyhomeProjectTypeFromAliases(raw);
+    if (fromAlias) return fromAlias;
+
     const v = normProjectLabel(raw);
     if (PROJECT_TYPE_TO_SSGE[v]) return PROJECT_TYPE_TO_SSGE[v];
     if (PROJECT_TYPE_SUBSET.includes(v as (typeof PROJECT_TYPE_SUBSET)[number])) {
       return v;
     }
-    if (isKnownMyhomeProjectLabel(v)) return v;
+    if (MYHOME_PROJECT_TYPE_LABELS.has(v)) return v;
   }
 
   return DEFAULT_PROJECT_TYPE;
