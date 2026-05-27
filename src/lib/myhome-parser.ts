@@ -8312,7 +8312,8 @@ async function ensurePostSessionLogin(
     await page.fill('input[name="Password"]', credentials.password);
     await page.click('[data-testid="login-form__button-submit"]');
     await page.waitForURL((url) => !url.href.includes("auth.tnet.ge"), {
-      timeout: 12000,
+      timeout: 20000,
+      waitUntil: "domcontentloaded",
     });
 }
 
