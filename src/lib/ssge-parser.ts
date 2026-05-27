@@ -15,6 +15,13 @@ import {
   resolveSsgeBalconyCountForPrefill,
 } from "@/lib/platform-amenity-mappings";
 import type { MyhomeListing } from "@/lib/myhome-parser";
+import {
+  closeBrowserSession,
+  isSsgePrefillHeadless,
+  prefillSessionTtlMs,
+  registerBrowser,
+  shouldReusePrefillSession,
+} from "@/lib/browser-lifecycle";
 import { resolveImagesForPlaywright } from "@/lib/listing-images";
 import {
   resolveSsgeStatusChip,
@@ -233,6 +240,28 @@ let postSession: {
   browser: Browser;
   context: BrowserContext;
 } | null = null;
+
+let postSessionIdleTimer: ReturnType<typeof setTimeout> | null = null;
+
+export async function closeSsgePostSession(): Promise<void> {
+  if (postSessionIdleTimer) {
+    clearTimeout(postSessionIdleTimer);
+    postSessionIdleTimer = null;
+  }
+  if (!postSession) return;
+  const { browser, context } = postSession;
+  postSession = null;
+  await closeBrowserSession(browser, context);
+}
+
+function scheduleSsgePostSessionIdleClose(): void {
+  if (postSessionIdleTimer) clearTimeout(postSessionIdleTimer);
+  const ttl = prefillSessionTtlMs();
+  if (ttl <= 0) return;
+  postSessionIdleTimer = setTimeout(() => {
+    void closeSsgePostSession();
+  }, ttl);
+}
 
 async function prefillPause(page: Page, ms = PREFILL_PAUSE_MS) {
   if (ms > 0) await page.waitForTimeout(ms);
@@ -574,10 +603,12 @@ export async function loginToSsge(credentials: SsgeCredentials): Promise<{
   success: boolean;
   error?: string;
 }> {
-  const browser = await chromium.launch({
-    headless: true,
-    args: DOCKER_SAFE_CHROMIUM_ARGS,
-  });
+  const browser = registerBrowser(
+    await chromium.launch({
+      headless: true,
+      args: DOCKER_SAFE_CHROMIUM_ARGS,
+    })
+  );
   const context = await browser.newContext({
     userAgent: USER_AGENT,
     locale: "ka-GE",
@@ -600,8 +631,7 @@ export async function loginToSsge(credentials: SsgeCredentials): Promise<{
       error: error instanceof Error ? error.message : "Login failed",
     };
   } finally {
-    await context.close().catch(() => null);
-    await browser.close().catch(() => null);
+    await closeBrowserSession(browser, context);
   }
 }
 
@@ -2472,10 +2502,11 @@ export async function createSsgePost(
   }
 
   const reuseSession =
+    shouldReusePrefillSession() &&
     postSession?.email === credentials.email &&
     postSession.browser.isConnected();
 
-  const headless = process.env.SSGE_PREFILL_HEADLESS !== "false";
+  const headless = isSsgePrefillHeadless();
 
   let browser: Browser;
   let context: BrowserContext;
@@ -2489,17 +2520,16 @@ export async function createSsgePost(
     reporter.stepDone("browser", "Reusing active session");
   } else {
     reporter.step("browser");
-    if (postSession?.browser.isConnected()) {
-      await postSession.context.close().catch(() => null);
-      await postSession.browser.close().catch(() => null);
-    }
-    browser = await chromium.launch({
-      headless,
-      args: [
-        ...DOCKER_SAFE_CHROMIUM_ARGS,
-        ...(headless ? [] : ["--start-maximized"]),
-      ],
-    });
+    await closeSsgePostSession();
+    browser = registerBrowser(
+      await chromium.launch({
+        headless,
+        args: [
+          ...DOCKER_SAFE_CHROMIUM_ARGS,
+          ...(headless ? [] : ["--start-maximized"]),
+        ],
+      })
+    );
     context = await browser.newContext({
       userAgent: USER_AGENT,
       locale: "ka-GE",
@@ -2886,12 +2916,13 @@ export async function createSsgePost(
     for (const cleanup of cleanups) {
       await cleanup().catch(() => null);
     }
-    // In headed/local mode we intentionally leave the browser open so the user
-    // can review and submit. Only close when running headless.
-    if (headless) {
-      await context.close().catch(() => null);
-      await browser.close().catch(() => null);
-      if (postSession?.browser === browser) postSession = null;
+    if (headless || !shouldReusePrefillSession()) {
+      await closeBrowserSession(browser, context);
+      if (postSession?.browser === browser) {
+        postSession = null;
+      }
+    } else {
+      scheduleSsgePostSessionIdleClose();
     }
   }
 }
