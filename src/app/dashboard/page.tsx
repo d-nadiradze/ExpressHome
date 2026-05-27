@@ -42,6 +42,8 @@ export default async function DashboardPage() {
   };
 
   const hasMyHomeAccount = !!user.myhomeAccount;
+  const hasSsgeAccount = !!user.ssgeAccount;
+  const showAccountWarning = !hasMyHomeAccount || !hasSsgeAccount;
   const firstName = user.name?.split(" ")[0] || user.email.split("@")[0];
 
   return (
@@ -64,7 +66,7 @@ export default async function DashboardPage() {
       </div>
 
       {/* Account warning */}
-      {!hasMyHomeAccount && (
+      {showAccountWarning && (
         <div
           className="rounded-2xl border border-amber-200/80 bg-gradient-to-r from-amber-50 to-orange-50 p-5 flex items-start gap-4"
           role="alert"
@@ -75,15 +77,15 @@ export default async function DashboardPage() {
             </svg>
           </div>
           <div className="min-w-0 flex-1">
-            <p className="font-semibold text-amber-900">myhome.ge account not linked</p>
+            <p className="font-semibold text-amber-900">Platform accounts not fully linked</p>
             <p className="text-sm text-amber-800/90 mt-1 leading-relaxed">
-              Connect your account to auto-publish parsed listings without manual copy-paste.
+              Connect myhome.ge and ss.ge to auto-publish parsed listings without manual copy-paste.
             </p>
             <Link
               href="/dashboard/link-account"
               className="inline-flex items-center gap-1 mt-3 text-sm font-semibold text-amber-900 hover:text-amber-950 underline-offset-2 hover:underline"
             >
-              Link account
+              Manage platform accounts
               <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" aria-hidden="true">
                 <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" />
               </svg>
