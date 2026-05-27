@@ -1,8 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { db } from "@/lib/db";
-import { decrypt } from "@/lib/encryption";
-import { createMyhomePost } from "@/lib/myhome-parser";
-import { enqueuePrefill } from "@/lib/prefill-queue";
+import { initPrefillProgress } from "@/lib/prefill-progress";
+import { runMyhomePrefillJob } from "@/lib/prefill-runner";
 
 export async function POST(request: NextRequest) {
   const userId = request.headers.get("x-user-id");
@@ -15,7 +14,6 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: "Listing ID is required" }, { status: 400 });
     }
 
-    // Get the parsed listing
     const listing = await db.parsedListing.findFirst({
       where: { id: listingId, userId },
     });
@@ -24,7 +22,6 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: "Listing not found" }, { status: 404 });
     }
 
-    // Get user's myhome credentials
     const myhomeAccount = await db.myhomeAccount.findUnique({
       where: { userId },
     });
@@ -36,63 +33,15 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    // Decrypt password
-    const password = decrypt(myhomeAccount.myhomePassword);
+    const jobId = `myhome-${listingId}-${Date.now()}`;
+    initPrefillProgress(jobId, "myhome", listingId, userId);
 
-    // Mark as in-progress
-    await db.parsedListing.update({
-      where: { id: listingId },
-      data: { postStatus: "PENDING" },
-    });
+    void runMyhomePrefillJob(jobId, listingId, userId);
 
-    const result = await enqueuePrefill(
-      `myhome-${listingId}`,
-      () => createMyhomePost(
-      { email: myhomeAccount.myhomeEmail, password },
-      {
-        title: listing.title || "",
-        propertyType: listing.propertyType || "",
-        dealType: listing.dealType || "",
-        buildingStatus: listing.buildingStatus || "",
-        condition: listing.condition || "",
-        city: listing.city || "",
-        address: listing.address || "",
-        street: listing.street || "",
-        streetNumber: listing.streetNumber || "",
-        cadastralCode: listing.cadastralCode || "",
-        price: listing.price || "",
-        pricePerSqm: listing.pricePerSqm || "",
-        currency: listing.currency || "USD",
-        area: listing.area || "",
-        rooms: listing.rooms || "",
-        bedrooms: listing.bedrooms || "",
-        floor: listing.floor || "",
-        totalFloors: listing.totalFloors || "",
-        projectType: listing.projectType || "",
-        bathrooms: listing.bathrooms || "",
-        balconyArea: listing.balconyArea || "",
-        verandaArea: listing.verandaArea || "",
-        loggiaArea: listing.loggiaArea || "",
-        description: listing.description || "",
-        images: (listing.images as string[]) || [],
-        rawData: (listing.rawData as Record<string, string>) || {},
-      },
-      { listingId, userId, sourceUrl: listing.sourceUrl }
-    ));
-
-    if (!result.success) {
-      await db.parsedListing.update({
-        where: { id: listingId },
-        data: { postStatus: "FAILED" },
-      });
-      return NextResponse.json(
-        { error: result.error || "Failed to pre-fill form" },
-        { status: 422 }
-      );
-    }
-
-    // Keep PENDING since user still needs to review and submit in the browser
-    return NextResponse.json({ success: true, postUrl: result.postUrl });
+    return NextResponse.json(
+      { success: true, jobId, platform: "myhome" },
+      { status: 202 }
+    );
   } catch (error) {
     console.error("Create post error:", error);
     return NextResponse.json({ error: "Internal server error" }, { status: 500 });

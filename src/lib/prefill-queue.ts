@@ -10,13 +10,31 @@ interface PrefillJob<T> {
   reject: (reason: unknown) => void;
 }
 
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
-const queue: PrefillJob<any>[] = [];
-let running = 0;
+const globalStore = globalThis as unknown as {
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  prefillQueue?: PrefillJob<any>[];
+  prefillRunning?: number;
+};
+
+function getQueue() {
+  if (!globalStore.prefillQueue) {
+    globalStore.prefillQueue = [];
+  }
+  return globalStore.prefillQueue;
+}
+
+function getRunning() {
+  return globalStore.prefillRunning ?? 0;
+}
+
+function setRunning(n: number) {
+  globalStore.prefillRunning = n;
+}
 
 function processNext() {
-  if (running >= MAX_CONCURRENT || queue.length === 0) return;
-  running++;
+  const queue = getQueue();
+  if (getRunning() >= MAX_CONCURRENT || queue.length === 0) return;
+  setRunning(getRunning() + 1);
   const job = queue.shift()!;
 
   job
@@ -24,22 +42,22 @@ function processNext() {
     .then(job.resolve)
     .catch(job.reject)
     .finally(() => {
-      running--;
+      setRunning(getRunning() - 1);
       processNext();
     });
 }
 
 export function enqueuePrefill<T>(id: string, run: () => Promise<T>): Promise<T> {
   return new Promise<T>((resolve, reject) => {
-    queue.push({ id, run, resolve, reject });
+    getQueue().push({ id, run, resolve, reject });
     processNext();
   });
 }
 
 export function getPrefillQueueStats() {
-  return { queued: queue.length, running };
+  return { queued: getQueue().length, running: getRunning() };
 }
 
 export function getPrefillQueuePosition(id: string): number {
-  return queue.findIndex((j) => j.id === id);
+  return getQueue().findIndex((j) => j.id === id);
 }

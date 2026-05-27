@@ -20,6 +20,10 @@ import {
   normalizeListingForMyhomePrefill,
 } from "@/lib/cross-platform-prefill";
 import {
+  noopPrefillReporter,
+  type PrefillReporter,
+} from "@/lib/prefill-progress";
+import {
   mapLandPlotStatusForMyhome,
   PROJECT_TYPE_TO_SSGE,
   resolveProjectTypeCanonical,
@@ -8527,8 +8531,14 @@ export async function uploadListingImages(
 export async function createMyhomePost(
   credentials: MyhomeCredentials,
   listing: MyhomeListing,
-  options: { listingId: string; userId: string; sourceUrl?: string | null }
+  options: {
+    listingId: string;
+    userId: string;
+    sourceUrl?: string | null;
+    reporter?: PrefillReporter;
+  }
 ): Promise<{ success: boolean; postUrl?: string; error?: string }> {
+  const reporter = options.reporter ?? noopPrefillReporter;
   listing = normalizeListingForMyhomePrefill(listing, {
     sourceUrl: options.sourceUrl,
   });
@@ -8548,7 +8558,9 @@ export async function createMyhomePost(
     for (const p of context.pages()) await p.close().catch(() => {});
     page = await context.newPage();
     await ensureBrowserEvaluateShim(page);
+    reporter.stepDone("browser", "Reusing active session");
   } else {
+    reporter.step("browser");
     if (postSession?.browser.isConnected()) {
       await postSession.context.close().catch(() => null);
       await postSession.browser.close().catch(() => null);
@@ -8581,6 +8593,7 @@ export async function createMyhomePost(
     await addBrowserEvaluateShim(context);
     page = await context.newPage();
     postSession = { email: credentials.email, browser, context };
+    reporter.stepDone("browser");
   }
 
   try {
@@ -8591,11 +8604,16 @@ export async function createMyhomePost(
     applyFloorParsedFields(listing);
 
     if (!reuseSession) {
+      reporter.step("login");
       await ensurePostSessionLogin(page, credentials);
+      reporter.stepDone("login");
+    } else {
+      reporter.stepDone("login", "Session already active");
     }
 
     const accountDisplayName = await getMyhomeAccountDisplayName(page);
 
+    reporter.step("form");
     await page.goto(
       "https://statements.myhome.ge/ka/statement/create?referrer=myhome",
       { waitUntil: "domcontentloaded", timeout: 30000 }
@@ -8603,8 +8621,9 @@ export async function createMyhomePost(
     await page.waitForSelector("#total_price", { timeout: 12000 });
     await dismissBlockingOverlays(page);
     await prefillPause(page, 60);
+    reporter.stepDone("form");
 
-    // Use DOM manipulation for fast, non-hanging form fill.
+    reporter.step("fields");
     // Chips = leaf span/div elements with exact text, click the rounded parent.
     // Inputs = found via label > span text, filled with React-compatible setter.
     async function fillForm(data: Record<string, string>) {
@@ -8891,7 +8910,9 @@ export async function createMyhomePost(
       totalFloors: isLandPlotListing ? "" : totalFloorsForForm,
       description: listing.description,
     });
+    reporter.stepDone("fields");
 
+    reporter.step("amenities");
     try {
       await applyAdditionalParametersPrefill(page, listing, {
         skipStatusAndCondition: true,
@@ -8901,11 +8922,14 @@ export async function createMyhomePost(
         await fillLabeledInput(page, "სახელი", accountDisplayName);
       }
     } catch (e) {
+      const msg = e instanceof Error ? e.message : String(e);
+      reporter.stepWarn("amenities", msg);
       console.warn(
         "[myhome prefill] additional parameters warning:",
-        e instanceof Error ? e.message : e
+        msg
       );
     }
+    reporter.stepDone("amenities");
 
     try {
       if (!isLandPlotListing && !listingHasBalconyData(listing)) {
@@ -8917,6 +8941,7 @@ export async function createMyhomePost(
 
     // Upload images to photo gallery
     if (listing.images.length > 0) {
+      reporter.step("images", `${listing.images.length} photo(s)`);
       const { paths, cleanup } = await resolveImagesForPlaywright(
         listing.images,
         options.listingId,
@@ -8929,11 +8954,14 @@ export async function createMyhomePost(
       } finally {
         await cleanup();
       }
+      reporter.stepDone("images");
+    } else {
+      reporter.stepDone("images", "No photos to upload");
     }
 
     // Optionally click Publish ("გამოქვეყნება") to proceed to checkout step.
-    // Kept behind a flag to avoid accidental auto-publish in visible sessions.
     if (process.env.MYHOME_AUTO_PUBLISH === "true") {
+      reporter.step("publish");
       const publishBtn = page
         .locator("button, a, [role='button']")
         .filter({ hasText: /გამოქვეყნება/ })
@@ -8988,11 +9016,15 @@ export async function createMyhomePost(
           );
         }
       } else {
+        reporter.warn('"გამოქვეყნება" button not visible');
         console.warn('[myhome prefill] "გამოქვეყნება" button not visible');
       }
+      reporter.stepDone("publish");
+    } else {
+      reporter.stepDone("publish", "Skipped (auto-publish off)");
     }
 
-    // After publish, wait up to 8s for statements.myhome.ge/ka/checkout-page then pay.
+    reporter.step("checkout");
     const onCheckout =
       isMyhomeCheckoutUrl(page.url()) ||
       (await page
@@ -9007,12 +9039,14 @@ export async function createMyhomePost(
         );
       }
     } else {
-      console.warn(
-        `[myhome prefill] checkout page not reached after publish (url="${page.url()}")`
-      );
+      const msg = `Checkout page not reached (url="${page.url()}")`;
+      reporter.warn(msg);
+      console.warn(`[myhome prefill] checkout page not reached after publish (url="${page.url()}")`);
     }
+    reporter.stepDone("checkout");
 
     const postUrl = page.url();
+    reporter.success(`Listing ready at ${postUrl}`);
 
     if (headless) {
       const graceMs = parseInt(process.env.MYHOME_CHECKOUT_GRACE_MS || "500", 10);
@@ -9022,6 +9056,8 @@ export async function createMyhomePost(
 
     return { success: true, postUrl };
   } catch (error) {
+    const msg = error instanceof Error ? error.message : "Failed to create post";
+    reporter.log("error", msg);
     if (headless) {
       await browser.close().catch(() => undefined);
     }

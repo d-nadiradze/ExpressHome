@@ -27,6 +27,10 @@ import {
   resolveSsgeProjectChip,
 } from "@/lib/ssge-mappings";
 import { cityForPrefill } from "@/lib/location-prefill";
+import {
+  noopPrefillReporter,
+  type PrefillReporter,
+} from "@/lib/prefill-progress";
 
 export interface SsgeCredentials {
   email: string;
@@ -1831,6 +1835,97 @@ async function ssgeFillLocationStep(
   }
 }
 
+async function ssgeHiddenSelectValue(
+  page: Page,
+  inputName: string
+): Promise<string> {
+  return page.evaluate((name) => {
+    const input = document.querySelector(
+      `input[name="${name}"]`
+    ) as HTMLInputElement | null;
+    return input?.value?.trim() || "";
+  }, inputName);
+}
+
+async function ssgeValidateLocationStep(
+  page: Page,
+  listing: Pick<MyhomeListing, "city" | "street" | "streetNumber">
+): Promise<string[]> {
+  const issues: string[] = [];
+  const cityExpected = cityForPrefill(listing.city?.trim() || "");
+  const streetExpected = (listing.street || "").trim();
+
+  if (cityExpected) {
+    const cityVal = await ssgeHiddenSelectValue(page, "choose-city");
+    if (!cityVal) issues.push(`City not selected (${cityExpected})`);
+  }
+
+  if (streetExpected) {
+    const streetVal = await ssgeHiddenSelectValue(page, "choose-street");
+    if (!streetVal) {
+      issues.push(`Street not selected (${streetExpected})`);
+    }
+  }
+
+  const bodyText = await page.evaluate(() => document.body.innerText);
+  if (bodyText.includes("მისამართი სავალდებულოა")) {
+    issues.push("Address is required — street field empty");
+  }
+
+  return [...new Set(issues)];
+}
+
+async function ssgeValidateContactStep(page: Page): Promise<string[]> {
+  const issues: string[] = [];
+  const bodyText = await page.evaluate(() => document.body.innerText);
+  if (bodyText.includes("ამ ველის შევსება აუცილებელია")) {
+    issues.push("Contact name is required — not filled");
+  }
+
+  const nameFilled = await page.evaluate(() => {
+    for (const input of document.querySelectorAll("input")) {
+      if (input.offsetParent === null) continue;
+      const ph = (input.placeholder || "").toLowerCase();
+      const label = input.closest("div")?.innerText || "";
+      if (
+        ph.includes("სახელი") ||
+        label.includes("სახელი") ||
+        input.name === "name"
+      ) {
+        if ((input as HTMLInputElement).value?.trim()) return true;
+      }
+    }
+    return false;
+  });
+
+  if (!nameFilled && bodyText.includes("საკონტაქტო")) {
+    issues.push("Contact name field is empty");
+  }
+
+  return [...new Set(issues)];
+}
+
+async function ssgeScanFormValidationErrors(page: Page): Promise<string[]> {
+  return page.evaluate(() => {
+    const known = [
+      "მისამართი სავალდებულოა",
+      "ამ ველის შევსება აუცილებელია",
+    ];
+    const text = document.body.innerText;
+    return known.filter((msg) => text.includes(msg));
+  });
+}
+
+function reportStepIssues(
+  reporter: PrefillReporter,
+  stepId: string,
+  issues: string[]
+): void {
+  for (const msg of issues) {
+    reporter.stepWarn(stepId, msg);
+  }
+}
+
 /** Fill input by label span/text (ss.ge step 4 — სახლის ფართი, ეზოს ფართი). */
 async function ssgeSetInputByLabel(
   page: Page,
@@ -2361,8 +2456,14 @@ async function goToSsgeStep(page: Page, stepName: string): Promise<void> {
 export async function createSsgePost(
   credentials: SsgeCredentials,
   listing: MyhomeListing,
-  options: { listingId: string; userId: string; sourceUrl?: string | null }
+  options: {
+    listingId: string;
+    userId: string;
+    sourceUrl?: string | null;
+    reporter?: PrefillReporter;
+  }
 ): Promise<{ success: boolean; postUrl?: string; error?: string }> {
+  const reporter = options.reporter ?? noopPrefillReporter;
   listing = normalizeListingForSsgePrefill(listing, {
     sourceUrl: options.sourceUrl,
   });
@@ -2385,7 +2486,9 @@ export async function createSsgePost(
     context = postSession.context;
     for (const p of context.pages()) await p.close().catch(() => {});
     page = await context.newPage();
+    reporter.stepDone("browser", "Reusing active session");
   } else {
+    reporter.step("browser");
     if (postSession?.browser.isConnected()) {
       await postSession.context.close().catch(() => null);
       await postSession.browser.close().catch(() => null);
@@ -2404,14 +2507,17 @@ export async function createSsgePost(
     });
     page = await context.newPage();
     postSession = { email: credentials.email, browser, context };
+    reporter.stepDone("browser");
   }
 
   const cleanups: Array<() => Promise<void>> = [];
 
   try {
+    reporter.step("login");
     await ensureSsgeCreateFormReady(page, credentials, {
       freshSession: !reuseSession,
     });
+    reporter.stepDone("login");
 
     if (await needsSsgeLogin(page)) {
       throw new Error(
@@ -2428,8 +2534,7 @@ export async function createSsgePost(
 
     // ---------------------------------------------------------------
     // WIZARD STEP 1 — Category + Property Type + Deal Type
-    // (section headings: <p>აირჩიე კატეგორია</p>, etc.)
-    // ---------------------------------------------------------------
+    reporter.step("step1");
     console.log("[ss.ge prefill] Step 1: category / property / deal");
 
     // Category — always "უძრავი ქონება" (scoped to its heading <p>)
@@ -2449,10 +2554,9 @@ export async function createSsgePost(
 
     // Wait for the wizard to advance after step 1 selections
     await prefillPause(page, 20);
+    reporter.stepDone("step1");
 
-    // ---------------------------------------------------------------
-    // WIZARD STEP 2 — სურათები (Images)
-    // ---------------------------------------------------------------
+    reporter.step("step2", `${listing.images?.length ?? 0} photo(s)`);
     console.log("[ss.ge prefill] Step 2: images");
     await goToSsgeStep(page, "სურათები");
 
@@ -2470,20 +2574,24 @@ export async function createSsgePost(
           await prefillPause(page, 40);
         }
       } catch (e) {
+        reporter.warn(`Image upload skipped: ${e instanceof Error ? e.message : e}`);
         console.warn("[ss.ge prefill] image upload skipped:", e);
       }
     }
+    reporter.stepDone("step2");
 
-    // ---------------------------------------------------------------
-    // WIZARD STEP 3 — მისამართი (Location: city + street)
-    // ---------------------------------------------------------------
+    reporter.step("step3");
     console.log("[ss.ge prefill] Step 3: location");
     await goToSsgeStep(page, "მისამართი");
     await ssgeFillLocationStep(page, listing);
+    reportStepIssues(
+      reporter,
+      "step3",
+      await ssgeValidateLocationStep(page, listing)
+    );
+    reporter.stepDone("step3");
 
-    // ---------------------------------------------------------------
-    // WIZARD STEP 4 — დეტალური ინფორმაცია
-    // ---------------------------------------------------------------
+    reporter.step("step4");
     console.log("[ss.ge prefill] Step 4: detailed info");
     await goToSsgeStep(page, "დეტალური ინფორმაცია");
 
@@ -2656,9 +2764,9 @@ export async function createSsgePost(
       }
     }
 
-    // ---------------------------------------------------------------
     // WIZARD STEP 5 — დამატებითი ინფორმაცია
-    // ---------------------------------------------------------------
+    reporter.stepDone("step4");
+    reporter.step("step5");
     console.log("[ss.ge prefill] Step 5: additional info");
     if (!(await hasSsgeNextAuthSession(page.context()))) {
       await ensureSsgeHomeAuthenticated(page, credentials);
@@ -2691,10 +2799,9 @@ export async function createSsgePost(
 
     // Amenity toggles (აივანი, გარაჟი, ლიფტი, …) — same step as listing
     await ssgePrefillAdditionalInfoToggles(page, listing.rawData);
+    reporter.stepDone("step5");
 
-    // ---------------------------------------------------------------
-    // WIZARD STEP 6 — აღწერა
-    // ---------------------------------------------------------------
+    reporter.step("step6");
     console.log("[ss.ge prefill] Step 6: description");
     await goToSsgeStep(page, "აღწერა");
 
@@ -2702,10 +2809,9 @@ export async function createSsgePost(
     if (listing.description) {
       await ssgeSetTextarea(page, listing.description);
     }
+    reporter.stepDone("step6");
 
-    // ---------------------------------------------------------------
-    // WIZARD STEP 7 — ფასი (Price)
-    // ---------------------------------------------------------------
+    reporter.step("step7", listing.price ? `${listing.price} USD` : undefined);
     console.log("[ss.ge prefill] Step 7: price");
     await goToSsgeStep(page, "ფასი");
 
@@ -2715,13 +2821,13 @@ export async function createSsgePost(
     if (listing.price) {
       await ssgeFillPrice(page, listing.price, "USD");
     }
+    reporter.stepDone("step7");
 
-    // ---------------------------------------------------------------
-    // WIZARD STEP 8 — კონტაქტი (WhatsApp + Viber always on)
-    // ---------------------------------------------------------------
+    reporter.step("step8");
     console.log("[ss.ge prefill] Step 8: contact");
     await goToSsgeStep(page, "კონტაქტი");
     await ssgeEnsureWhatsAppAndViber(page);
+    reportStepIssues(reporter, "step8", await ssgeValidateContactStep(page));
 
     const { checkout, published } = await ssgeFinishCheckoutAndPublish(page, {
       confirmPublish: headless,
@@ -2736,6 +2842,12 @@ export async function createSsgePost(
         `[ss.ge prefill] "განაცხადის განთავსება" did not complete (url="${page.url()}")`
       );
     }
+    reporter.stepDone("step8", published ? "Published" : "Checkout reached");
+
+    const formErrors = await ssgeScanFormValidationErrors(page);
+    for (const err of formErrors) {
+      reporter.warn(`Form still shows: ${err}`);
+    }
 
     const graceMs = parseInt(
       process.env.SSGE_PUBLISH_GRACE_MS || "0",
@@ -2746,6 +2858,13 @@ export async function createSsgePost(
     }
 
     const postUrl = page.url();
+    reporter.success(
+      headless
+        ? published
+          ? "Listing published on ss.ge"
+          : "Reached checkout on ss.ge"
+        : "Browser left open for review"
+    );
     console.log(
       headless
         ? published
@@ -2757,9 +2876,11 @@ export async function createSsgePost(
     );
     return { success: true, postUrl };
   } catch (error) {
+    const msg = error instanceof Error ? error.message : "Pre-fill failed";
+    reporter.log("error", msg);
     return {
       success: false,
-      error: error instanceof Error ? error.message : "Pre-fill failed",
+      error: msg,
     };
   } finally {
     for (const cleanup of cleanups) {

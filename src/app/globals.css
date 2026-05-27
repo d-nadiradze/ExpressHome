@@ -4,27 +4,110 @@
 
 @layer base {
   body {
-    @apply bg-gray-50 text-gray-900 antialiased;
+    @apply bg-slate-50 text-slate-900 antialiased;
   }
 }
 
 @layer components {
   .btn-primary {
-    @apply bg-blue-600 hover:bg-blue-700 text-white font-medium px-4 py-2 rounded-lg transition-colors disabled:opacity-50 disabled:cursor-not-allowed;
+    @apply inline-flex items-center justify-center gap-2 bg-slate-900 hover:bg-slate-800 text-white font-medium px-4 py-2.5 rounded-xl transition-all duration-200 shadow-sm hover:shadow-md disabled:opacity-50 disabled:cursor-not-allowed focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-slate-900 focus-visible:ring-offset-2;
   }
+
   .btn-secondary {
-    @apply bg-white hover:bg-gray-50 text-gray-700 font-medium px-4 py-2 rounded-lg border border-gray-300 transition-colors;
+    @apply inline-flex items-center justify-center gap-2 bg-white hover:bg-slate-50 text-slate-700 font-medium px-4 py-2.5 rounded-xl border border-slate-200 transition-all duration-200 hover:border-slate-300 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-slate-400 focus-visible:ring-offset-2;
   }
+
   .btn-danger {
-    @apply bg-red-600 hover:bg-red-700 text-white font-medium px-4 py-2 rounded-lg transition-colors;
+    @apply inline-flex items-center justify-center gap-2 bg-red-600 hover:bg-red-700 text-white font-medium px-4 py-2.5 rounded-xl transition-colors disabled:opacity-50 disabled:cursor-not-allowed;
   }
+
+  .btn-ghost {
+    @apply inline-flex items-center justify-center gap-2 text-slate-600 hover:text-slate-900 font-medium px-3 py-2 rounded-xl hover:bg-slate-100 transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-slate-400 focus-visible:ring-offset-2;
+  }
+
+  .btn-success {
+    @apply inline-flex items-center justify-center gap-2 bg-emerald-600 hover:bg-emerald-700 text-white font-medium px-4 py-2.5 rounded-xl transition-all duration-200 disabled:opacity-50 disabled:cursor-not-allowed focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-emerald-600 focus-visible:ring-offset-2;
+  }
+
+  .btn-platform-ssge {
+    @apply inline-flex items-center justify-center gap-2 bg-violet-600 hover:bg-violet-700 text-white font-medium px-4 py-2.5 rounded-xl transition-all duration-200 disabled:opacity-50 disabled:cursor-not-allowed focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-violet-600 focus-visible:ring-offset-2;
+  }
+
   .input {
-    @apply block w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent;
+    @apply block w-full border border-slate-200 rounded-xl px-3.5 py-2.5 text-sm bg-white placeholder:text-slate-400 focus:outline-none focus:ring-2 focus:ring-slate-900/10 focus:border-slate-400 transition-colors;
   }
+
   .card {
-    @apply bg-white rounded-xl shadow-sm border border-gray-200 p-6;
+    @apply bg-white rounded-2xl shadow-sm border border-slate-200/80 p-6;
   }
+
+  .card-muted {
+    @apply bg-slate-50/80 rounded-2xl border border-slate-200/60 p-5;
+  }
+
   .badge {
-    @apply inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium;
+    @apply inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-semibold tracking-wide;
+  }
+
+  .badge-parsing {
+    @apply bg-sky-50 text-sky-700 ring-1 ring-inset ring-sky-600/20;
+  }
+
+  .badge-pending {
+    @apply bg-amber-50 text-amber-700 ring-1 ring-inset ring-amber-600/20;
+  }
+
+  .badge-posted {
+    @apply bg-emerald-50 text-emerald-700 ring-1 ring-inset ring-emerald-600/20;
+  }
+
+  .badge-failed {
+    @apply bg-red-50 text-red-700 ring-1 ring-inset ring-red-600/20;
+  }
+
+  .stat-card {
+    @apply card flex items-start gap-4 p-5 hover:border-slate-300/80 transition-colors duration-200;
+  }
+
+  .page-header {
+    @apply flex flex-col sm:flex-row sm:items-end sm:justify-between gap-4;
+  }
+
+  .page-title {
+    @apply text-2xl sm:text-3xl font-bold tracking-tight text-slate-900;
+  }
+
+  .page-subtitle {
+    @apply text-slate-500 mt-1 text-sm sm:text-base;
+  }
+
+  .section-title {
+    @apply text-sm font-semibold uppercase tracking-wider text-slate-400;
+  }
+
+  .tag-pill {
+    @apply inline-flex items-center px-3 py-1 rounded-full text-xs font-medium bg-slate-100 text-slate-700;
+  }
+
+  .spec-tile {
+    @apply flex flex-col items-center justify-center rounded-xl bg-slate-50 border border-slate-100 px-3 py-4 text-center;
+  }
+
+  .detail-row {
+    @apply flex justify-between items-start gap-4 py-3 border-b border-slate-100 last:border-0;
+  }
+
+  .dashboard-bg {
+    background-image:
+      radial-gradient(circle at 1px 1px, rgb(148 163 184 / 0.12) 1px, transparent 0);
+    background-size: 24px 24px;
+  }
+
+  .listing-card {
+    @apply relative flex flex-col overflow-hidden rounded-2xl border border-slate-200/80 bg-white shadow-sm transition-all duration-200 hover:border-slate-300 hover:shadow-md focus-within:ring-2 focus-within:ring-slate-900/10;
+  }
+
+  .panel-sticky {
+    @apply lg:sticky lg:top-6 space-y-4;
   }
 }

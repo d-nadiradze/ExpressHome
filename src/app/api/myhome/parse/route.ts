@@ -2,13 +2,49 @@ import { NextRequest, NextResponse } from "next/server";
 import { db } from "@/lib/db";
 import { isValidListingUrl } from "@/lib/utils";
 import { enqueueParseJob } from "@/lib/parse-queue";
+import {
+  findExistingParsedListing,
+  normalizeListingUrl,
+} from "@/lib/listing-url";
 
 export async function POST(request: NextRequest) {
   const userId = request.headers.get("x-user-id");
   if (!userId) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
 
   try {
-    const { url } = await request.json();
+    const body = await request.json();
+    const { url, reparse, listingId } = body;
+
+    if (reparse) {
+      if (!listingId) {
+        return NextResponse.json({ error: "Listing ID is required" }, { status: 400 });
+      }
+
+      const existing = await db.parsedListing.findFirst({
+        where: { id: listingId, userId },
+      });
+
+      if (!existing) {
+        return NextResponse.json({ error: "Listing not found" }, { status: 404 });
+      }
+
+      if (existing.postStatus !== "PARSING") {
+        await db.parsedListing.update({
+          where: { id: existing.id },
+          data: { postStatus: "PARSING" },
+        });
+        enqueueParseJob({
+          listingId: existing.id,
+          url: existing.sourceUrl,
+          userId,
+        });
+      }
+
+      return NextResponse.json(
+        { success: true, listingId: existing.id, reparse: true },
+        { status: 202 }
+      );
+    }
 
     if (!url) {
       return NextResponse.json({ error: "URL is required" }, { status: 400 });
@@ -21,15 +57,54 @@ export async function POST(request: NextRequest) {
       );
     }
 
+    const normalizedUrl = normalizeListingUrl(url);
+    const existing = await findExistingParsedListing(userId, url);
+
+    if (existing) {
+      if (existing.postStatus === "PARSING") {
+        return NextResponse.json(
+          { success: true, listingId: existing.id },
+          { status: 202 }
+        );
+      }
+
+      if (
+        existing.postStatus === "PENDING" ||
+        existing.postStatus === "POSTED"
+      ) {
+        return NextResponse.json({
+          success: true,
+          listingId: existing.id,
+          cached: true,
+        });
+      }
+
+      if (existing.postStatus === "FAILED") {
+        await db.parsedListing.update({
+          where: { id: existing.id },
+          data: { postStatus: "PARSING", sourceUrl: normalizedUrl },
+        });
+        enqueueParseJob({
+          listingId: existing.id,
+          url: normalizedUrl,
+          userId,
+        });
+        return NextResponse.json(
+          { success: true, listingId: existing.id },
+          { status: 202 }
+        );
+      }
+    }
+
     const listing = await db.parsedListing.create({
       data: {
         userId,
-        sourceUrl: url,
+        sourceUrl: normalizedUrl,
         postStatus: "PARSING",
       },
     });
 
-    enqueueParseJob({ listingId: listing.id, url, userId });
+    enqueueParseJob({ listingId: listing.id, url: normalizedUrl, userId });
 
     return NextResponse.json(
       { success: true, listingId: listing.id },
