@@ -64,7 +64,7 @@ export async function parseSsgeListing(url: string): Promise<{
     await page.evaluate(BROWSER_EVALUATE_SHIM);
 
     const data = await page.evaluate(() => {
-      const norm = (s) => s.replace(/\s+/g, " ").trim();
+      const norm = (s: string) => s.replace(/\s+/g, " ").trim();
 
       let app = null;
       try {
@@ -142,7 +142,7 @@ export async function parseSsgeListing(url: string): Promise<{
       // ---------- Images (structured data, not scraped from unrelated cards) ----------
       const appImages = app?.appImages || [];
       const images = appImages
-        .map((img) => (img.fileName || "").split("?")[0])
+        .map((img: { fileName?: string }) => (img.fileName || "").split("?")[0])
         .filter(Boolean)
         .slice(0, 16);
 
@@ -186,10 +186,10 @@ export async function parseSsgeListing(url: string): Promise<{
       const descHeading = overviewSection?.querySelector("h2");
       if (norm(descHeading?.textContent || "") === "აღწერა") {
         const descRoot =
-          descHeading.closest("section") ||
-          descHeading.parentElement?.parentElement;
+          descHeading?.closest("section") ||
+          descHeading?.parentElement?.parentElement;
         if (descRoot) {
-          const clone = descRoot.cloneNode(true);
+          const clone = descRoot.cloneNode(true) as Element;
           clone.querySelectorAll("h2, button, img").forEach((el) => el.remove());
           clone
             .querySelectorAll("[class*='comment'], [class*='Comment']")
@@ -201,7 +201,7 @@ export async function parseSsgeListing(url: string): Promise<{
       // ---------- Detailed info (p label + h3 value blocks) ----------
       const detailFields: Record<string, string> = {};
 
-      const collectDetailPair = (labelEl, valueEl) => {
+      const collectDetailPair = (labelEl: Element | null, valueEl: Element | null) => {
         const label = norm(labelEl?.textContent || "");
         const value = norm(valueEl?.textContent || "");
         if (!label || !value || value.length > 120) return;
@@ -213,7 +213,7 @@ export async function parseSsgeListing(url: string): Promise<{
         mainInfo,
         detailsDesc,
         document.querySelector("#details_desc"),
-      ].filter(Boolean);
+      ].filter((x): x is Element => Boolean(x));
 
       for (const root of detailRoots) {
         root.querySelectorAll("div").forEach((div) => {
@@ -259,7 +259,7 @@ export async function parseSsgeListing(url: string): Promise<{
       }
 
       if (app?.landType != null && !landPlotType) {
-        const landById = {
+        const landById: Record<number, string> = {
           1: "სასოფლო-სამეურნეო მიწა",
           2: "არასასოფლო-სამეურნეო მიწა",
           3: "კომერციული მიწა",
@@ -279,7 +279,7 @@ export async function parseSsgeListing(url: string): Promise<{
         "საინვესტიციო მიწა",
         "ფერმერული მიწა",
       ]);
-      const isLandType = (v) => landTypeLabels.has(norm(v || ""));
+      const isLandType = (v: string) => landTypeLabels.has(norm(v || ""));
 
       if (isLandType(buildingStatus) && !landPlotType) {
         landPlotType = buildingStatus;
@@ -293,7 +293,7 @@ export async function parseSsgeListing(url: string): Promise<{
       // ---------- Amenities (#additional_information, active toggles only) ----------
       const rawData: Record<string, string> = {};
 
-      const markActiveAmenity = (label) => {
+      const markActiveAmenity = (label: string) => {
         if (!label || label === "დამატებითი ინფორმაცია" || label.length > 50) return;
         let key = label;
         const compact = label.replace(/\s+/g, "").replace(/ცენტრ\./g, "ცენტ.");
@@ -303,7 +303,7 @@ export async function parseSsgeListing(url: string): Promise<{
         rawData[key] = "კი";
       };
 
-      const collectActiveAmenities = (root) => {
+      const collectActiveAmenities = (root: Element | null) => {
         if (!root) return;
         root.querySelectorAll("div").forEach((el) => {
           const p = el.querySelector(":scope > p");
@@ -334,7 +334,7 @@ export async function parseSsgeListing(url: string): Promise<{
           if (cls.includes("hiVzfk")) markActiveAmenity(label);
         });
 
-      const extractAreaDigits = (s) => {
+      const extractAreaDigits = (s: unknown) => {
         const m = norm(String(s || "")).match(/([\d]+(?:[.,]\d+)?)/);
         return m ? m[1].replace(",", ".") : "";
       };
@@ -390,8 +390,8 @@ export async function parseSsgeListing(url: string): Promise<{
         "";
 
       if (app && typeof app === "object") {
-        const appNum = (v) => extractAreaDigits(v);
-        const tryKeys = (keys) => {
+        const appNum = (v: unknown) => extractAreaDigits(v);
+        const tryKeys = (keys: string[]) => {
           for (const k of keys) {
             if (app[k] != null && app[k] !== "") {
               const n = appNum(app[k]);
