@@ -43,6 +43,7 @@ const DOCKER_SAFE_CHROMIUM_ARGS = [
   "--disable-setuid-sandbox",
   "--disable-dev-shm-usage",
   "--disable-gpu",
+  "--disable-crash-reporter",
 ];
 
 const SSGE_CREATE_URL = "https://home.ss.ge/ka/udzravi-qoneba/create";
@@ -2373,7 +2374,7 @@ export async function createSsgePost(
     postSession?.email === credentials.email &&
     postSession.browser.isConnected();
 
-  const headless = process.env.SSGE_PREFILL_HEADLESS === "true";
+  const headless = process.env.SSGE_PREFILL_HEADLESS !== "false";
 
   let browser: Browser;
   let context: BrowserContext;
@@ -2392,11 +2393,8 @@ export async function createSsgePost(
     browser = await chromium.launch({
       headless,
       args: [
-        "--no-sandbox",
-        "--disable-setuid-sandbox",
+        ...DOCKER_SAFE_CHROMIUM_ARGS,
         ...(headless ? [] : ["--start-maximized"]),
-        "--disable-dev-shm-usage",
-        "--disable-gpu",
       ],
     });
     context = await browser.newContext({

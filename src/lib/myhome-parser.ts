@@ -8523,7 +8523,7 @@ export async function uploadListingImages(
 }
 
 // Login, navigate to create form, pre-fill fields, and upload photos.
-// Visible browser stays open locally; headless mode closes after success (MYHOME_PREFILL_HEADLESS=true).
+// Visible browser stays open locally; headless mode closes after success (MYHOME_PREFILL_HEADLESS=false to disable).
 export async function createMyhomePost(
   credentials: MyhomeCredentials,
   listing: MyhomeListing,
@@ -8536,7 +8536,7 @@ export async function createMyhomePost(
   const reuseSession =
       postSession?.email === credentials.email && postSession.browser.isConnected();
 
-  const headless = process.env.MYHOME_PREFILL_HEADLESS === "true";
+  const headless = process.env.MYHOME_PREFILL_HEADLESS !== "false";
 
   let browser: Browser;
   let context: BrowserContext;
@@ -8556,9 +8556,12 @@ export async function createMyhomePost(
     browser = await chromium.launch({
       headless,
       args: [
-        "--no-sandbox", "--disable-setuid-sandbox", "--start-maximized",
-        "--disable-dev-shm-usage", "--disable-gpu",
-        ...(headless ? ["--window-size=1920,1080"] : []),
+        "--no-sandbox",
+        "--disable-setuid-sandbox",
+        "--disable-dev-shm-usage",
+        "--disable-gpu",
+        "--disable-crash-reporter",
+        ...(headless ? ["--window-size=1920,1080"] : ["--start-maximized"]),
       ],
     });
     context = await browser.newContext({
