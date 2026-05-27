@@ -18,9 +18,9 @@ interface AdminUser {
 }
 
 const ROLE_COLORS: Record<Role, string> = {
-  USER: "bg-gray-100 text-gray-700",
-  MODERATOR: "bg-blue-100 text-blue-700",
-  ADMIN: "bg-purple-100 text-purple-700",
+  USER: "bg-gray-100 text-gray-700 dark:bg-slate-800 dark:text-slate-300",
+  MODERATOR: "bg-blue-100 text-blue-700 dark:bg-blue-950/50 dark:text-blue-300",
+  ADMIN: "bg-purple-100 text-purple-700 dark:bg-purple-950/50 dark:text-purple-300",
 };
 
 export default function AdminPage() {
@@ -136,8 +136,8 @@ export default function AdminPage() {
       {/* Header */}
       <div className="flex items-center justify-between">
         <div>
-          <h1 className="text-2xl font-bold text-gray-900">User Management</h1>
-          <p className="text-gray-500 mt-1">{total} total users</p>
+          <h1 className="page-title">User management</h1>
+          <p className="page-subtitle">{total} total users</p>
         </div>
         <button
           onClick={() => setShowCreateModal(true)}
@@ -152,23 +152,23 @@ export default function AdminPage() {
         <div className="overflow-x-auto">
           <table className="w-full">
             <thead>
-              <tr className="bg-gray-50 border-b border-gray-200">
-                <th className="text-left px-6 py-3 text-xs font-medium text-gray-500 uppercase tracking-wider">
+              <tr className="bg-gray-50 dark:bg-slate-800/60 border-b border-gray-200 dark:border-slate-700">
+                <th className="text-left px-6 py-3 text-xs font-medium text-gray-500 dark:text-slate-400 uppercase tracking-wider">
                   User
                 </th>
-                <th className="text-left px-6 py-3 text-xs font-medium text-gray-500 uppercase tracking-wider">
+                <th className="text-left px-6 py-3 text-xs font-medium text-gray-500 dark:text-slate-400 uppercase tracking-wider">
                   Role
                 </th>
-                <th className="text-left px-6 py-3 text-xs font-medium text-gray-500 uppercase tracking-wider">
+                <th className="text-left px-6 py-3 text-xs font-medium text-gray-500 dark:text-slate-400 uppercase tracking-wider">
                   myhome.ge
                 </th>
-                <th className="text-left px-6 py-3 text-xs font-medium text-gray-500 uppercase tracking-wider">
+                <th className="text-left px-6 py-3 text-xs font-medium text-gray-500 dark:text-slate-400 uppercase tracking-wider">
                   Listings
                 </th>
-                <th className="text-left px-6 py-3 text-xs font-medium text-gray-500 uppercase tracking-wider">
+                <th className="text-left px-6 py-3 text-xs font-medium text-gray-500 dark:text-slate-400 uppercase tracking-wider">
                   Status
                 </th>
-                <th className="text-left px-6 py-3 text-xs font-medium text-gray-500 uppercase tracking-wider">
+                <th className="text-left px-6 py-3 text-xs font-medium text-gray-500 dark:text-slate-400 uppercase tracking-wider">
                   Joined
                 </th>
                 <th className="px-6 py-3" />
@@ -198,8 +198,8 @@ export default function AdminPage() {
                   <tr key={user.id} className="hover:bg-gray-50 transition-colors">
                     <td className="px-6 py-4">
                       <div>
-                        <p className="font-medium text-gray-900">{user.name || "—"}</p>
-                        <p className="text-sm text-gray-500">{user.email}</p>
+                        <p className="font-medium text-gray-900 dark:text-slate-100">{user.name || "—"}</p>
+                        <p className="text-sm text-gray-500 dark:text-slate-400">{user.email}</p>
                       </div>
                     </td>
                     <td className="px-6 py-4">
@@ -262,12 +262,12 @@ export default function AdminPage() {
       {/* Create user modal */}
       {showCreateModal && (
         <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
-          <div className="bg-white rounded-xl shadow-xl w-full max-w-md p-6">
-            <h2 className="text-lg font-semibold text-gray-900 mb-4">Add New User</h2>
+          <div className="card shadow-xl w-full max-w-md p-6">
+            <h2 className="text-lg font-semibold text-slate-900 dark:text-slate-50 mb-4">Add new user</h2>
 
             <form onSubmit={handleCreateUser} className="space-y-4">
               <div>
-                <label className="block text-sm font-medium text-gray-700 mb-1">Name</label>
+                <label className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-1">Name</label>
                 <input
                   type="text"
                   className="input"
@@ -277,7 +277,7 @@ export default function AdminPage() {
                 />
               </div>
               <div>
-                <label className="block text-sm font-medium text-gray-700 mb-1">Email *</label>
+                <label className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-1">Email *</label>
                 <input
                   type="email"
                   className="input"
@@ -288,7 +288,7 @@ export default function AdminPage() {
                 />
               </div>
               <div>
-                <label className="block text-sm font-medium text-gray-700 mb-1">Password *</label>
+                <label className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-1">Password *</label>
                 <input
                   type="password"
                   className="input"
@@ -300,7 +300,7 @@ export default function AdminPage() {
                 />
               </div>
               <div>
-                <label className="block text-sm font-medium text-gray-700 mb-1">Role</label>
+                <label className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-1">Role</label>
                 <select
                   className="input"
                   value={newRole}

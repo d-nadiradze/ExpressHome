@@ -88,8 +88,8 @@ function StepIcon({ status }: { status: PrefillStepStatus }) {
     );
   }
   return (
-    <span className="flex h-7 w-7 items-center justify-center rounded-full border-2 border-gray-200 bg-white">
-      <span className="h-2 w-2 rounded-full bg-gray-300" />
+    <span className="flex h-7 w-7 items-center justify-center rounded-full border-2 border-gray-200 dark:border-slate-600 bg-white dark:bg-slate-800">
+      <span className="h-2 w-2 rounded-full bg-gray-300 dark:bg-slate-500" />
     </span>
   );
 }
@@ -97,13 +97,13 @@ function StepIcon({ status }: { status: PrefillStepStatus }) {
 function logTone(level: PrefillLogLevel): string {
   switch (level) {
     case "success":
-      return "border-emerald-200 bg-emerald-50 text-emerald-800";
+      return "border-emerald-200 bg-emerald-50 text-emerald-800 dark:border-emerald-800 dark:bg-emerald-950/40 dark:text-emerald-300";
     case "warn":
-      return "border-amber-200 bg-amber-50 text-amber-900";
+      return "border-amber-200 bg-amber-50 text-amber-900 dark:border-amber-800 dark:bg-amber-950/40 dark:text-amber-300";
     case "error":
-      return "border-red-200 bg-red-50 text-red-800";
+      return "border-red-200 bg-red-50 text-red-800 dark:border-red-800 dark:bg-red-950/40 dark:text-red-300";
     default:
-      return "border-gray-200 bg-gray-50 text-gray-700";
+      return "border-gray-200 bg-gray-50 text-gray-700 dark:border-slate-700 dark:bg-slate-800/60 dark:text-slate-300";
   }
 }
 
@@ -209,12 +209,12 @@ export default function PrefillProgressPanel({
 
   return (
     <div
-      className="fixed inset-0 z-50 flex items-start justify-center px-4 pt-4 pb-4 sm:pt-6 bg-gray-900/50 backdrop-blur-sm overflow-y-auto"
+      className="fixed inset-0 z-50 flex items-start justify-center px-4 pt-4 pb-4 sm:pt-6 bg-gray-900/50 dark:bg-black/60 backdrop-blur-sm overflow-y-auto"
       role="dialog"
       aria-modal="true"
       aria-labelledby="prefill-progress-title"
     >
-      <div className="w-full max-w-2xl max-h-[calc(100vh-2rem)] sm:max-h-[calc(100vh-3rem)] flex flex-col rounded-2xl bg-white shadow-2xl border border-gray-200 overflow-hidden">
+      <div className="w-full max-w-2xl max-h-[calc(100vh-2rem)] sm:max-h-[calc(100vh-3rem)] flex flex-col rounded-2xl bg-white dark:bg-slate-900 shadow-2xl border border-gray-200 dark:border-slate-700 overflow-hidden">
         <div
           className={`px-6 py-5 bg-gradient-to-r ${
             isPartial ? "from-amber-500 to-orange-600" : meta.gradient
@@ -270,8 +270,8 @@ export default function PrefillProgressPanel({
         </div>
 
         <div className="flex flex-col md:flex-row min-h-0 flex-1 overflow-hidden">
-          <div className="md:w-[44%] border-b md:border-b-0 md:border-r border-gray-100 p-5 overflow-y-auto max-h-[40vh] md:max-h-none">
-            <h3 className="text-xs font-semibold uppercase tracking-wide text-gray-400 mb-3">
+          <div className="md:w-[44%] border-b md:border-b-0 md:border-r border-gray-100 dark:border-slate-800 p-5 overflow-y-auto max-h-[40vh] md:max-h-none">
+            <h3 className="text-xs font-semibold uppercase tracking-wide text-gray-400 dark:text-slate-500 mb-3">
               Steps
             </h3>
             <ol className="space-y-0">
@@ -286,7 +286,7 @@ export default function PrefillProgressPanel({
                             ? "bg-emerald-200"
                             : step.status === "error"
                               ? "bg-red-200"
-                              : "bg-gray-200"
+                              : "bg-gray-200 dark:bg-slate-700"
                         }`}
                       />
                     )}
@@ -297,10 +297,10 @@ export default function PrefillProgressPanel({
                         step.status === "running"
                           ? meta.accent
                           : step.status === "done"
-                            ? "text-gray-900"
+                            ? "text-gray-900 dark:text-slate-100"
                             : step.status === "error"
-                              ? "text-red-700"
-                              : "text-gray-400"
+                              ? "text-red-700 dark:text-red-400"
+                              : "text-gray-400 dark:text-slate-500"
                       }`}
                     >
                       {step.label}
@@ -308,7 +308,7 @@ export default function PrefillProgressPanel({
                     {step.detail && (
                       <p
                         className={`text-xs mt-0.5 line-clamp-3 ${
-                          step.status === "error" ? "text-red-600" : "text-gray-500"
+                          step.status === "error" ? "text-red-600 dark:text-red-400" : "text-gray-500 dark:text-slate-400"
                         }`}
                       >
                         {step.detail}
@@ -321,11 +321,11 @@ export default function PrefillProgressPanel({
           </div>
 
           <div className="flex-1 flex flex-col min-h-0 p-5">
-            <h3 className="text-xs font-semibold uppercase tracking-wide text-gray-400 mb-3 shrink-0">
+            <h3 className="text-xs font-semibold uppercase tracking-wide text-gray-400 dark:text-slate-500 mb-3 shrink-0">
               Live log
             </h3>
             <div
-              className="flex-1 overflow-y-auto rounded-xl border border-gray-100 bg-gray-50/80 p-3 space-y-2 min-h-[180px] max-h-[280px] md:max-h-none font-mono text-xs"
+              className="flex-1 overflow-y-auto rounded-xl border border-gray-100 dark:border-slate-800 bg-gray-50/80 dark:bg-slate-950/50 p-3 space-y-2 min-h-[180px] max-h-[280px] md:max-h-none font-mono text-xs"
               aria-live="polite"
               aria-relevant="additions"
             >

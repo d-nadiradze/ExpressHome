@@ -73,7 +73,7 @@ export default function DashboardListings({ initialListings }: { initialListings
     <section aria-labelledby="listings-heading">
       <div className="flex items-center justify-between mb-5">
         <div>
-          <h2 id="listings-heading" className="text-lg font-semibold text-slate-900">
+          <h2 id="listings-heading" className="text-lg font-semibold text-slate-900 dark:text-slate-50">
             Your listings
           </h2>
           <p className="text-sm text-slate-500 mt-0.5">
@@ -86,12 +86,12 @@ export default function DashboardListings({ initialListings }: { initialListings
 
       {listings.length === 0 ? (
         <div className="card flex flex-col items-center justify-center py-16 px-6 text-center">
-          <div className="flex h-16 w-16 items-center justify-center rounded-2xl bg-slate-100 text-slate-400 mb-4">
+          <div className="flex h-16 w-16 items-center justify-center rounded-2xl bg-slate-100 dark:bg-slate-800 text-slate-400 mb-4">
             <svg className="w-8 h-8" fill="none" viewBox="0 0 24 24" stroke="currentColor" aria-hidden="true">
               <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M3 12l2-2m0 0l7-7 7 7M5 10v10a1 1 0 001 1h3m10-11l2 2m-2-2v10a1 1 0 01-1 1h-3m-6 0a1 1 0 001-1v-4a1 1 0 011-1h2a1 1 0 011 1v4a1 1 0 001 1m-6 0h6" />
             </svg>
           </div>
-          <h3 className="text-base font-semibold text-slate-900">Start with your first listing</h3>
+          <h3 className="text-base font-semibold text-slate-900 dark:text-slate-50">Start with your first listing</h3>
           <p className="text-sm text-slate-500 mt-2 max-w-sm leading-relaxed">
             Paste a URL from any supported site and we&apos;ll extract photos, price, and details automatically.
           </p>
@@ -112,7 +112,7 @@ export default function DashboardListings({ initialListings }: { initialListings
                   href={`/dashboard/listing/${listing.id}`}
                   className="flex flex-col flex-1 outline-none"
                 >
-                  <div className="relative aspect-[16/10] overflow-hidden bg-slate-100">
+                  <div className="relative aspect-[16/10] overflow-hidden bg-slate-100 dark:bg-slate-800">
                     {thumb ? (
                       <img
                         src={thumb}
@@ -127,14 +127,14 @@ export default function DashboardListings({ initialListings }: { initialListings
                       </div>
                     )}
                     {priceLabel && (
-                      <div className="absolute bottom-3 left-3 rounded-lg bg-white/95 backdrop-blur-sm px-2.5 py-1 text-sm font-bold text-slate-900 shadow-sm tabular-nums">
+                      <div className="absolute bottom-3 left-3 rounded-lg bg-white/95 dark:bg-slate-900/95 backdrop-blur-sm px-2.5 py-1 text-sm font-bold text-slate-900 dark:text-slate-50 shadow-sm tabular-nums">
                         {priceLabel}
                       </div>
                     )}
                   </div>
 
                   <div className="flex flex-1 flex-col p-4">
-                    <h3 className="font-semibold text-slate-900 line-clamp-2 leading-snug group-hover:text-slate-700 transition-colors">
+                    <h3 className="font-semibold text-slate-900 dark:text-slate-50 line-clamp-2 leading-snug group-hover:text-slate-700 dark:group-hover:text-slate-300 transition-colors">
                       {listing.title || "Untitled listing"}
                     </h3>
 
@@ -162,7 +162,7 @@ export default function DashboardListings({ initialListings }: { initialListings
                       )}
                     </div>
 
-                    <div className="mt-auto pt-4 flex items-center justify-between gap-2 border-t border-slate-100">
+                    <div className="mt-auto pt-4 flex items-center justify-between gap-2 border-t border-slate-100 dark:border-slate-800">
                       <div className="flex flex-wrap gap-1.5">
                         <span className={`badge ${statusBadgeClass[listing.postStatus] || "badge-pending"}`}>
                           MH · {listing.postStatus}
@@ -180,7 +180,7 @@ export default function DashboardListings({ initialListings }: { initialListings
 
                 <button
                   onClick={(e) => handleDelete(e, listing.id)}
-                  className="absolute top-3 right-3 flex h-9 w-9 items-center justify-center rounded-xl bg-white/90 backdrop-blur-sm text-slate-500 opacity-0 shadow-sm transition-all duration-200 hover:bg-red-50 hover:text-red-600 group-hover:opacity-100 focus-visible:opacity-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-red-500"
+                  className="absolute top-3 right-3 flex h-9 w-9 items-center justify-center rounded-xl bg-white/90 dark:bg-slate-900/90 backdrop-blur-sm text-slate-500 opacity-0 shadow-sm transition-all duration-200 hover:bg-red-50 dark:hover:bg-red-950/50 hover:text-red-600 group-hover:opacity-100 focus-visible:opacity-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-red-500"
                   aria-label="Delete listing"
                   title="Delete listing"
                 >

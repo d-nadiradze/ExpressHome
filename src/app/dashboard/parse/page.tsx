@@ -96,8 +96,8 @@ export default function ParsePage() {
   return (
     <div className="space-y-6">
       <div>
-        <h1 className="text-2xl font-bold text-gray-900">Parse Listing</h1>
-        <p className="text-gray-500 mt-1">
+        <h1 className="page-title">Parse listing</h1>
+        <p className="page-subtitle">
           Paste a myhome.ge or ss.ge listing URL and we&apos;ll extract all the data automatically.
         </p>
       </div>
@@ -130,7 +130,7 @@ export default function ParsePage() {
             )}
           </button>
         </form>
-        <p className="text-xs text-gray-400 mt-2">
+        <p className="text-xs text-slate-400 dark:text-slate-500 mt-2">
           Example: https://www.myhome.ge/pr/24724106/... or https://home.ss.ge/ka/udzravi-qoneba/...
         </p>
       </div>
@@ -146,13 +146,13 @@ export default function ParsePage() {
           <div>
             {parseStatus === "queued" && queuePosition ? (
               <>
-                <p className="font-medium text-gray-900">Queued — position {queuePosition}</p>
-                <p className="text-sm text-gray-500">Waiting for other parses to finish...</p>
+                <p className="font-medium text-slate-900 dark:text-slate-100">Queued — position {queuePosition}</p>
+                <p className="text-sm text-slate-500 dark:text-slate-400">Waiting for other parses to finish...</p>
               </>
             ) : (
               <>
-                <p className="font-medium text-gray-900">Parsing listing...</p>
-                <p className="text-sm text-gray-500">Extracting data from listing (this takes 15-30 seconds)</p>
+                <p className="font-medium text-slate-900 dark:text-slate-100">Parsing listing...</p>
+                <p className="text-sm text-slate-500 dark:text-slate-400">Extracting data from listing (this takes 15-30 seconds)</p>
               </>
             )}
           </div>
@@ -160,14 +160,14 @@ export default function ParsePage() {
       )}
 
       {parseStatus === "failed" && (
-        <div className="card border-red-200 bg-red-50">
+        <div className="card border-red-200 bg-red-50 dark:border-red-900/50 dark:bg-red-950/30">
           <div className="flex items-center gap-3">
             <svg className="w-6 h-6 text-red-500 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor">
               <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8v4m0 4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
             </svg>
             <div>
-              <p className="font-medium text-red-800">Parsing failed</p>
-              <p className="text-sm text-red-600">The listing could not be parsed. Check the URL and try again.</p>
+              <p className="font-medium text-red-800 dark:text-red-300">Parsing failed</p>
+              <p className="text-sm text-red-600 dark:text-red-400">The listing could not be parsed. Check the URL and try again.</p>
             </div>
           </div>
         </div>

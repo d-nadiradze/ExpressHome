@@ -87,20 +87,20 @@ function LinkedAccountPanel({
           </div>
           <div className="min-w-0 flex-1">
             <p className="text-xs font-semibold uppercase tracking-wider text-slate-400">Linked account</p>
-            <p className="font-semibold text-slate-900 mt-0.5">{config.label}</p>
+            <p className="font-semibold text-slate-900 dark:text-slate-50 mt-0.5">{config.label}</p>
             <span className={cn("badge badge-posted mt-2 ring-1 ring-inset", accentRing)}>Connected</span>
           </div>
         </div>
 
-        <dl className="space-y-3 rounded-xl bg-slate-50 border border-slate-100 p-4">
+        <dl className="space-y-3 rounded-xl bg-slate-50 dark:bg-slate-800/60 border border-slate-100 dark:border-slate-700 p-4">
           <div>
             <dt className="text-xs font-medium text-slate-400">Email</dt>
-            <dd className="text-sm font-medium text-slate-900 mt-0.5 break-all">{account.email}</dd>
+            <dd className="text-sm font-medium text-slate-900 dark:text-slate-100 mt-0.5 break-all">{account.email}</dd>
           </div>
           {account.lastLoginAt && (
             <div>
               <dt className="text-xs font-medium text-slate-400">Last verified</dt>
-              <dd className="text-sm text-slate-700 mt-0.5 tabular-nums">
+              <dd className="text-sm text-slate-700 dark:text-slate-300 mt-0.5 tabular-nums">
                 {new Date(account.lastLoginAt).toLocaleString()}
               </dd>
             </div>
@@ -152,12 +152,12 @@ function EmptyAccountPanel({ platform }: { platform: Platform }) {
 
   return (
     <div className="card flex flex-col items-center text-center py-10 px-6">
-      <div className="flex h-14 w-14 items-center justify-center rounded-2xl bg-slate-100 text-slate-400 mb-4">
+      <div className="flex h-14 w-14 items-center justify-center rounded-2xl bg-slate-100 dark:bg-slate-800 text-slate-400 mb-4">
         <svg className="w-7 h-7" fill="none" viewBox="0 0 24 24" stroke="currentColor" aria-hidden="true">
           <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M13.828 10.172a4 4 0 00-5.656 0l-4 4a4 4 0 105.656 5.656l1.102-1.101m-.758-4.899a4 4 0 005.656 0l4-4a4 4 0 00-5.656-5.656l-1.1 1.1" />
         </svg>
       </div>
-      <p className="font-semibold text-slate-900">No account linked</p>
+      <p className="font-semibold text-slate-900 dark:text-slate-50">No account linked</p>
       <p className="text-sm text-slate-500 mt-2 leading-relaxed">
         Sign in to {config.label} on the left to connect your account.
       </p>
@@ -445,12 +445,12 @@ export default function LinkAccountsClient() {
               className={cn(
                 "text-left rounded-2xl border p-4 transition-all duration-200 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-slate-400 focus-visible:ring-offset-2",
                 isActive
-                  ? "border-slate-900 bg-slate-900 text-white shadow-md"
-                  : "border-slate-200 bg-white hover:border-slate-300"
+                  ? "border-slate-900 bg-slate-900 dark:border-slate-100 dark:bg-slate-100 text-white dark:text-slate-900 shadow-md"
+                  : "border-slate-200 bg-white hover:border-slate-300 dark:border-slate-700 dark:bg-slate-900 dark:hover:border-slate-600"
               )}
             >
               <div className="flex items-center justify-between gap-2">
-                <span className={cn("font-semibold", isActive ? "text-white" : "text-slate-900")}>
+                <span className={cn("font-semibold", isActive ? "text-white dark:text-slate-900" : "text-slate-900 dark:text-slate-100")}>
                   {config.label}
                 </span>
                 <span
@@ -458,10 +458,10 @@ export default function LinkAccountsClient() {
                     "badge text-[10px]",
                     linked
                       ? isActive
-                        ? "bg-white/20 text-white ring-white/30"
+                        ? "bg-white/20 text-white ring-white/30 dark:bg-slate-900/20 dark:text-slate-900 dark:ring-slate-900/30"
                         : "badge-posted"
                       : isActive
-                      ? "bg-white/10 text-white/80 ring-white/20"
+                      ? "bg-white/10 text-white/80 ring-white/20 dark:bg-slate-900/10 dark:text-slate-700 dark:ring-slate-900/20"
                       : "badge-pending"
                   )}
                 >
@@ -469,7 +469,7 @@ export default function LinkAccountsClient() {
                 </span>
               </div>
               {accounts[p]?.email && (
-                <p className={cn("text-xs mt-2 truncate", isActive ? "text-white/70" : "text-slate-500")}>
+                <p className={cn("text-xs mt-2 truncate", isActive ? "text-white/70 dark:text-slate-600" : "text-slate-500 dark:text-slate-400")}>
                   {accounts[p]!.email}
                 </p>
               )}

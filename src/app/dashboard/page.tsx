@@ -68,22 +68,22 @@ export default async function DashboardPage() {
       {/* Account warning */}
       {showAccountWarning && (
         <div
-          className="rounded-2xl border border-amber-200/80 bg-gradient-to-r from-amber-50 to-orange-50 p-5 flex items-start gap-4"
+          className="rounded-2xl border border-amber-200/80 bg-gradient-to-r from-amber-50 to-orange-50 dark:from-amber-950/40 dark:to-orange-950/30 dark:border-amber-800/50 p-5 flex items-start gap-4"
           role="alert"
         >
-          <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-amber-100 text-amber-600">
+          <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-amber-100 dark:bg-amber-900/50 text-amber-600 dark:text-amber-400">
             <svg className="w-5 h-5" fill="currentColor" viewBox="0 0 20 20" aria-hidden="true">
               <path fillRule="evenodd" d="M8.257 3.099c.765-1.36 2.722-1.36 3.486 0l5.58 9.92c.75 1.334-.213 2.98-1.742 2.98H4.42c-1.53 0-2.493-1.646-1.743-2.98l5.58-9.92zM11 13a1 1 0 11-2 0 1 1 0 012 0zm-1-8a1 1 0 00-1 1v3a1 1 0 002 0V6a1 1 0 00-1-1z" clipRule="evenodd" />
             </svg>
           </div>
           <div className="min-w-0 flex-1">
-            <p className="font-semibold text-amber-900">Platform accounts not fully linked</p>
-            <p className="text-sm text-amber-800/90 mt-1 leading-relaxed">
+            <p className="font-semibold text-amber-900 dark:text-amber-200">Platform accounts not fully linked</p>
+            <p className="text-sm text-amber-800/90 dark:text-amber-300/90 mt-1 leading-relaxed">
               Connect myhome.ge and ss.ge to auto-publish parsed listings without manual copy-paste.
             </p>
             <Link
               href="/dashboard/link-account"
-              className="inline-flex items-center gap-1 mt-3 text-sm font-semibold text-amber-900 hover:text-amber-950 underline-offset-2 hover:underline"
+              className="inline-flex items-center gap-1 mt-3 text-sm font-semibold text-amber-900 dark:text-amber-200 hover:text-amber-950 dark:hover:text-amber-100 underline-offset-2 hover:underline"
             >
               Manage platform accounts
               <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" aria-hidden="true">
@@ -97,13 +97,13 @@ export default async function DashboardPage() {
       {/* Stats bento */}
       <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
         <div className="stat-card">
-          <div className="flex h-11 w-11 shrink-0 items-center justify-center rounded-xl bg-slate-900 text-white">
+          <div className="flex h-11 w-11 shrink-0 items-center justify-center rounded-xl bg-slate-900 dark:bg-slate-100 text-white dark:text-slate-900">
             <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" aria-hidden="true">
               <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 11H5m14 0a2 2 0 012 2v6a2 2 0 01-2 2H5a2 2 0 01-2-2v-6a2 2 0 012-2m14 0V9a2 2 0 00-2-2M5 11V9a2 2 0 012-2m0 0V5a2 2 0 012-2h6a2 2 0 012 2v2M7 7h10" />
             </svg>
           </div>
           <div>
-            <p className="text-3xl font-bold tabular-nums text-slate-900">{stats.total}</p>
+            <p className="text-3xl font-bold tabular-nums text-slate-900 dark:text-slate-50">{stats.total}</p>
             <p className="text-sm text-slate-500 mt-0.5">Total parsed</p>
           </div>
         </div>

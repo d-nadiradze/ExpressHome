@@ -325,7 +325,7 @@ export default function ListingDetail({ listing: initial }: { listing: Listing }
     return (
       <div className="detail-row">
         <span className="text-sm text-slate-500">{label}</span>
-        <span className="text-sm font-medium text-slate-900 text-right">{value}</span>
+        <span className="text-sm font-medium text-slate-900 dark:text-slate-50 text-right">{value}</span>
       </div>
     );
   };
@@ -371,7 +371,7 @@ export default function ListingDetail({ listing: initial }: { listing: Listing }
               </svg>
               Back to dashboard
             </Link>
-            <h1 className="text-xl sm:text-2xl font-bold tracking-tight text-slate-900 line-clamp-2">
+            <h1 className="text-xl sm:text-2xl font-bold tracking-tight text-slate-900 dark:text-slate-50 line-clamp-2">
               {listing.title || "Untitled listing"}
             </h1>
             <div className="flex flex-wrap items-center gap-2 mt-2">
@@ -598,7 +598,7 @@ export default function ListingDetail({ listing: initial }: { listing: Listing }
                 </div>
                 {listing.price && (
                   <div className="sm:text-right shrink-0">
-                    <p className="text-3xl font-bold tabular-nums text-slate-900">
+                    <p className="text-3xl font-bold tabular-nums text-slate-900 dark:text-slate-50">
                       {listing.price} {currencySymbol(listing.currency)}
                     </p>
                     {listing.pricePerSqm && (
@@ -612,22 +612,22 @@ export default function ListingDetail({ listing: initial }: { listing: Listing }
 
               <div className="flex flex-wrap gap-2">
                 {listing.propertyType && (
-                  <span className="inline-flex items-center px-3 py-1 rounded-full text-xs font-medium bg-sky-50 text-sky-800 ring-1 ring-inset ring-sky-600/15">
+                  <span className="inline-flex items-center px-3 py-1 rounded-full text-xs font-medium bg-sky-50 text-sky-800 ring-1 ring-inset ring-sky-600/15 dark:bg-sky-950/50 dark:text-sky-300 dark:ring-sky-500/25">
                     {listing.propertyType}
                   </span>
                 )}
                 {listing.dealType && (
-                  <span className="inline-flex items-center px-3 py-1 rounded-full text-xs font-medium bg-violet-50 text-violet-800 ring-1 ring-inset ring-violet-600/15">
+                  <span className="inline-flex items-center px-3 py-1 rounded-full text-xs font-medium bg-violet-50 text-violet-800 ring-1 ring-inset ring-violet-600/15 dark:bg-violet-950/50 dark:text-violet-300 dark:ring-violet-500/25">
                     {listing.dealType}
                   </span>
                 )}
                 {listing.buildingStatus && (
-                  <span className="inline-flex items-center px-3 py-1 rounded-full text-xs font-medium bg-emerald-50 text-emerald-800 ring-1 ring-inset ring-emerald-600/15">
+                  <span className="inline-flex items-center px-3 py-1 rounded-full text-xs font-medium bg-emerald-50 text-emerald-800 ring-1 ring-inset ring-emerald-600/15 dark:bg-emerald-950/50 dark:text-emerald-300 dark:ring-emerald-500/25">
                     {listing.buildingStatus}
                   </span>
                 )}
                 {listing.condition && (
-                  <span className="inline-flex items-center px-3 py-1 rounded-full text-xs font-medium bg-amber-50 text-amber-800 ring-1 ring-inset ring-amber-600/15">
+                  <span className="inline-flex items-center px-3 py-1 rounded-full text-xs font-medium bg-amber-50 text-amber-800 ring-1 ring-inset ring-amber-600/15 dark:bg-amber-950/50 dark:text-amber-300 dark:ring-amber-500/25">
                     {listing.condition}
                   </span>
                 )}
@@ -641,25 +641,25 @@ export default function ListingDetail({ listing: initial }: { listing: Listing }
                 <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-3">
                   {listing.area && (
                     <div className="spec-tile">
-                      <p className="text-xl font-bold tabular-nums text-slate-900">{listing.area}</p>
+                      <p className="text-xl font-bold tabular-nums text-slate-900 dark:text-slate-50">{listing.area}</p>
                       <p className="text-xs text-slate-500 mt-1">m²</p>
                     </div>
                   )}
                   {listing.rooms && (
                     <div className="spec-tile">
-                      <p className="text-xl font-bold tabular-nums text-slate-900">{listing.rooms}</p>
+                      <p className="text-xl font-bold tabular-nums text-slate-900 dark:text-slate-50">{listing.rooms}</p>
                       <p className="text-xs text-slate-500 mt-1">Rooms</p>
                     </div>
                   )}
                   {listing.bedrooms && (
                     <div className="spec-tile">
-                      <p className="text-xl font-bold tabular-nums text-slate-900">{listing.bedrooms}</p>
+                      <p className="text-xl font-bold tabular-nums text-slate-900 dark:text-slate-50">{listing.bedrooms}</p>
                       <p className="text-xs text-slate-500 mt-1">Bedrooms</p>
                     </div>
                   )}
                   {listing.floor && (
                     <div className="spec-tile">
-                      <p className="text-xl font-bold tabular-nums text-slate-900">
+                      <p className="text-xl font-bold tabular-nums text-slate-900 dark:text-slate-50">
                         {listing.floor}{listing.totalFloors ? `/${listing.totalFloors}` : ""}
                       </p>
                       <p className="text-xs text-slate-500 mt-1">Floor</p>
@@ -667,13 +667,13 @@ export default function ListingDetail({ listing: initial }: { listing: Listing }
                   )}
                   {listing.bathrooms && (
                     <div className="spec-tile">
-                      <p className="text-xl font-bold tabular-nums text-slate-900">{listing.bathrooms}</p>
+                      <p className="text-xl font-bold tabular-nums text-slate-900 dark:text-slate-50">{listing.bathrooms}</p>
                       <p className="text-xs text-slate-500 mt-1">Bathrooms</p>
                     </div>
                   )}
                   {listing.projectType && (
                     <div className="spec-tile">
-                      <p className="text-sm font-semibold text-slate-900 leading-tight">{listing.projectType}</p>
+                      <p className="text-sm font-semibold text-slate-900 dark:text-slate-50 leading-tight">{listing.projectType}</p>
                       <p className="text-xs text-slate-500 mt-1">Project</p>
                     </div>
                   )}
@@ -715,7 +715,7 @@ export default function ListingDetail({ listing: initial }: { listing: Listing }
                   {Object.entries(listing.rawData).map(([key, value]) => (
                     <div key={key} className="detail-row">
                       <span className="text-sm text-slate-500 truncate pr-4" title={key}>{key}</span>
-                      <span className="text-sm font-medium text-slate-900 text-right shrink-0">{value}</span>
+                      <span className="text-sm font-medium text-slate-900 dark:text-slate-50 text-right shrink-0">{value}</span>
                     </div>
                   ))}
                 </div>
@@ -730,7 +730,7 @@ export default function ListingDetail({ listing: initial }: { listing: Listing }
             <aside className="panel-sticky">
               <div className="card space-y-4">
                 <div>
-                  <h3 className="text-sm font-semibold text-slate-900">Publish</h3>
+                  <h3 className="text-sm font-semibold text-slate-900 dark:text-slate-50">Publish</h3>
                   <p className="text-xs text-slate-500 mt-1 leading-relaxed">
                     Auto-fill listing forms on each platform step by step.
                   </p>
@@ -784,7 +784,7 @@ export default function ListingDetail({ listing: initial }: { listing: Listing }
               </div>
 
               <div className="card space-y-3">
-                <h3 className="text-sm font-semibold text-slate-900">Links</h3>
+                <h3 className="text-sm font-semibold text-slate-900 dark:text-slate-50">Links</h3>
                 <a
                   href={listing.sourceUrl}
                   target="_blank"
