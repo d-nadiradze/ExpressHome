@@ -43,6 +43,13 @@ interface Listing {
   createdAt: string;
 }
 
+type GoogleAccountState = {
+  googleEmail: string;
+  defaultSpreadsheetId: string | null;
+  defaultSheetTab: string | null;
+  updatedAt: string;
+};
+
 type EditableFields = {
   title: string;
   propertyType: string;
@@ -97,6 +104,13 @@ export default function ListingDetail({ listing: initial }: { listing: Listing }
   const [saving, setSaving] = useState(false);
   const [postingMyhome, setPostingMyhome] = useState(false);
   const [postingSsge, setPostingSsge] = useState(false);
+  const [exportingSheets, setExportingSheets] = useState(false);
+  const [googleAccount, setGoogleAccount] = useState<GoogleAccountState | null>(null);
+  const [googleLoading, setGoogleLoading] = useState(true);
+  const [sheetId, setSheetId] = useState("");
+  const [sheetTab, setSheetTab] = useState("Sheet1");
+  const [savingSheetConfig, setSavingSheetConfig] = useState(false);
+  const [disconnectingGoogle, setDisconnectingGoogle] = useState(false);
   const [prefillJob, setPrefillJob] = useState<{
     jobId: string;
     platform: "myhome" | "ssge";
@@ -109,6 +123,42 @@ export default function ListingDetail({ listing: initial }: { listing: Listing }
       if (reparsePollRef.current) clearInterval(reparsePollRef.current);
     };
   }, []);
+
+  const loadGoogleAccount = useCallback(async () => {
+    setGoogleLoading(true);
+    try {
+      const res = await fetch("/api/google/account");
+      const data = await res.json();
+      const account = data.account || null;
+      setGoogleAccount(account);
+      setSheetId(account?.defaultSpreadsheetId || "");
+      setSheetTab(account?.defaultSheetTab || "Sheet1");
+    } finally {
+      setGoogleLoading(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    void loadGoogleAccount();
+  }, [loadGoogleAccount]);
+
+  useEffect(() => {
+    const params = new URLSearchParams(window.location.search);
+    if (params.get("googleConnected") === "1") {
+      toast.success("Google account connected");
+      void loadGoogleAccount();
+      params.delete("googleConnected");
+      const query = params.toString();
+      window.history.replaceState({}, "", query ? `${window.location.pathname}?${query}` : window.location.pathname);
+    }
+    const googleError = params.get("googleError");
+    if (googleError) {
+      toast.error(googleError);
+      params.delete("googleError");
+      const query = params.toString();
+      window.history.replaceState({}, "", query ? `${window.location.pathname}?${query}` : window.location.pathname);
+    }
+  }, [loadGoogleAccount]);
 
   const stopReparsePolling = useCallback(() => {
     if (reparsePollRef.current) {
@@ -219,6 +269,90 @@ export default function ListingDetail({ listing: initial }: { listing: Listing }
       toast.error("Something went wrong");
     } finally {
       setPostingSsge(false);
+    }
+  }
+
+  async function handleExportGoogleSheets() {
+    if (!googleAccount) {
+      toast.error("Connect Google account first");
+      return;
+    }
+    if (!sheetId.trim()) {
+      toast.error("Set Spreadsheet ID first");
+      return;
+    }
+
+    setExportingSheets(true);
+    try {
+      const res = await fetch("/api/google-sheets/export", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          listingId: listing.id,
+          spreadsheetId: sheetId.trim(),
+          sheetTab: sheetTab.trim() || "Sheet1",
+        }),
+      });
+      const data = await res.json();
+      if (!res.ok) {
+        toast.error(data.error || "Failed to export to Google Sheets");
+        return;
+      }
+      toast.success("Exported to Google Sheets");
+    } catch {
+      toast.error("Something went wrong");
+    } finally {
+      setExportingSheets(false);
+    }
+  }
+
+  async function handleSaveSheetConfig() {
+    if (!sheetId.trim()) {
+      toast.error("Spreadsheet ID is required");
+      return;
+    }
+
+    setSavingSheetConfig(true);
+    try {
+      const res = await fetch("/api/google/account", {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          spreadsheetId: sheetId.trim(),
+          sheetTab: sheetTab.trim() || "Sheet1",
+        }),
+      });
+      const data = await res.json();
+      if (!res.ok) {
+        toast.error(data.error || "Failed to save sheet settings");
+        return;
+      }
+      toast.success("Google sheet settings saved");
+      await loadGoogleAccount();
+    } catch {
+      toast.error("Something went wrong");
+    } finally {
+      setSavingSheetConfig(false);
+    }
+  }
+
+  async function handleDisconnectGoogle() {
+    if (!confirm("Disconnect Google account?")) return;
+    setDisconnectingGoogle(true);
+    try {
+      const res = await fetch("/api/google/auth/disconnect", { method: "POST" });
+      if (!res.ok) {
+        toast.error("Failed to disconnect Google account");
+        return;
+      }
+      toast.success("Google account disconnected");
+      setGoogleAccount(null);
+      setSheetId("");
+      setSheetTab("Sheet1");
+    } catch {
+      toast.error("Something went wrong");
+    } finally {
+      setDisconnectingGoogle(false);
     }
   }
 
@@ -739,7 +873,7 @@ export default function ListingDetail({ listing: initial }: { listing: Listing }
                 {listing.postStatus !== "POSTED" && (
                   <button
                     onClick={handlePostMyhome}
-                    disabled={postingMyhome || postingSsge || !!prefillJob || reparsing}
+                    disabled={postingMyhome || postingSsge || exportingSheets || !!prefillJob || reparsing}
                     className="btn-success w-full text-sm"
                   >
                     {postingMyhome ? (
@@ -759,7 +893,7 @@ export default function ListingDetail({ listing: initial }: { listing: Listing }
                 {listing.ssgePostStatus !== "POSTED" && (
                   <button
                     onClick={handlePostSsge}
-                    disabled={postingMyhome || postingSsge || !!prefillJob || reparsing}
+                    disabled={postingMyhome || postingSsge || exportingSheets || !!prefillJob || reparsing}
                     className="btn-platform-ssge w-full text-sm"
                   >
                     {postingSsge ? (
@@ -775,6 +909,78 @@ export default function ListingDetail({ listing: initial }: { listing: Listing }
                     )}
                   </button>
                 )}
+
+                {googleLoading ? (
+                  <p className="text-xs text-slate-500">Loading Google status...</p>
+                ) : googleAccount ? (
+                  <div className="space-y-2">
+                    <p className="text-xs text-slate-500 truncate" title={googleAccount.googleEmail}>
+                      Google: {googleAccount.googleEmail}
+                    </p>
+                    <input
+                      className="input w-full text-sm"
+                      placeholder="Spreadsheet ID"
+                      value={sheetId}
+                      onChange={(e) => setSheetId(e.target.value)}
+                      disabled={savingSheetConfig || exportingSheets}
+                    />
+                    <input
+                      className="input w-full text-sm"
+                      placeholder="Sheet tab (e.g. Sheet1)"
+                      value={sheetTab}
+                      onChange={(e) => setSheetTab(e.target.value)}
+                      disabled={savingSheetConfig || exportingSheets}
+                    />
+                    <button
+                      onClick={handleSaveSheetConfig}
+                      disabled={savingSheetConfig || exportingSheets || !sheetId.trim()}
+                      className="btn-ghost w-full text-sm"
+                    >
+                      {savingSheetConfig ? "Saving..." : "Save Google Sheet"}
+                    </button>
+                    <button
+                      onClick={handleDisconnectGoogle}
+                      disabled={disconnectingGoogle || exportingSheets}
+                      className="btn-ghost w-full text-sm text-red-600"
+                    >
+                      {disconnectingGoogle ? "Disconnecting..." : "Disconnect Google"}
+                    </button>
+                  </div>
+                ) : (
+                  <a
+                    href={`/api/google/auth/start?next=${encodeURIComponent(`/dashboard/listing/${listing.id}`)}`}
+                    className="btn-secondary w-full text-sm"
+                  >
+                    Connect Google
+                  </a>
+                )}
+
+                <button
+                  onClick={handleExportGoogleSheets}
+                  disabled={
+                    postingMyhome ||
+                    postingSsge ||
+                    exportingSheets ||
+                    !!prefillJob ||
+                    reparsing ||
+                    listing.postStatus === "PARSING" ||
+                    !googleAccount ||
+                    !sheetId.trim()
+                  }
+                  className="btn-secondary w-full text-sm"
+                >
+                  {exportingSheets ? (
+                    <>
+                      <svg className="w-4 h-4 animate-spin" fill="none" viewBox="0 0 24 24" aria-hidden="true">
+                        <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
+                        <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z" />
+                      </svg>
+                      Exporting…
+                    </>
+                  ) : (
+                    "Export to Google Sheets"
+                  )}
+                </button>
 
                 {listing.postStatus === "POSTED" && listing.ssgePostStatus === "POSTED" && (
                   <p className="text-sm text-emerald-700 bg-emerald-50 rounded-xl px-3 py-2.5 ring-1 ring-inset ring-emerald-600/15">
