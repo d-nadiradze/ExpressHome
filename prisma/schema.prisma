@@ -21,6 +21,9 @@ model User {
   name          String?
   role          Role           @default(USER)
   isActive      Boolean        @default(true)
+  aiTokenLimitHour   Int?
+  aiTokenLimitDay    Int?
+  aiTokenLimitMonth  Int?
   createdAt     DateTime       @default(now())
   updatedAt     DateTime       @updatedAt
 
@@ -28,6 +31,7 @@ model User {
   myhomeAccount MyhomeAccount?
   ssgeAccount   SsgeAccount?
   parsedListings ParsedListing[]
+  aiTokenUsage  AiTokenUsage[]
 
   @@map("users")
 }
@@ -135,4 +139,18 @@ enum PostStatus {
   PENDING
   POSTED
   FAILED
+}
+
+model AiTokenUsage {
+  id               String   @id @default(cuid())
+  userId           String
+  totalTokens      Int
+  promptTokens     Int?
+  completionTokens Int?
+  createdAt        DateTime @default(now())
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId, createdAt])
+  @@map("ai_token_usage")
 }

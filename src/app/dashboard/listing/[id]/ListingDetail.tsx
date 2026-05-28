@@ -102,6 +102,10 @@ export default function ListingDetail({ listing: initial }: { listing: Listing }
     platform: "myhome" | "ssge";
   } | null>(null);
   const [reparsing, setReparsing] = useState(false);
+  const [aiSuggesting, setAiSuggesting] = useState(false);
+  const [descriptionEditing, setDescriptionEditing] = useState(false);
+  const [descriptionDraft, setDescriptionDraft] = useState("");
+  const [savingDescription, setSavingDescription] = useState(false);
   const reparsePollRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
   useEffect(() => {
@@ -238,6 +242,8 @@ export default function ListingDetail({ listing: initial }: { listing: Listing }
   }
 
   function startEditing() {
+    setDescriptionEditing(false);
+    setDescriptionDraft("");
     setEditData({
       title: listing.title || "",
       propertyType: listing.propertyType || "",
@@ -317,6 +323,163 @@ export default function ListingDetail({ listing: initial }: { listing: Listing }
     setEditRawData(updated);
   }
 
+  async function persistDescription(description: string) {
+    const res = await fetch("/api/myhome/parse", {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ id: listing.id, description }),
+    });
+    if (!res.ok) {
+      toast.error("Failed to save description");
+      return false;
+    }
+    setListing((prev) => ({ ...prev, description }));
+    router.refresh();
+    return true;
+  }
+
+  function startDescriptionEdit() {
+    setDescriptionDraft(listing.description || "");
+    setDescriptionEditing(true);
+  }
+
+  function cancelDescriptionEdit() {
+    setDescriptionEditing(false);
+    setDescriptionDraft("");
+  }
+
+  async function saveDescriptionEdit() {
+    setSavingDescription(true);
+    try {
+      const saved = await persistDescription(descriptionDraft);
+      if (saved) {
+        setDescriptionEditing(false);
+        setDescriptionDraft("");
+        toast.success("Description saved");
+      }
+    } finally {
+      setSavingDescription(false);
+    }
+  }
+
+  async function handleImproveDescription() {
+    const currentDescription = descriptionEditing
+      ? descriptionDraft
+      : editing && editData
+        ? editData.description
+        : listing.description || "";
+
+    if (!currentDescription.trim()) {
+      toast.error("Add a description first, then improve with AI");
+      return;
+    }
+
+    setAiSuggesting(true);
+    try {
+      const res = await fetch(`/api/listings/${listing.id}/suggest-description`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          currentDescription,
+          mode: "improve",
+        }),
+      });
+      const data = await res.json();
+      if (!res.ok) {
+        toast.error(data.error || "AI suggestion failed", { duration: 6000 });
+        return;
+      }
+
+      if (descriptionEditing) {
+        setDescriptionDraft(data.description);
+      } else if (editing && editData) {
+        setEditData({ ...editData, description: data.description });
+      } else {
+        const saved = await persistDescription(data.description);
+        if (!saved) return;
+      }
+
+      if (data.source === "template") {
+        toast(
+          data.warning || "OpenAI unavailable — kept your original description.",
+          { icon: "⚠️", duration: 7000 }
+        );
+      } else {
+        const savedMsg =
+          editing || descriptionEditing ? "" : " and saved";
+        toast.success("Description improved" + savedMsg);
+      }
+    } catch {
+      toast.error("Something went wrong");
+    } finally {
+      setAiSuggesting(false);
+    }
+  }
+
+  function renderSpecTile(
+    label: string,
+    value: string,
+    options?: { numeric?: boolean; title?: string }
+  ) {
+    const fullTitle = options?.title ?? (options?.numeric ? undefined : value);
+    return (
+      <div className="spec-tile" title={fullTitle}>
+        <p className={options?.numeric ? "spec-tile-value" : "spec-tile-value-text"}>
+          {value}
+        </p>
+        <p className="spec-tile-label">{label}</p>
+      </div>
+    );
+  }
+
+  function renderDescriptionActions(
+    currentDescription: string,
+    options?: { showEdit?: boolean }
+  ) {
+    const hasDescription = Boolean(currentDescription.trim());
+
+    return (
+      <div className="flex flex-wrap gap-2 shrink-0">
+        {options?.showEdit && !descriptionEditing && (
+          <button
+            type="button"
+            onClick={startDescriptionEdit}
+            className="btn-ghost text-sm border border-slate-200 dark:border-slate-700"
+          >
+            <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" aria-hidden="true">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z" />
+            </svg>
+            Edit
+          </button>
+        )}
+        <button
+          type="button"
+          onClick={handleImproveDescription}
+          disabled={aiSuggesting || !hasDescription}
+          className="btn-ai text-sm"
+          title={hasDescription ? undefined : "Add a description first"}
+        >
+          {aiSuggesting ? (
+            <>
+              <svg className="w-4 h-4 animate-spin" fill="none" viewBox="0 0 24 24" aria-hidden="true">
+                <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
+                <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" />
+              </svg>
+              Improving…
+            </>
+          ) : (
+            <>
+              <svg className="w-4 h-4 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" aria-hidden="true">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9.813 15.904L9 18.75l-.813-2.846a4.5 4.5 0 00-3.09-3.09L2.25 12l2.846-.813a4.5 4.5 0 003.09-3.09L9 5.25l.813 2.846a4.5 4.5 0 003.09 3.09L15.75 12l-2.846.813a4.5 4.5 0 00-3.09 3.09zM18.259 8.715L18 9.75l-.259-1.035a3.375 3.375 0 00-2.455-2.456L14.25 6l1.036-.259a3.375 3.375 0 002.455-2.456L18 2.25l.259 1.035a3.375 3.375 0 002.456 2.456L21.75 6l-1.035.259a3.375 3.375 0 00-2.456 2.456zM16.894 20.567L16.5 21.75l-.394-1.183a2.25 2.25 0 00-1.423-1.423L13.5 18.75l1.183-.394a2.25 2.25 0 001.423-1.423l.394-1.183.394 1.183a2.25 2.25 0 001.423 1.423l1.183.394-1.183.394a2.25 2.25 0 00-1.423 1.423z" />
+              </svg>
+              Improve with AI
+            </>
+          )}
+        </button>
+      </div>
+    );
+  }
+
   const images = listing.images || [];
   const ed = editData || ({} as EditableFields);
 
@@ -324,15 +487,15 @@ export default function ListingDetail({ listing: initial }: { listing: Listing }
     if (!value) return null;
     return (
       <div className="detail-row">
-        <span className="text-sm text-slate-500">{label}</span>
-        <span className="text-sm font-medium text-slate-900 dark:text-slate-50 text-right">{value}</span>
+        <span className="detail-row-label">{label}</span>
+        <span className="detail-row-value">{value}</span>
       </div>
     );
   };
 
   const renderSelect = (label: string, field: keyof EditableFields, options: string[]) => (
     <div>
-      <label className="block text-sm font-medium text-gray-700 mb-1">{label}</label>
+      <label className="form-label">{label}</label>
       <select className="input w-full" value={ed[field]} onChange={(e) => setEditData({ ...ed, [field]: e.target.value })}>
         <option value="">--</option>
         {options.map((o) => <option key={o} value={o}>{o}</option>)}
@@ -342,7 +505,7 @@ export default function ListingDetail({ listing: initial }: { listing: Listing }
 
   const renderInput = (label: string, field: keyof EditableFields, placeholder?: string) => (
     <div>
-      <label className="block text-sm font-medium text-gray-700 mb-1">{label}</label>
+      <label className="form-label">{label}</label>
       <input className="input w-full" placeholder={placeholder} value={ed[field]} onChange={(e) => setEditData({ ...ed, [field]: e.target.value })} />
     </div>
   );
@@ -364,7 +527,7 @@ export default function ListingDetail({ listing: initial }: { listing: Listing }
           <div>
             <Link
               href="/dashboard"
-              className="inline-flex items-center gap-1.5 text-sm text-slate-500 hover:text-slate-800 transition-colors mb-2"
+              className="inline-flex items-center gap-1.5 text-sm text-subtle hover:text-slate-800 dark:hover:text-slate-200 transition-colors mb-2"
             >
               <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" aria-hidden="true">
                 <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 19l-7-7 7-7" />
@@ -444,9 +607,9 @@ export default function ListingDetail({ listing: initial }: { listing: Listing }
           <>
             {/* Classification */}
             <div className="card space-y-4">
-              <h3 className="font-semibold text-gray-900">Classification</h3>
+              <h3 className="card-heading">Classification</h3>
               <div>
-                <label className="block text-sm font-medium text-gray-700 mb-1">Title</label>
+                <label className="form-label">Title</label>
                 <input className="input w-full" value={ed.title} onChange={(e) => setEditData({ ...ed, title: e.target.value })} />
               </div>
               <div className="grid grid-cols-2 gap-3">
@@ -461,7 +624,7 @@ export default function ListingDetail({ listing: initial }: { listing: Listing }
 
             {/* Location */}
             <div className="card space-y-4">
-              <h3 className="font-semibold text-gray-900">Location</h3>
+              <h3 className="card-heading">Location</h3>
               <div className="grid grid-cols-3 gap-3">
                 {renderInput("City", "city", "თბილისი")}
                 {renderInput("Street", "street", "კოსტავას")}
@@ -475,12 +638,12 @@ export default function ListingDetail({ listing: initial }: { listing: Listing }
 
             {/* Price */}
             <div className="card space-y-4">
-              <h3 className="font-semibold text-gray-900">Pricing</h3>
+              <h3 className="card-heading">Pricing</h3>
               <div className="grid grid-cols-3 gap-3">
                 {renderInput("Price", "price")}
                 {renderInput("Price per m²", "pricePerSqm")}
                 <div>
-                  <label className="block text-sm font-medium text-gray-700 mb-1">Currency</label>
+                  <label className="form-label">Currency</label>
                   <select className="input w-full" value={ed.currency} onChange={(e) => setEditData({ ...ed, currency: e.target.value })}>
                     <option value="USD">USD ($)</option>
                     <option value="GEL">GEL (₾)</option>
@@ -491,7 +654,7 @@ export default function ListingDetail({ listing: initial }: { listing: Listing }
 
             {/* Specs */}
             <div className="card space-y-4">
-              <h3 className="font-semibold text-gray-900">Specifications</h3>
+              <h3 className="card-heading">Specifications</h3>
               <div className="grid grid-cols-3 gap-3">
                 {renderInput("Area (m²)", "area")}
                 {renderInput("Rooms", "rooms")}
@@ -506,7 +669,7 @@ export default function ListingDetail({ listing: initial }: { listing: Listing }
 
             {/* Extras */}
             <div className="card space-y-4">
-              <h3 className="font-semibold text-gray-900">Additional</h3>
+              <h3 className="card-heading">Additional</h3>
               <div className="grid grid-cols-4 gap-3">
                 {renderInput("Bathrooms", "bathrooms")}
                 {renderInput("Balcony (m²)", "balconyArea")}
@@ -517,19 +680,32 @@ export default function ListingDetail({ listing: initial }: { listing: Listing }
 
             {/* Description */}
             <div className="card space-y-4">
-              <h3 className="font-semibold text-gray-900">Description</h3>
-              <textarea className="input w-full min-h-[120px]" value={ed.description} onChange={(e) => setEditData({ ...ed, description: e.target.value })} />
+              <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
+                <div>
+                  <h3 className="font-semibold text-slate-900 dark:text-slate-50">Description</h3>
+                  <p className="text-xs text-subtle mt-0.5">
+                    Improve an existing description — removes seller info and polishes the text.
+                  </p>
+                </div>
+                {renderDescriptionActions(ed.description)}
+              </div>
+              <textarea
+                className="input w-full min-h-[160px] leading-relaxed"
+                value={ed.description}
+                onChange={(e) => setEditData({ ...ed, description: e.target.value })}
+                placeholder="აღწერა myhome.ge / ss.ge-სთვის…"
+              />
             </div>
 
             {/* Raw Data / Additional Parameters */}
             <div className="card space-y-4">
-              <h3 className="font-semibold text-gray-900">Additional Parameters (rawData)</h3>
+              <h3 className="card-heading">Additional Parameters (rawData)</h3>
 
               {Object.keys(editRawData).length > 0 && (
                 <div className="space-y-2">
                   {Object.entries(editRawData).map(([key, value]) => (
                     <div key={key} className="flex items-center gap-2">
-                      <span className="text-sm text-gray-600 min-w-[160px] shrink-0 truncate" title={key}>{key}</span>
+                      <span className="detail-row-label min-w-[160px] shrink-0 truncate" title={key}>{key}</span>
                       <input
                         className="input flex-1"
                         value={value}
@@ -551,7 +727,7 @@ export default function ListingDetail({ listing: initial }: { listing: Listing }
 
               <div className="flex items-end gap-2 pt-2 border-t border-gray-100">
                 <div className="flex-1">
-                  <label className="block text-xs text-gray-500 mb-1">Key</label>
+                  <label className="block text-xs text-subtle mb-1">Key</label>
                   <input
                     className="input w-full"
                     placeholder="e.g. გათბობა"
@@ -561,7 +737,7 @@ export default function ListingDetail({ listing: initial }: { listing: Listing }
                   />
                 </div>
                 <div className="flex-1">
-                  <label className="block text-xs text-gray-500 mb-1">Value</label>
+                  <label className="block text-xs text-subtle mb-1">Value</label>
                   <input
                     className="input w-full"
                     placeholder="e.g. კი"
@@ -587,7 +763,7 @@ export default function ListingDetail({ listing: initial }: { listing: Listing }
               <div className="flex flex-col sm:flex-row sm:items-start sm:justify-between gap-4">
                 <div className="min-w-0">
                   {(listing.address || listing.city) && (
-                    <p className="text-slate-500 flex items-start gap-2 text-sm leading-relaxed">
+                    <p className="text-subtle flex items-start gap-2 text-sm leading-relaxed">
                       <svg className="w-4 h-4 mt-0.5 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" aria-hidden="true">
                         <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M17.657 16.657L13.414 20.9a1.998 1.998 0 01-2.827 0l-4.244-4.243a8 8 0 1111.314 0z" />
                         <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 11a3 3 0 11-6 0 3 3 0 016 0z" />
@@ -602,7 +778,7 @@ export default function ListingDetail({ listing: initial }: { listing: Listing }
                       {listing.price} {currencySymbol(listing.currency)}
                     </p>
                     {listing.pricePerSqm && (
-                      <p className="text-sm text-slate-500 tabular-nums mt-0.5">
+                      <p className="text-sm text-subtle tabular-nums mt-0.5">
                         {listing.pricePerSqm} {currencySymbol(listing.currency)}/m²
                       </p>
                     )}
@@ -638,45 +814,18 @@ export default function ListingDetail({ listing: initial }: { listing: Listing }
             {(listing.area || listing.rooms || listing.bedrooms || listing.floor || listing.bathrooms || listing.projectType) && (
               <div className="card">
                 <h3 className="section-title mb-4">Quick specs</h3>
-                <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-3">
-                  {listing.area && (
-                    <div className="spec-tile">
-                      <p className="text-xl font-bold tabular-nums text-slate-900 dark:text-slate-50">{listing.area}</p>
-                      <p className="text-xs text-slate-500 mt-1">m²</p>
-                    </div>
-                  )}
-                  {listing.rooms && (
-                    <div className="spec-tile">
-                      <p className="text-xl font-bold tabular-nums text-slate-900 dark:text-slate-50">{listing.rooms}</p>
-                      <p className="text-xs text-slate-500 mt-1">Rooms</p>
-                    </div>
-                  )}
-                  {listing.bedrooms && (
-                    <div className="spec-tile">
-                      <p className="text-xl font-bold tabular-nums text-slate-900 dark:text-slate-50">{listing.bedrooms}</p>
-                      <p className="text-xs text-slate-500 mt-1">Bedrooms</p>
-                    </div>
-                  )}
-                  {listing.floor && (
-                    <div className="spec-tile">
-                      <p className="text-xl font-bold tabular-nums text-slate-900 dark:text-slate-50">
-                        {listing.floor}{listing.totalFloors ? `/${listing.totalFloors}` : ""}
-                      </p>
-                      <p className="text-xs text-slate-500 mt-1">Floor</p>
-                    </div>
-                  )}
-                  {listing.bathrooms && (
-                    <div className="spec-tile">
-                      <p className="text-xl font-bold tabular-nums text-slate-900 dark:text-slate-50">{listing.bathrooms}</p>
-                      <p className="text-xs text-slate-500 mt-1">Bathrooms</p>
-                    </div>
-                  )}
-                  {listing.projectType && (
-                    <div className="spec-tile">
-                      <p className="text-sm font-semibold text-slate-900 dark:text-slate-50 leading-tight">{listing.projectType}</p>
-                      <p className="text-xs text-slate-500 mt-1">Project</p>
-                    </div>
-                  )}
+                <div className="grid grid-cols-2 sm:grid-cols-3 xl:grid-cols-6 gap-3">
+                  {listing.area && renderSpecTile("m²", listing.area, { numeric: true })}
+                  {listing.rooms && renderSpecTile("Rooms", listing.rooms, { numeric: true })}
+                  {listing.bedrooms && renderSpecTile("Bedrooms", listing.bedrooms, { numeric: true })}
+                  {listing.floor &&
+                    renderSpecTile(
+                      "Floor",
+                      `${listing.floor}${listing.totalFloors ? `/${listing.totalFloors}` : ""}`,
+                      { numeric: true }
+                    )}
+                  {listing.bathrooms && renderSpecTile("Bathrooms", listing.bathrooms, { numeric: true })}
+                  {listing.projectType && renderSpecTile("Project", listing.projectType)}
                 </div>
               </div>
             )}
@@ -701,12 +850,60 @@ export default function ListingDetail({ listing: initial }: { listing: Listing }
               {renderField("Loggia", listing.loggiaArea ? `${listing.loggiaArea} m²` : null)}
             </div>
 
-            {listing.description && (
-              <div className="card">
-                <h3 className="section-title mb-3">Description</h3>
-                <p className="text-slate-600 text-sm leading-relaxed whitespace-pre-line">{listing.description}</p>
+            {/* Description */}
+            <div className="card space-y-4">
+              <div className="flex flex-col sm:flex-row sm:items-start sm:justify-between gap-3">
+                <div>
+                  <h3 className="section-title mb-1">Description</h3>
+                  <p className="text-xs text-subtle">
+                    {descriptionEditing
+                      ? "Edit the text, then save. Improve with AI updates the draft."
+                      : "Edit manually or polish with AI. Saves automatically after AI improve."}
+                  </p>
+                </div>
+                <div className="flex flex-wrap gap-2 shrink-0">
+                  {descriptionEditing ? (
+                    <>
+                      {renderDescriptionActions(descriptionDraft)}
+                      <button
+                        type="button"
+                        onClick={cancelDescriptionEdit}
+                        disabled={savingDescription}
+                        className="btn-ghost text-sm"
+                      >
+                        Cancel
+                      </button>
+                      <button
+                        type="button"
+                        onClick={saveDescriptionEdit}
+                        disabled={savingDescription}
+                        className="btn-primary text-sm"
+                      >
+                        {savingDescription ? "Saving…" : "Save"}
+                      </button>
+                    </>
+                  ) : (
+                    renderDescriptionActions(listing.description || "", { showEdit: true })
+                  )}
+                </div>
               </div>
-            )}
+              {descriptionEditing ? (
+                <textarea
+                  className="input w-full min-h-[160px] leading-relaxed"
+                  value={descriptionDraft}
+                  onChange={(e) => setDescriptionDraft(e.target.value)}
+                  placeholder="აღწერა myhome.ge / ss.ge-სთვის…"
+                />
+              ) : listing.description ? (
+                <p className="text-slate-600 dark:text-slate-300 text-sm leading-relaxed whitespace-pre-line">
+                  {listing.description}
+                </p>
+              ) : (
+                <p className="text-sm text-subtle italic">
+                  No description yet. Click Edit to add one.
+                </p>
+              )}
+            </div>
 
             {listing.rawData && Object.keys(listing.rawData).length > 0 && (
               <div className="card">
@@ -714,8 +911,8 @@ export default function ListingDetail({ listing: initial }: { listing: Listing }
                 <div className="grid grid-cols-1 sm:grid-cols-2 gap-x-6">
                   {Object.entries(listing.rawData).map(([key, value]) => (
                     <div key={key} className="detail-row">
-                      <span className="text-sm text-slate-500 truncate pr-4" title={key}>{key}</span>
-                      <span className="text-sm font-medium text-slate-900 dark:text-slate-50 text-right shrink-0">{value}</span>
+                      <span className="detail-row-label truncate pr-4" title={key}>{key}</span>
+                      <span className="detail-row-value shrink-0">{value}</span>
                     </div>
                   ))}
                 </div>
@@ -731,7 +928,7 @@ export default function ListingDetail({ listing: initial }: { listing: Listing }
               <div className="card space-y-4">
                 <div>
                   <h3 className="text-sm font-semibold text-slate-900 dark:text-slate-50">Publish</h3>
-                  <p className="text-xs text-slate-500 mt-1 leading-relaxed">
+                  <p className="text-xs text-subtle mt-1 leading-relaxed">
                     Auto-fill listing forms on each platform step by step.
                   </p>
                 </div>

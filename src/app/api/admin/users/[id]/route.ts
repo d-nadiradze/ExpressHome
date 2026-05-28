@@ -1,5 +1,9 @@
 import { NextRequest, NextResponse } from "next/server";
 import { db } from "@/lib/db";
+import {
+  getUserTokenUsageStatus,
+  parseOptionalTokenLimit,
+} from "@/lib/ai-token-usage";
 
 // PATCH: update user role or status
 export async function PATCH(
@@ -17,7 +21,8 @@ export async function PATCH(
 
   try {
     const body = await request.json();
-    const { name, userRole, isActive } = body;
+    const { name, userRole, isActive, aiTokenLimitHour, aiTokenLimitDay, aiTokenLimitMonth } =
+      body;
 
     // Prevent admin from deactivating themselves
     if (id === currentUserId && isActive === false) {
@@ -27,14 +32,48 @@ export async function PATCH(
       );
     }
 
+    let limitData: {
+      aiTokenLimitHour?: number | null;
+      aiTokenLimitDay?: number | null;
+      aiTokenLimitMonth?: number | null;
+    } = {};
+
+    if (
+      aiTokenLimitHour !== undefined ||
+      aiTokenLimitDay !== undefined ||
+      aiTokenLimitMonth !== undefined
+    ) {
+      limitData = {
+        ...(aiTokenLimitHour !== undefined && {
+          aiTokenLimitHour: parseOptionalTokenLimit(aiTokenLimitHour),
+        }),
+        ...(aiTokenLimitDay !== undefined && {
+          aiTokenLimitDay: parseOptionalTokenLimit(aiTokenLimitDay),
+        }),
+        ...(aiTokenLimitMonth !== undefined && {
+          aiTokenLimitMonth: parseOptionalTokenLimit(aiTokenLimitMonth),
+        }),
+      };
+    }
+
     const user = await db.user.update({
       where: { id },
       data: {
         ...(name !== undefined && { name }),
         ...(userRole !== undefined && { role: userRole }),
         ...(isActive !== undefined && { isActive }),
+        ...limitData,
       },
-      select: { id: true, email: true, name: true, role: true, isActive: true },
+      select: {
+        id: true,
+        email: true,
+        name: true,
+        role: true,
+        isActive: true,
+        aiTokenLimitHour: true,
+        aiTokenLimitDay: true,
+        aiTokenLimitMonth: true,
+      },
     });
 
     // If user is deactivated, kill their session
@@ -44,6 +83,9 @@ export async function PATCH(
 
     return NextResponse.json({ user });
   } catch (error) {
+    if (error instanceof Error && error.message.includes("Token limits")) {
+      return NextResponse.json({ error: error.message }, { status: 400 });
+    }
     console.error("Update user error:", error);
     return NextResponse.json({ error: "Internal server error" }, { status: 500 });
   }
@@ -99,6 +141,9 @@ export async function GET(
       name: true,
       role: true,
       isActive: true,
+      aiTokenLimitHour: true,
+      aiTokenLimitDay: true,
+      aiTokenLimitMonth: true,
       createdAt: true,
       updatedAt: true,
       myhomeAccount: {
@@ -112,5 +157,7 @@ export async function GET(
     return NextResponse.json({ error: "User not found" }, { status: 404 });
   }
 
-  return NextResponse.json({ user });
+  const aiTokenStatus = await getUserTokenUsageStatus(id);
+
+  return NextResponse.json({ user, aiTokenStatus });
 }

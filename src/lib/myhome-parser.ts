@@ -8186,14 +8186,38 @@ export async function parseListing(url: string): Promise<{
 
       // --- Description ("მოკლე აღწერა") ---
       let description = "";
-      document.querySelectorAll("div, section").forEach((el) => {
-        if (description) return;
-        const t = el.textContent?.trim() || "";
-        if (t.startsWith("მოკლე აღწერა") && t.length > 15) {
-          description = t.replace("მოკლე აღწერა", "").trim();
-          description = description.replace(/ნაკლების ნახვა\s*\^?$/i, "").replace(/მეტის ნახვა\s*$/i, "").trim();
+      const descHeading = Array.from(document.querySelectorAll("h2, h3, h4")).find(
+        (h) => (h.textContent?.trim() || "") === "მოკლე აღწერა"
+      );
+      const descSection =
+        descHeading?.closest("div.relative") ||
+        descHeading?.parentElement?.parentElement ||
+        descHeading?.parentElement;
+
+      if (descSection) {
+        const descEl = Array.from(descSection.querySelectorAll("div")).find((d) => {
+          const cls = d.className || "";
+          const text = (d.textContent?.trim() || "");
+          return cls.includes("break-words") && cls.includes("text-sm") && text.length > 20;
+        });
+
+        if (descEl) {
+          description = (descEl.textContent || "").replace(/\s+/g, " ").trim();
+        } else {
+          const clone = descSection.cloneNode(true) as Element;
+          clone.querySelectorAll("h2, h3, h4, button").forEach((el) => el.remove());
+          clone.querySelectorAll("div.overflow-x-auto").forEach((el) => el.remove());
+          description = (clone.textContent || "")
+            .replace("მოკლე აღწერა", "")
+            .replace(/\s+/g, " ")
+            .trim();
         }
-      });
+      }
+
+      description = description
+        .replace(/ნაკლების ნახვა\s*\^?$/i, "")
+        .replace(/მეტის ნახვა\s*$/i, "")
+        .trim();
 
       // --- ID ---
       document.querySelectorAll("span").forEach((sp) => {
