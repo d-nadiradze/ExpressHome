@@ -1,72 +1,115 @@
 import { NextRequest, NextResponse } from "next/server";
 import { db } from "@/lib/db";
-import { parseListing } from "@/lib/myhome-parser";
-import { isValidMyhomeUrl } from "@/lib/utils";
+import { isValidListingUrl } from "@/lib/utils";
+import { enqueueParseJob } from "@/lib/parse-queue";
+import {
+  findExistingParsedListing,
+  normalizeListingUrl,
+} from "@/lib/listing-url";
 
 export async function POST(request: NextRequest) {
   const userId = request.headers.get("x-user-id");
   if (!userId) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
 
   try {
-    const { url } = await request.json();
+    const body = await request.json();
+    const { url, reparse, listingId } = body;
+
+    if (reparse) {
+      if (!listingId) {
+        return NextResponse.json({ error: "Listing ID is required" }, { status: 400 });
+      }
+
+      const existing = await db.parsedListing.findFirst({
+        where: { id: listingId, userId },
+      });
+
+      if (!existing) {
+        return NextResponse.json({ error: "Listing not found" }, { status: 404 });
+      }
+
+      if (existing.postStatus !== "PARSING") {
+        await db.parsedListing.update({
+          where: { id: existing.id },
+          data: { postStatus: "PARSING" },
+        });
+        enqueueParseJob({
+          listingId: existing.id,
+          url: existing.sourceUrl,
+          userId,
+        });
+      }
+
+      return NextResponse.json(
+        { success: true, listingId: existing.id, reparse: true },
+        { status: 202 }
+      );
+    }
 
     if (!url) {
       return NextResponse.json({ error: "URL is required" }, { status: 400 });
     }
 
-    if (!isValidMyhomeUrl(url)) {
+    if (!isValidListingUrl(url)) {
       return NextResponse.json(
-        { error: "Invalid URL. Must be a myhome.ge link." },
+        { error: "Invalid URL. Must be a myhome.ge or ss.ge link." },
         { status: 400 }
       );
     }
 
-    // Parse the listing
-    const result = await parseListing(url);
+    const normalizedUrl = normalizeListingUrl(url);
+    const existing = await findExistingParsedListing(userId, url);
 
-    if (!result.success || !result.data) {
-      return NextResponse.json(
-        { error: result.error || "Failed to parse listing" },
-        { status: 422 }
-      );
+    if (existing) {
+      if (existing.postStatus === "PARSING") {
+        return NextResponse.json(
+          { success: true, listingId: existing.id },
+          { status: 202 }
+        );
+      }
+
+      if (
+        existing.postStatus === "PENDING" ||
+        existing.postStatus === "POSTED"
+      ) {
+        return NextResponse.json({
+          success: true,
+          listingId: existing.id,
+          cached: true,
+        });
+      }
+
+      if (existing.postStatus === "FAILED") {
+        await db.parsedListing.update({
+          where: { id: existing.id },
+          data: { postStatus: "PARSING", sourceUrl: normalizedUrl },
+        });
+        enqueueParseJob({
+          listingId: existing.id,
+          url: normalizedUrl,
+          userId,
+        });
+        return NextResponse.json(
+          { success: true, listingId: existing.id },
+          { status: 202 }
+        );
+      }
     }
 
-    const d = result.data;
     const listing = await db.parsedListing.create({
       data: {
         userId,
-        sourceUrl: url,
-        title: d.title,
-        propertyType: d.propertyType,
-        dealType: d.dealType,
-        buildingStatus: d.buildingStatus,
-        condition: d.condition,
-        city: d.city,
-        address: d.address,
-        street: d.street,
-        streetNumber: d.streetNumber,
-        cadastralCode: d.cadastralCode,
-        price: d.price,
-        pricePerSqm: d.pricePerSqm,
-        currency: d.currency,
-        area: d.area,
-        rooms: d.rooms,
-        bedrooms: d.bedrooms,
-        floor: d.floor,
-        totalFloors: d.totalFloors,
-        projectType: d.projectType,
-        bathrooms: d.bathrooms,
-        balconyArea: d.balconyArea,
-        verandaArea: d.verandaArea,
-        loggiaArea: d.loggiaArea,
-        description: d.description,
-        images: d.images,
-        rawData: d.rawData,
-        postStatus: "PENDING",
+        sourceUrl: normalizedUrl,
+        postStatus: "PARSING",
       },
     });
 
-    return NextResponse.json({ success: true, listing });
+    enqueueParseJob({ listingId: listing.id, url: normalizedUrl, userId });
+
+    return NextResponse.json(
+      { success: true, listingId: listing.id },
+      { status: 202 }
+    );
   } catch (error) {
     console.error("Parse error:", error);
     return NextResponse.json({ error: "Internal server error" }, { status: 500 });
@@ -130,7 +173,7 @@ export async function PUT(request: NextRequest) {
       "city", "address", "street", "streetNumber", "cadastralCode",
       "price", "pricePerSqm", "currency", "area", "rooms", "bedrooms",
       "floor", "totalFloors", "projectType", "bathrooms", "balconyArea",
-      "verandaArea", "loggiaArea", "description", "images",
+      "verandaArea", "loggiaArea", "description", "images", "rawData",
     ] as const;
 
     const data: Record<string, unknown> = {};

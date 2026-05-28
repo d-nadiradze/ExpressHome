@@ -12,15 +12,24 @@ interface AdminUser {
   name: string | null;
   role: Role;
   isActive: boolean;
+  aiTokenLimitHour: number | null;
+  aiTokenLimitDay: number | null;
+  aiTokenLimitMonth: number | null;
   createdAt: string;
   _count: { parsedListings: number };
   myhomeAccount: { myhomeEmail: string; isVerified: boolean } | null;
+  aiTokenUsage: { hour: number; day: number; month: number };
+}
+
+function formatTokenUsage(used: number, limit: number | null): string {
+  if (limit == null) return `${used.toLocaleString()} / ∞`;
+  return `${used.toLocaleString()} / ${limit.toLocaleString()}`;
 }
 
 const ROLE_COLORS: Record<Role, string> = {
-  USER: "bg-gray-100 text-gray-700",
-  MODERATOR: "bg-blue-100 text-blue-700",
-  ADMIN: "bg-purple-100 text-purple-700",
+  USER: "bg-gray-100 text-gray-700 dark:bg-slate-800 dark:text-slate-300",
+  MODERATOR: "bg-blue-100 text-blue-700 dark:bg-blue-950/50 dark:text-blue-300",
+  ADMIN: "bg-purple-100 text-purple-700 dark:bg-purple-950/50 dark:text-purple-300",
 };
 
 export default function AdminPage() {
@@ -35,6 +44,12 @@ export default function AdminPage() {
   const [newPassword, setNewPassword] = useState("");
   const [newRole, setNewRole] = useState<Role>("USER");
   const [creating, setCreating] = useState(false);
+
+  const [limitsUser, setLimitsUser] = useState<AdminUser | null>(null);
+  const [limitHour, setLimitHour] = useState("");
+  const [limitDay, setLimitDay] = useState("");
+  const [limitMonth, setLimitMonth] = useState("");
+  const [savingLimits, setSavingLimits] = useState(false);
 
   const fetchUsers = useCallback(async () => {
     setLoading(true);
@@ -131,13 +146,66 @@ export default function AdminPage() {
     setCreating(false);
   }
 
+  function openLimitsModal(user: AdminUser) {
+    setLimitsUser(user);
+    setLimitHour(user.aiTokenLimitHour?.toString() ?? "");
+    setLimitDay(user.aiTokenLimitDay?.toString() ?? "");
+    setLimitMonth(user.aiTokenLimitMonth?.toString() ?? "");
+  }
+
+  function closeLimitsModal() {
+    setLimitsUser(null);
+    setLimitHour("");
+    setLimitDay("");
+    setLimitMonth("");
+  }
+
+  async function handleSaveLimits(e: React.FormEvent) {
+    e.preventDefault();
+    if (!limitsUser) return;
+
+    setSavingLimits(true);
+    const res = await fetch(`/api/admin/users/${limitsUser.id}`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        aiTokenLimitHour: limitHour === "" ? null : Number.parseInt(limitHour, 10),
+        aiTokenLimitDay: limitDay === "" ? null : Number.parseInt(limitDay, 10),
+        aiTokenLimitMonth: limitMonth === "" ? null : Number.parseInt(limitMonth, 10),
+      }),
+    });
+
+    const data = await res.json();
+
+    if (!res.ok) {
+      toast.error(data.error || "Failed to save limits");
+    } else {
+      toast.success("AI token limits updated");
+      setUsers((prev) =>
+        prev.map((u) =>
+          u.id === limitsUser.id
+            ? {
+                ...u,
+                aiTokenLimitHour: data.user.aiTokenLimitHour,
+                aiTokenLimitDay: data.user.aiTokenLimitDay,
+                aiTokenLimitMonth: data.user.aiTokenLimitMonth,
+              }
+            : u
+        )
+      );
+      closeLimitsModal();
+    }
+
+    setSavingLimits(false);
+  }
+
   return (
     <div className="space-y-6">
       {/* Header */}
       <div className="flex items-center justify-between">
         <div>
-          <h1 className="text-2xl font-bold text-gray-900">User Management</h1>
-          <p className="text-gray-500 mt-1">{total} total users</p>
+          <h1 className="page-title">User management</h1>
+          <p className="page-subtitle">{total} total users</p>
         </div>
         <button
           onClick={() => setShowCreateModal(true)}
@@ -152,32 +220,35 @@ export default function AdminPage() {
         <div className="overflow-x-auto">
           <table className="w-full">
             <thead>
-              <tr className="bg-gray-50 border-b border-gray-200">
-                <th className="text-left px-6 py-3 text-xs font-medium text-gray-500 uppercase tracking-wider">
+              <tr className="bg-gray-50 dark:bg-slate-800/60 border-b border-gray-200 dark:border-slate-700">
+                <th className="text-left px-6 py-3 text-xs font-medium text-gray-500 dark:text-slate-400 uppercase tracking-wider">
                   User
                 </th>
-                <th className="text-left px-6 py-3 text-xs font-medium text-gray-500 uppercase tracking-wider">
+                <th className="text-left px-6 py-3 text-xs font-medium text-gray-500 dark:text-slate-400 uppercase tracking-wider">
                   Role
                 </th>
-                <th className="text-left px-6 py-3 text-xs font-medium text-gray-500 uppercase tracking-wider">
+                <th className="text-left px-6 py-3 text-xs font-medium text-gray-500 dark:text-slate-400 uppercase tracking-wider">
                   myhome.ge
                 </th>
-                <th className="text-left px-6 py-3 text-xs font-medium text-gray-500 uppercase tracking-wider">
+                <th className="text-left px-6 py-3 text-xs font-medium text-gray-500 dark:text-slate-400 uppercase tracking-wider">
                   Listings
                 </th>
-                <th className="text-left px-6 py-3 text-xs font-medium text-gray-500 uppercase tracking-wider">
+                <th className="text-left px-6 py-3 text-xs font-medium text-gray-500 dark:text-slate-400 uppercase tracking-wider">
+                  AI tokens (day)
+                </th>
+                <th className="text-left px-6 py-3 text-xs font-medium text-gray-500 dark:text-slate-400 uppercase tracking-wider">
                   Status
                 </th>
-                <th className="text-left px-6 py-3 text-xs font-medium text-gray-500 uppercase tracking-wider">
+                <th className="text-left px-6 py-3 text-xs font-medium text-gray-500 dark:text-slate-400 uppercase tracking-wider">
                   Joined
                 </th>
                 <th className="px-6 py-3" />
               </tr>
             </thead>
-            <tbody className="divide-y divide-gray-100">
+            <tbody className="divide-y divide-slate-100 dark:divide-slate-800">
               {loading ? (
                 <tr>
-                  <td colSpan={7} className="px-6 py-12 text-center text-gray-400">
+                  <td colSpan={8} className="px-6 py-12 text-center text-subtle">
                     <div className="flex items-center justify-center gap-2">
                       <svg className="animate-spin h-5 w-5" viewBox="0 0 24 24" fill="none">
                         <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
@@ -189,17 +260,20 @@ export default function AdminPage() {
                 </tr>
               ) : users.length === 0 ? (
                 <tr>
-                  <td colSpan={7} className="px-6 py-12 text-center text-gray-400">
+                  <td colSpan={8} className="px-6 py-12 text-center text-subtle">
                     No users found
                   </td>
                 </tr>
               ) : (
                 users.map((user) => (
-                  <tr key={user.id} className="hover:bg-gray-50 transition-colors">
+                  <tr
+                    key={user.id}
+                    className="bg-white dark:bg-slate-900 hover:bg-slate-50 dark:hover:bg-slate-800/50 transition-colors"
+                  >
                     <td className="px-6 py-4">
                       <div>
-                        <p className="font-medium text-gray-900">{user.name || "—"}</p>
-                        <p className="text-sm text-gray-500">{user.email}</p>
+                        <p className="font-medium text-slate-900 dark:text-slate-100">{user.name || "—"}</p>
+                        <p className="text-sm text-subtle">{user.email}</p>
                       </div>
                     </td>
                     <td className="px-6 py-4">
@@ -216,37 +290,51 @@ export default function AdminPage() {
                     <td className="px-6 py-4">
                       {user.myhomeAccount ? (
                         <div>
-                          <p className="text-sm text-gray-700">{user.myhomeAccount.myhomeEmail}</p>
-                          <span className={`badge text-xs ${user.myhomeAccount.isVerified ? "bg-green-100 text-green-700" : "bg-yellow-100 text-yellow-700"}`}>
+                          <p className="text-sm text-muted">{user.myhomeAccount.myhomeEmail}</p>
+                          <span className={`badge text-xs ${user.myhomeAccount.isVerified ? "badge-posted" : "badge-pending"}`}>
                             {user.myhomeAccount.isVerified ? "Verified" : "Unverified"}
                           </span>
                         </div>
                       ) : (
-                        <span className="text-gray-400 text-sm">Not linked</span>
+                        <span className="text-subtle text-sm">Not linked</span>
                       )}
                     </td>
                     <td className="px-6 py-4">
-                      <span className="text-sm text-gray-700">{user._count.parsedListings}</span>
+                      <span className="text-sm text-muted tabular-nums">{user._count.parsedListings}</span>
+                    </td>
+                    <td className="px-6 py-4">
+                      <div className="space-y-1">
+                        <p className="text-sm tabular-nums text-muted">
+                          {formatTokenUsage(user.aiTokenUsage.day, user.aiTokenLimitDay)}
+                        </p>
+                        <button
+                          type="button"
+                          onClick={() => openLimitsModal(user)}
+                          className="text-xs font-medium text-violet-600 hover:text-violet-700 dark:text-violet-300 dark:hover:text-violet-200"
+                        >
+                          Manage limits
+                        </button>
+                      </div>
                     </td>
                     <td className="px-6 py-4">
                       <button
                         onClick={() => handleToggleActive(user.id, !user.isActive)}
-                        className={`badge cursor-pointer ${
+                        className={`badge cursor-pointer transition-colors ${
                           user.isActive
-                            ? "bg-green-100 text-green-700 hover:bg-red-100 hover:text-red-700"
-                            : "bg-red-100 text-red-700 hover:bg-green-100 hover:text-green-700"
-                        } transition-colors`}
+                            ? "badge-posted hover:bg-red-50 hover:text-red-700 dark:hover:bg-red-950/40 dark:hover:text-red-300"
+                            : "badge-failed hover:bg-emerald-50 hover:text-emerald-700 dark:hover:bg-emerald-950/40 dark:hover:text-emerald-300"
+                        }`}
                       >
                         {user.isActive ? "Active" : "Inactive"}
                       </button>
                     </td>
-                    <td className="px-6 py-4 text-sm text-gray-500">
+                    <td className="px-6 py-4 text-sm text-subtle">
                       {new Date(user.createdAt).toLocaleDateString()}
                     </td>
                     <td className="px-6 py-4">
                       <button
                         onClick={() => handleDelete(user.id, user.email)}
-                        className="text-red-500 hover:text-red-700 text-sm"
+                        className="text-red-600 hover:text-red-700 dark:text-red-400 dark:hover:text-red-300 text-sm"
                       >
                         Delete
                       </button>
@@ -262,12 +350,12 @@ export default function AdminPage() {
       {/* Create user modal */}
       {showCreateModal && (
         <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
-          <div className="bg-white rounded-xl shadow-xl w-full max-w-md p-6">
-            <h2 className="text-lg font-semibold text-gray-900 mb-4">Add New User</h2>
+          <div className="card shadow-xl w-full max-w-md p-6">
+            <h2 className="text-lg font-semibold text-slate-900 dark:text-slate-50 mb-4">Add new user</h2>
 
             <form onSubmit={handleCreateUser} className="space-y-4">
               <div>
-                <label className="block text-sm font-medium text-gray-700 mb-1">Name</label>
+                <label className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-1">Name</label>
                 <input
                   type="text"
                   className="input"
@@ -277,7 +365,7 @@ export default function AdminPage() {
                 />
               </div>
               <div>
-                <label className="block text-sm font-medium text-gray-700 mb-1">Email *</label>
+                <label className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-1">Email *</label>
                 <input
                   type="email"
                   className="input"
@@ -288,7 +376,7 @@ export default function AdminPage() {
                 />
               </div>
               <div>
-                <label className="block text-sm font-medium text-gray-700 mb-1">Password *</label>
+                <label className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-1">Password *</label>
                 <input
                   type="password"
                   className="input"
@@ -300,7 +388,7 @@ export default function AdminPage() {
                 />
               </div>
               <div>
-                <label className="block text-sm font-medium text-gray-700 mb-1">Role</label>
+                <label className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-1">Role</label>
                 <select
                   className="input"
                   value={newRole}
@@ -326,6 +414,96 @@ export default function AdminPage() {
                   disabled={creating}
                 >
                   {creating ? "Creating..." : "Create User"}
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {/* AI token limits modal */}
+      {limitsUser && (
+        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
+          <div className="card shadow-xl w-full max-w-md p-6">
+            <h2 className="text-lg font-semibold text-slate-900 dark:text-slate-50 mb-1">
+              AI token limits
+            </h2>
+            <p className="text-sm text-slate-500 dark:text-slate-400 mb-4">
+              {limitsUser.email} — leave blank for unlimited
+            </p>
+
+            <div className="rounded-xl bg-slate-50 dark:bg-slate-800/60 border border-slate-100 dark:border-slate-700 p-4 mb-4 space-y-2 text-sm">
+              <div className="flex justify-between gap-4">
+                <span className="text-subtle">This hour</span>
+                <span className="tabular-nums font-medium text-muted">
+                  {formatTokenUsage(limitsUser.aiTokenUsage.hour, limitsUser.aiTokenLimitHour)}
+                </span>
+              </div>
+              <div className="flex justify-between gap-4">
+                <span className="text-subtle">Today</span>
+                <span className="tabular-nums font-medium text-muted">
+                  {formatTokenUsage(limitsUser.aiTokenUsage.day, limitsUser.aiTokenLimitDay)}
+                </span>
+              </div>
+              <div className="flex justify-between gap-4">
+                <span className="text-subtle">This month</span>
+                <span className="tabular-nums font-medium text-muted">
+                  {formatTokenUsage(limitsUser.aiTokenUsage.month, limitsUser.aiTokenLimitMonth)}
+                </span>
+              </div>
+            </div>
+
+            <form onSubmit={handleSaveLimits} className="space-y-4">
+              <div>
+                <label className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-1">
+                  Hourly limit
+                </label>
+                <input
+                  type="number"
+                  min={0}
+                  className="input"
+                  placeholder="Unlimited"
+                  value={limitHour}
+                  onChange={(e) => setLimitHour(e.target.value)}
+                />
+              </div>
+              <div>
+                <label className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-1">
+                  Daily limit
+                </label>
+                <input
+                  type="number"
+                  min={0}
+                  className="input"
+                  placeholder="Unlimited"
+                  value={limitDay}
+                  onChange={(e) => setLimitDay(e.target.value)}
+                />
+              </div>
+              <div>
+                <label className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-1">
+                  Monthly limit
+                </label>
+                <input
+                  type="number"
+                  min={0}
+                  className="input"
+                  placeholder="Unlimited"
+                  value={limitMonth}
+                  onChange={(e) => setLimitMonth(e.target.value)}
+                />
+              </div>
+
+              <div className="flex gap-3 pt-2">
+                <button
+                  type="button"
+                  onClick={closeLimitsModal}
+                  className="btn-secondary flex-1"
+                >
+                  Cancel
+                </button>
+                <button type="submit" className="btn-primary flex-1" disabled={savingLimits}>
+                  {savingLimits ? "Saving…" : "Save limits"}
                 </button>
               </div>
             </form>

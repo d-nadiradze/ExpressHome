@@ -151,6 +151,13 @@ export async function getCurrentUser() {
           lastLoginAt: true,
         },
       },
+      ssgeAccount: {
+        select: {
+          ssgeEmail: true,
+          isVerified: true,
+          lastLoginAt: true,
+        },
+      },
     },
   });
 }
