@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { db } from "@/lib/db";
+import { getBulkTokenUsageSummaries } from "@/lib/ai-token-usage";
 import bcrypt from "bcryptjs";
 
 // GET: list all users
@@ -25,6 +26,9 @@ export async function GET(request: NextRequest) {
         name: true,
         role: true,
         isActive: true,
+        aiTokenLimitHour: true,
+        aiTokenLimitDay: true,
+        aiTokenLimitMonth: true,
         createdAt: true,
         _count: { select: { parsedListings: true } },
         myhomeAccount: { select: { myhomeEmail: true, isVerified: true } },
@@ -33,7 +37,13 @@ export async function GET(request: NextRequest) {
     db.user.count(),
   ]);
 
-  return NextResponse.json({ users, total, page, limit });
+  const usageByUser = await getBulkTokenUsageSummaries(users.map((u) => u.id));
+  const usersWithUsage = users.map((user) => ({
+    ...user,
+    aiTokenUsage: usageByUser[user.id] ?? { hour: 0, day: 0, month: 0 },
+  }));
+
+  return NextResponse.json({ users: usersWithUsage, total, page, limit });
 }
 
 // POST: create a new user (admin only)

@@ -2,6 +2,7 @@ import { getCurrentUser } from "@/lib/auth";
 import { db } from "@/lib/db";
 import Link from "next/link";
 import DashboardListings from "./DashboardListings";
+import AiUsageCard from "@/components/AiUsageCard";
 
 export default async function DashboardPage() {
   const user = await getCurrentUser();
@@ -132,6 +133,8 @@ export default async function DashboardPage() {
           </div>
         </div>
       </div>
+
+      <AiUsageCard />
 
       <DashboardListings initialListings={JSON.parse(JSON.stringify(listings))} />
     </div>

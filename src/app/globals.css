@@ -22,7 +22,7 @@
   }
 
   .btn-ghost {
-    @apply inline-flex items-center justify-center gap-2 text-slate-600 hover:text-slate-900 font-medium px-3 py-2 rounded-xl hover:bg-slate-100 transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-slate-400 focus-visible:ring-offset-2 dark:text-slate-400 dark:hover:text-slate-100 dark:hover:bg-slate-800 dark:focus-visible:ring-offset-slate-950;
+    @apply inline-flex items-center justify-center gap-2 text-slate-600 hover:text-slate-900 font-medium px-3 py-2 rounded-xl hover:bg-slate-100 transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-slate-400 focus-visible:ring-offset-2 dark:text-slate-300 dark:hover:text-slate-100 dark:hover:bg-slate-800 dark:focus-visible:ring-offset-slate-950;
   }
 
   .btn-success {
@@ -78,11 +78,35 @@
   }
 
   .page-subtitle {
-    @apply text-slate-500 mt-1 text-sm sm:text-base dark:text-slate-400;
+    @apply text-slate-600 mt-1 text-sm sm:text-base dark:text-slate-300;
   }
 
   .section-title {
-    @apply text-sm font-semibold uppercase tracking-wider text-slate-400 dark:text-slate-500;
+    @apply text-sm font-semibold uppercase tracking-wider text-slate-500 dark:text-slate-400;
+  }
+
+  .text-muted {
+    @apply text-slate-600 dark:text-slate-300;
+  }
+
+  .text-subtle {
+    @apply text-slate-500 dark:text-slate-400;
+  }
+
+  .detail-row-label {
+    @apply text-sm text-slate-600 dark:text-slate-400;
+  }
+
+  .detail-row-value {
+    @apply text-sm font-medium text-slate-900 dark:text-slate-100 text-right;
+  }
+
+  .form-label {
+    @apply block text-sm font-medium text-slate-700 dark:text-slate-300 mb-1;
+  }
+
+  .card-heading {
+    @apply font-semibold text-slate-900 dark:text-slate-50;
   }
 
   .tag-pill {
@@ -90,7 +114,23 @@
   }
 
   .spec-tile {
-    @apply flex flex-col items-center justify-center rounded-xl bg-slate-50 border border-slate-100 px-3 py-4 text-center dark:bg-slate-800/60 dark:border-slate-700;
+    @apply flex flex-col items-center justify-center min-w-0 w-full overflow-hidden rounded-xl bg-slate-50 border border-slate-100 px-3 py-4 text-center dark:bg-slate-800/60 dark:border-slate-700;
+  }
+
+  .spec-tile-value {
+    @apply text-xl font-bold tabular-nums leading-tight text-slate-900 dark:text-slate-50;
+  }
+
+  .spec-tile-value-text {
+    @apply w-full text-xs sm:text-sm font-semibold leading-snug text-slate-900 line-clamp-2 break-words dark:text-slate-50;
+  }
+
+  .spec-tile-label {
+    @apply mt-1.5 shrink-0 text-xs text-subtle;
+  }
+
+  .btn-ai {
+    @apply inline-flex items-center justify-center gap-2 bg-violet-50 hover:bg-violet-100 text-violet-700 font-medium px-4 py-2.5 rounded-xl border border-violet-200/80 transition-all duration-200 hover:border-violet-300 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-violet-400 focus-visible:ring-offset-2 disabled:opacity-50 disabled:cursor-not-allowed dark:bg-violet-950/50 dark:hover:bg-violet-950/70 dark:text-violet-200 dark:border-violet-700/60 dark:hover:border-violet-600 dark:focus-visible:ring-offset-slate-950;
   }
 
   .detail-row {

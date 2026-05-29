@@ -30,6 +30,13 @@ import {
 } from "@/lib/ssge-mappings";
 import { resolveImagesForPlaywright } from "@/lib/listing-images";
 import { blockParseResources, getParseBrowser } from "@/lib/parse-browser";
+import {
+  closeBrowserSession,
+  isMyhomePrefillHeadless,
+  prefillSessionTtlMs,
+  registerBrowser,
+  shouldReusePrefillSession,
+} from "@/lib/browser-lifecycle";
 import { resolveListingDistrict } from "@/lib/parser-districts";
 
 const PARSE_GOTO_MS = parseInt(process.env.PARSE_GOTO_TIMEOUT_MS || "20000", 10);
@@ -74,6 +81,28 @@ let postSession: {
   browser: Browser;
   context: BrowserContext;
 } | null = null;
+
+let postSessionIdleTimer: ReturnType<typeof setTimeout> | null = null;
+
+export async function closeMyhomePostSession(): Promise<void> {
+  if (postSessionIdleTimer) {
+    clearTimeout(postSessionIdleTimer);
+    postSessionIdleTimer = null;
+  }
+  if (!postSession) return;
+  const { browser, context } = postSession;
+  postSession = null;
+  await closeBrowserSession(browser, context);
+}
+
+function scheduleMyhomePostSessionIdleClose(): void {
+  if (postSessionIdleTimer) clearTimeout(postSessionIdleTimer);
+  const ttl = prefillSessionTtlMs();
+  if (ttl <= 0) return;
+  postSessionIdleTimer = setTimeout(() => {
+    void closeMyhomePostSession();
+  }, ttl);
+}
 
 const PREFILL_PAUSE_MS = 20;
 const CHIP_CLICK_TIMEOUT_MS = 1200;
@@ -8157,14 +8186,38 @@ export async function parseListing(url: string): Promise<{
 
       // --- Description ("მოკლე აღწერა") ---
       let description = "";
-      document.querySelectorAll("div, section").forEach((el) => {
-        if (description) return;
-        const t = el.textContent?.trim() || "";
-        if (t.startsWith("მოკლე აღწერა") && t.length > 15) {
-          description = t.replace("მოკლე აღწერა", "").trim();
-          description = description.replace(/ნაკლების ნახვა\s*\^?$/i, "").replace(/მეტის ნახვა\s*$/i, "").trim();
+      const descHeading = Array.from(document.querySelectorAll("h2, h3, h4")).find(
+        (h) => (h.textContent?.trim() || "") === "მოკლე აღწერა"
+      );
+      const descSection =
+        descHeading?.closest("div.relative") ||
+        descHeading?.parentElement?.parentElement ||
+        descHeading?.parentElement;
+
+      if (descSection) {
+        const descEl = Array.from(descSection.querySelectorAll("div")).find((d) => {
+          const cls = d.className || "";
+          const text = (d.textContent?.trim() || "");
+          return cls.includes("break-words") && cls.includes("text-sm") && text.length > 20;
+        });
+
+        if (descEl) {
+          description = (descEl.textContent || "").replace(/\s+/g, " ").trim();
+        } else {
+          const clone = descSection.cloneNode(true) as Element;
+          clone.querySelectorAll("h2, h3, h4, button").forEach((el) => el.remove());
+          clone.querySelectorAll("div.overflow-x-auto").forEach((el) => el.remove());
+          description = (clone.textContent || "")
+            .replace("მოკლე აღწერა", "")
+            .replace(/\s+/g, " ")
+            .trim();
         }
-      });
+      }
+
+      description = description
+        .replace(/ნაკლების ნახვა\s*\^?$/i, "")
+        .replace(/მეტის ნახვა\s*$/i, "")
+        .trim();
 
       // --- ID ---
       document.querySelectorAll("span").forEach((sp) => {
@@ -8544,9 +8597,11 @@ export async function createMyhomePost(
   });
 
   const reuseSession =
-      postSession?.email === credentials.email && postSession.browser.isConnected();
+    shouldReusePrefillSession() &&
+    postSession?.email === credentials.email &&
+    postSession.browser.isConnected();
 
-  const headless = process.env.MYHOME_PREFILL_HEADLESS !== "false";
+  const headless = isMyhomePrefillHeadless();
 
   let browser: Browser;
   let context: BrowserContext;
@@ -8561,21 +8616,20 @@ export async function createMyhomePost(
     reporter.stepDone("browser", "Reusing active session");
   } else {
     reporter.step("browser");
-    if (postSession?.browser.isConnected()) {
-      await postSession.context.close().catch(() => null);
-      await postSession.browser.close().catch(() => null);
-    }
-    browser = await chromium.launch({
-      headless,
-      args: [
-        "--no-sandbox",
-        "--disable-setuid-sandbox",
-        "--disable-dev-shm-usage",
-        "--disable-gpu",
-        "--disable-crash-reporter",
-        ...(headless ? ["--window-size=1920,1080"] : ["--start-maximized"]),
-      ],
-    });
+    await closeMyhomePostSession();
+    browser = registerBrowser(
+      await chromium.launch({
+        headless,
+        args: [
+          "--no-sandbox",
+          "--disable-setuid-sandbox",
+          "--disable-dev-shm-usage",
+          "--disable-gpu",
+          "--disable-crash-reporter",
+          ...(headless ? ["--window-size=1920,1080"] : ["--start-maximized"]),
+        ],
+      })
+    );
     context = await browser.newContext({
       userAgent:
         "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
@@ -9051,20 +9105,24 @@ export async function createMyhomePost(
     if (headless) {
       const graceMs = parseInt(process.env.MYHOME_CHECKOUT_GRACE_MS || "500", 10);
       if (graceMs > 0) await page.waitForTimeout(graceMs).catch(() => null);
-      await browser.close();
     }
 
     return { success: true, postUrl };
   } catch (error) {
     const msg = error instanceof Error ? error.message : "Failed to create post";
     reporter.log("error", msg);
-    if (headless) {
-      await browser.close().catch(() => undefined);
-    }
     return {
       success: false,
       error: error instanceof Error ? error.message : "Failed to create post",
     };
+  } finally {
+    if (headless || !shouldReusePrefillSession()) {
+      await closeBrowserSession(browser, context);
+      if (postSession?.browser === browser) {
+        postSession = null;
+      }
+    } else {
+      scheduleMyhomePostSessionIdleClose();
+    }
   }
-  // Non-headless: browser stays open for user review (no finally close)
 }
