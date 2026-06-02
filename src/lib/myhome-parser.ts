@@ -38,6 +38,7 @@ import {
   shouldReusePrefillSession,
 } from "@/lib/browser-lifecycle";
 import { resolveListingDistrict } from "@/lib/parser-districts";
+import { streetCrossfillQueries } from "@/lib/street-crossfill";
 
 const PARSE_GOTO_MS = parseInt(process.env.PARSE_GOTO_TIMEOUT_MS || "20000", 10);
 
@@ -68,6 +69,12 @@ export interface MyhomeListing {
   description: string;
   images: string[];
   rawData: Record<string, string>;
+  /**
+   * Parsed from listing contact section (e.g. label „მესაკუთრე“ and „ტელ …“).
+   * Intentionally parser-only: do not wire into any prefill/create wizard fields.
+   */
+  ownerName?: string;
+  mobileNumber?: string;
 }
 
 export interface MyhomeCredentials {
@@ -887,8 +894,8 @@ function streetAutocompleteQueries(street: string): string[] {
   const s = street.replace(/\s+/g, " ").trim();
   if (!s) return [];
 
-  const prioritized: string[] = [];
-  const queries: string[] = [s];
+  const prioritized: string[] = [...streetCrossfillQueries(s, "myhome")];
+  const queries: string[] = [];
 
   const core = streetCoreForMatch(s);
   if (streetInitialLetter(s) && core) {
@@ -8219,6 +8226,81 @@ export async function parseListing(url: string): Promise<{
         .replace(/მეტის ნახვა\s*$/i, "")
         .trim();
 
+      // --- Owner name + mobile number (მესაკუთრე + ტელ/ნომერი) ---
+      let ownerName = "";
+      let mobileNumber = "";
+
+      const bodyLines = (document.body.innerText || "")
+        .split(/\n+/)
+        .map((l) => l.replace(/\s+/g, " ").trim())
+        .filter(Boolean);
+
+      // Example layout (myhome): "<name>" then line "მესაკუთრე" then "571 … ***ნომრის ნახვა".
+      const ownerLabelIdx = bodyLines.findIndex((l) =>
+        /\bმესაკუთრე\b/u.test(l) || l.includes("მესაკუთრე")
+      );
+      if (ownerLabelIdx > 0) ownerName = bodyLines[ownerLabelIdx - 1] || "";
+
+      // In "მოკლე აღწერა" the phone is usually present as: "ტელ 571 08 08 71 დავითი".
+      const telPairRe =
+        /ტელ\s*([0-9\s\-]{7,})\s*([A-Za-z\u10A0-\u10FF][A-Za-z\u10A0-\u10FF\s\-]{1,40})/gu;
+      const telPairs = Array.from(description.matchAll(telPairRe));
+
+      const normalizeName = (s: string) =>
+        (s || "").replace(/\s+/g, " ").trim();
+
+      if (telPairs.length) {
+        const ownerNorm = ownerName ? normalizeName(ownerName) : "";
+
+        const pick =
+          telPairs.find((m) => {
+            const digits = (m[1] || "").replace(/\D/g, "");
+            const nm = normalizeName(m[2] || "");
+            if (!digits || digits.length < 7 || !nm) return false;
+            if (!ownerNorm) return false;
+            const a = nm.split(/\s+/)[0] || nm;
+            const b = ownerNorm.split(/\s+/)[0] || ownerNorm;
+            return a === b || nm.includes(ownerNorm) || ownerNorm.includes(nm);
+          }) ?? telPairs[0];
+
+        const pickedDigits = (pick[1] || "").replace(/\D/g, "");
+        if (pickedDigits && pickedDigits.length >= 7 && pickedDigits.startsWith("5")) {
+          mobileNumber = pickedDigits;
+        }
+
+        if (!ownerName) ownerName = normalizeName(pick[2] || "");
+      }
+
+      // Fallback: pick any single Georgian mobile number from the page text.
+      if (!mobileNumber) {
+        for (const line of bodyLines) {
+          const digits = line.replace(/\D/g, "");
+          if (digits.length === 9 && digits.startsWith("5")) {
+            mobileNumber = digits;
+            break;
+          }
+        }
+      }
+
+      if (!ownerName && mobileNumber) {
+        // Try to read an adjacent name token from the same line.
+        const matchLine = bodyLines.find((l) => l.replace(/\D/g, "") === mobileNumber);
+        if (matchLine) {
+          const afterPhone = matchLine
+            .replace(mobileNumber, "")
+            .trim()
+            .replace(/^[^A-Za-z\u10A0-\u10FF]+/u, "");
+          const nameToken = afterPhone.match(
+            /[A-Za-z\u10A0-\u10FF][A-Za-z\u10A0-\u10FF\s\-]{1,30}/u
+          );
+          if (nameToken?.[0]) ownerName = nameToken[0].trim();
+        }
+      }
+
+      // Expose in rawData so existing “parser view” UIs show it without wiring.
+      if (ownerName) rawData["მესაკუთრე"] = ownerName;
+      if (mobileNumber) rawData["ნომერი"] = mobileNumber;
+
       // --- ID ---
       document.querySelectorAll("span").forEach((sp) => {
         const t = sp.textContent?.trim() || "";
@@ -8269,6 +8351,8 @@ export async function parseListing(url: string): Promise<{
         verandaArea,
         loggiaArea,
         description,
+        ownerName,
+        mobileNumber,
         images: images.slice(0, 16),
         rawData,
       };

@@ -15,6 +15,7 @@ import {
   resolveSsgeBalconyCountForPrefill,
 } from "@/lib/platform-amenity-mappings";
 import type { MyhomeListing } from "@/lib/myhome-parser";
+import { streetCrossfillQueries } from "@/lib/street-crossfill";
 import {
   closeBrowserSession,
   isSsgePrefillHeadless,
@@ -1577,10 +1578,11 @@ function ssgeStreetQueries(street: string): string[] {
     ordered.push(v);
   };
 
-  // 1. Exact parsed street first.
-  push(s);
+  for (const q of streetCrossfillQueries(s, "ssge")) {
+    push(q);
+  }
 
-  // 2. User-requested word fallbacks before any other reshaping.
+  // User-requested word fallbacks before any other reshaping.
   for (const q of ssgeStreetWordFallbackQueries(s)) {
     push(q);
   }

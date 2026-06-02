@@ -19,6 +19,23 @@ export default function ListingImageGallery({
   const fileInputRef = useRef<HTMLInputElement>(null);
   const [currentIndex, setCurrentIndex] = useState(0);
   const [uploading, setUploading] = useState(false);
+  const [draggedIndex, setDraggedIndex] = useState<number | null>(null);
+  const [dragOverIndex, setDragOverIndex] = useState<number | null>(null);
+
+  async function persistImages(nextImages: string[], errorMessage: string) {
+    try {
+      const res = await fetch("/api/myhome/parse", {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ id: listingId, images: nextImages }),
+      });
+      if (!res.ok) {
+        toast.error(errorMessage);
+      }
+    } catch {
+      toast.error(errorMessage);
+    }
+  }
 
   async function handleUpload(files: FileList | null) {
     if (!files || files.length === 0) return;
@@ -65,11 +82,39 @@ export default function ListingImageGallery({
     if (currentIndex >= newImages.length) {
       setCurrentIndex(Math.max(0, newImages.length - 1));
     }
-    fetch("/api/myhome/parse", {
-      method: "PUT",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ id: listingId, images: newImages }),
-    }).catch(() => toast.error("Failed to save image removal"));
+    void persistImages(newImages, "Failed to save image removal");
+  }
+
+  function reorderImages(from: number, to: number): string[] {
+    if (from === to || from < 0 || to < 0 || from >= images.length || to >= images.length) {
+      return images;
+    }
+    const next = [...images];
+    const [moved] = next.splice(from, 1);
+    next.splice(to, 0, moved);
+    return next;
+  }
+
+  function handleDropAt(targetIndex: number) {
+    if (draggedIndex == null) return;
+    const next = reorderImages(draggedIndex, targetIndex);
+    if (next === images) {
+      setDraggedIndex(null);
+      setDragOverIndex(null);
+      return;
+    }
+
+    onImagesChange(next);
+    setCurrentIndex((prev) => {
+      if (prev === draggedIndex) return targetIndex;
+      if (draggedIndex < prev && targetIndex >= prev) return prev - 1;
+      if (draggedIndex > prev && targetIndex <= prev) return prev + 1;
+      return prev;
+    });
+
+    setDraggedIndex(null);
+    setDragOverIndex(null);
+    void persistImages(next, "Failed to save photo order");
   }
 
   const canAddMore = images.length < MAX_IMAGES;
@@ -140,7 +185,29 @@ export default function ListingImageGallery({
       {images.length > 0 && (
         <div className="flex gap-2 px-3 pb-3 overflow-x-auto">
           {images.map((img, i) => (
-            <div key={`${img}-${i}`} className="relative shrink-0 group">
+            <div
+              key={`${img}-${i}`}
+              className={`relative shrink-0 group ${
+                dragOverIndex === i ? "ring-2 ring-blue-400 rounded-md" : ""
+              }`}
+              draggable
+              onDragStart={() => {
+                setDraggedIndex(i);
+                setDragOverIndex(i);
+              }}
+              onDragOver={(e) => {
+                e.preventDefault();
+                if (dragOverIndex !== i) setDragOverIndex(i);
+              }}
+              onDrop={(e) => {
+                e.preventDefault();
+                handleDropAt(i);
+              }}
+              onDragEnd={() => {
+                setDraggedIndex(null);
+                setDragOverIndex(null);
+              }}
+            >
               <button
                 type="button"
                 onClick={() => setCurrentIndex(i)}
@@ -160,6 +227,11 @@ export default function ListingImageGallery({
               </button>
             </div>
           ))}
+        </div>
+      )}
+      {images.length > 1 && (
+        <div className="px-3 pb-3">
+          <p className="text-xs text-gray-400">Tip: drag thumbnails left/right to reorder photos.</p>
         </div>
       )}
     </div>

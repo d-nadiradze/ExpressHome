@@ -436,6 +436,49 @@ export async function parseSsgeListing(url: string): Promise<{
       }
       if (yardArea) rawData["ეზოს ფართი"] = yardArea;
 
+      // --- Owner name + mobile number (ss.ge contact block) ---
+      // Example (web page text, may vary): "555 11 50 29 Achiko"
+      let ownerName = "";
+      let mobileNumber = "";
+      const bodyLines = (document.body.innerText || "")
+        .split(/\n+/)
+        .map((l) => l.replace(/\s+/g, " ").trim())
+        .filter(Boolean);
+
+      for (let i = 0; i < bodyLines.length; i++) {
+        const line = bodyLines[i];
+        const digits = line.replace(/\D/g, "");
+        // Typical ss.ge mobile: 9 digits starting with 5.
+        if (digits.length !== 9 || !digits.startsWith("5")) continue;
+        mobileNumber = digits;
+
+        const afterPhone = line.replace(digits, "").trim();
+        const nameToken =
+          afterPhone.match(/[A-Za-z\u10A0-\u10FF][A-Za-z\u10A0-\u10FF\-]{1,30}/u)?.[0] ||
+          "";
+
+        if (nameToken) ownerName = nameToken;
+        if (!ownerName && bodyLines[i + 1]) {
+          const next = bodyLines[i + 1];
+          const nextToken =
+            next.match(/[A-Za-z\u10A0-\u10FF][A-Za-z\u10A0-\u10FF\-]{1,30}/u)?.[0] ||
+            "";
+          if (nextToken) ownerName = nextToken;
+        }
+        break;
+      }
+
+      // Fallback: pick first Georgian mobile-like number anywhere in text.
+      if (!mobileNumber) {
+        const fullText = (document.body.innerText || "").replace(/\s+/g, " ");
+        const m = fullText.match(/(?:\+995\s*)?(5[\d\s\-]{8,})/u);
+        if (m) mobileNumber = m[1].replace(/\D/g, "");
+      }
+
+      // Expose in rawData so existing “parser view” UIs show it without wiring.
+      if (ownerName) rawData["მესაკუთრე"] = ownerName;
+      if (mobileNumber) rawData["ნომერი"] = mobileNumber;
+
       return {
         title,
         address,
@@ -460,6 +503,8 @@ export async function parseSsgeListing(url: string): Promise<{
         cadastralCode: norm(String(app?.cadastralCode || "")),
         propertyType: norm(String(app?.realEstateType || "")),
         dealType: norm(String(app?.realEstateDealType || "")),
+        ownerName,
+        mobileNumber,
       };
     });
 
@@ -510,6 +555,8 @@ export async function parseSsgeListing(url: string): Promise<{
       description: data.description,
       images: data.images,
       rawData: data.rawData,
+      ownerName: data.ownerName || "",
+      mobileNumber: data.mobileNumber || "",
     };
 
     const yardLog = listing.rawData?.["ეზოს ფართი"]
