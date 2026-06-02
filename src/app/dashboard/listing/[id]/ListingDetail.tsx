@@ -974,6 +974,8 @@ export default function ListingDetail({ listing: initial }: { listing: Listing }
               {renderField("City", listing.city)}
               {renderField("Street", listing.street)}
               {renderField("Street Number", listing.streetNumber)}
+              {renderField("Owner (მესაკუთრე)", listing.rawData?.["მესაკუთრე"] || null)}
+              {renderField("Mobile (ნომერი)", listing.rawData?.["ნომერი"] || null)}
               {renderField("Cadastral Code", listing.cadastralCode)}
               {renderField(
                 "Price per m²",

@@ -24,6 +24,7 @@ import {
   applySsgeBalconyDefaultsForSsgePrefill,
   isTruthyAmenityValue,
 } from "@/lib/platform-amenity-mappings";
+import { applyStreetCrossfill } from "@/lib/street-crossfill";
 
 const SSGE_HOST = /(?:^|\/\/)(?:[^/]+\.)?ss\.ge\b/i;
 const MYHOME_HOST = /(?:^|\/\/)(?:[^/]+\.)?myhome\.ge\b/i;
@@ -244,6 +245,15 @@ export function normalizeListingForMyhomePrefill(
   const balconyArea =
     rawData["აივნის ფართი"]?.trim() || listing.balconyArea?.trim() || "";
 
+  const streetCrossfill = applyStreetCrossfill(
+    {
+      street: listing.street,
+      address: listing.address,
+      rawData,
+    },
+    "myhome"
+  );
+
   return {
     ...listing,
     propertyType,
@@ -254,11 +264,12 @@ export function normalizeListingForMyhomePrefill(
     condition,
     projectType,
     city,
+    street: streetCrossfill.street,
     area,
     pricePerSqm,
     balconyArea,
     currency: listing.currency?.trim() || "USD",
-    rawData,
+    rawData: streetCrossfill.rawData,
   };
 }
 
@@ -389,9 +400,18 @@ export function normalizeListingForSsgePrefill(
     rawData["სველი წერტილი"]
   );
 
-  let street = listing.street?.trim() || rawData["ქუჩა"]?.trim() || "";
   let streetNumber =
     listing.streetNumber?.trim() || rawData["ქუჩის ნომერი"]?.trim() || "";
+
+  const streetCrossfill = applyStreetCrossfill(
+    {
+      street: listing.street,
+      address: listing.address,
+      rawData,
+    },
+    "ssge"
+  );
+  const street = streetCrossfill.street;
 
   if (rawData["ეზო"] === "კი" && rawData["ეზოს ფართი"]) {
     /* yard toggle uses ეზო key */
@@ -419,7 +439,7 @@ export function normalizeListingForSsgePrefill(
     bedrooms,
     bathrooms,
     currency: listing.currency?.trim() || "USD",
-    rawData,
+    rawData: streetCrossfill.rawData,
   };
 }
 
