@@ -28,7 +28,7 @@ docker compose up -d nginx app
 docker compose restart nginx
 
 echo "==> Requesting certificate for $DOMAIN..."
-docker compose run --rm certbot certonly \
+docker compose run --rm --entrypoint certbot certbot certonly \
   --webroot -w /var/www/certbot \
   -d "$DOMAIN" \
   --email "$EMAIL" \
@@ -36,7 +36,14 @@ docker compose run --rm certbot certonly \
   --no-eff-email \
   --non-interactive
 
-echo "==> Enabling HTTPS nginx config..."
+CERT_PATH="$ROOT/certbot/conf/live/$DOMAIN/fullchain.pem"
+if [[ ! -f "$CERT_PATH" ]]; then
+  echo "ERROR: Certificate not found at $CERT_PATH"
+  echo "Certbot did not issue a certificate. Check the output above."
+  exit 1
+fi
+
+echo "==> Certificate obtained."
 cp "$SSL_CONF" "$ACTIVE_CONF"
 docker compose restart nginx
 
