@@ -48,7 +48,28 @@ test("parse myhome zghvisubani IX", () => {
     kind: "micro-quarter",
     micro: "I",
     quarter: "IX",
+    temkaZghvisubani: true,
   });
+});
+
+test("parse myhome zghvisubani X კვარტ.", () => {
+  const c = parseMyhomeMicroStreet("თემქა - ზღვისუბანი X კვარტ.");
+  assert.deepEqual(c, {
+    district: "თემქა",
+    kind: "micro-quarter",
+    micro: "I",
+    quarter: "X",
+    temkaZghvisubani: true,
+  });
+  assert.equal(
+    formatMyhomeMicroStreet(c!),
+    "თემქა - ზღვისუბანი X კვარტ."
+  );
+});
+
+test("myhome zghvisubani not rewritten on myhome crossfill", () => {
+  const src = "თემქა - ზღვისუბანი X კვარტ.";
+  assert.equal(crossfillStreetForTarget(src, "myhome"), null);
 });
 
 test("parse ss.ge micro + quarter", () => {
@@ -70,6 +91,13 @@ test("myhome → ss.ge crossfill temka", () => {
   assert.equal(
     crossfillStreetForTarget("თემქა - XI მ/რ II კვარტ", "ssge"),
     "XI მიკრორაიონი, II კვარტალი - თემქა"
+  );
+});
+
+test("ss.ge temka zghvisubani → myhome", () => {
+  assert.equal(
+    crossfillStreetForTarget("I მიკრორაიონი, X კვარტალი - თემქა", "myhome"),
+    "თემქა - ზღვისუბანი X კვარტ."
   );
 });
 

@@ -88,6 +88,18 @@ function currencySymbol(currency: string | null) {
   return currency === "GEL" ? "₾" : "$";
 }
 
+function resolveProjectType(listing: {
+  projectType: string | null;
+  rawData: Record<string, string> | null;
+}): string | null {
+  const value =
+    listing.projectType?.trim() ||
+    listing.rawData?.["პროექტის ტიპი"]?.trim() ||
+    listing.rawData?.["პროექტი"]?.trim() ||
+    "";
+  return value || null;
+}
+
 const propertyTypes = ["ბინა", "კერძო სახლი", "აგარაკი", "მიწის ნაკვეთი", "კომერციული ფართი", "სასტუმრო"];
 const dealTypes = ["იყიდება", "ქირავდება", "გირავდება", "ქირავდება დღიურად"];
 const buildingStatuses = ["ძველი აშენებული", "ახალი აშენებული", "მშენებარე"];
@@ -616,6 +628,7 @@ export default function ListingDetail({ listing: initial }: { listing: Listing }
 
   const images = listing.images || [];
   const ed = editData || ({} as EditableFields);
+  const projectTypeDisplay = resolveProjectType(listing);
 
   const renderField = (label: string, value: string | null) => {
     if (!value) return null;
@@ -945,7 +958,7 @@ export default function ListingDetail({ listing: initial }: { listing: Listing }
             </div>
 
             {/* Specs */}
-            {(listing.area || listing.rooms || listing.bedrooms || listing.floor || listing.bathrooms || listing.projectType) && (
+            {(listing.area || listing.rooms || listing.bedrooms || listing.floor || listing.bathrooms || projectTypeDisplay) && (
               <div className="card">
                 <h3 className="section-title mb-4">Quick specs</h3>
                 <div className="grid grid-cols-2 sm:grid-cols-3 xl:grid-cols-6 gap-3">
@@ -959,7 +972,7 @@ export default function ListingDetail({ listing: initial }: { listing: Listing }
                       { numeric: true }
                     )}
                   {listing.bathrooms && renderSpecTile("Bathrooms", listing.bathrooms, { numeric: true })}
-                  {listing.projectType && renderSpecTile("Project", listing.projectType)}
+                  {projectTypeDisplay && renderSpecTile("Project", projectTypeDisplay)}
                 </div>
               </div>
             )}
@@ -971,6 +984,7 @@ export default function ListingDetail({ listing: initial }: { listing: Listing }
               {renderField("Deal Type", listing.dealType)}
               {renderField("Building Status", listing.buildingStatus)}
               {renderField("Condition", listing.condition)}
+              {renderField("Project Type", projectTypeDisplay)}
               {renderField("City", listing.city)}
               {renderField("Street", listing.street)}
               {renderField("Street Number", listing.streetNumber)}

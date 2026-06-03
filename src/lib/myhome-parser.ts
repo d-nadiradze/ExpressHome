@@ -19,6 +19,7 @@ import {
   isMyhomeSourceUrl,
   normalizeListingForMyhomePrefill,
 } from "@/lib/cross-platform-prefill";
+import { sanitizeBuildingStatusValue } from "@/lib/building-status-sanitize";
 import {
   noopPrefillReporter,
   type PrefillReporter,
@@ -177,7 +178,7 @@ const LUK_OPTION_ROW_SELECTOR = `${LUK_OPTIONS_LIST_SELECTOR} > li`;
 const PROJECT_TYPE_ALIASES: Record<string, string[]> = {
   "არასტანდარტული": ["არასტანდარტული"],
   "თუხარელის": ["თუხარელის", "თუხარელი"],
-  "იტალიური ეზო": ["იტალიური ეზო"],
+  "იტალიური ეზო": ["იტალიური ეზო", "თბილისური ეზო"],
   "ლენინგრადის": ["ლენინგრადის", "ლენინგრადი"],
   "ყავლაშვილის": ["ყავლაშვილის", "ყავლაშვილი"],
   "ჩეხური": ["ჩეხური"],
@@ -3704,7 +3705,7 @@ const CHIP_STYLE_ROW_LABELS = [
 ] as const;
 
 function getBuildingStatusValue(listing: MyhomeListing): string {
-  return dedupeRepeatedLabelValue(
+  return sanitizeBuildingStatusValue(
     listing.buildingStatus || listing.rawData?.["სტატუსი"] || ""
   );
 }
@@ -4056,6 +4057,14 @@ function getProjectTypeValue(
 /** Listing-page project chips (ss.ge labels shown under English „Project“ row). */
 const MYHOME_LISTING_PROJECT_CHIPS = Object.keys(PROJECT_TYPE_TO_SSGE);
 
+/** ss.ge chips + myhome dropdown labels (e.g. ხრუშოვის vs ss.ge ხრუშჩოვის). */
+const MYHOME_LISTING_PROJECT_MATCH_LABELS = [
+  ...new Set([
+    ...Object.keys(PROJECT_TYPE_ALIASES),
+    ...MYHOME_LISTING_PROJECT_CHIPS,
+  ]),
+];
+
 /** Listing UI often duplicates chip text: „თუხარელისთუხარელის“ → „თუხარელის“. */
 function dedupeRepeatedLabelValue(value: string): string {
   const v = value.replace(/\s+/g, " ").trim();
@@ -4070,7 +4079,11 @@ function dedupeRepeatedLabelValue(value: string): string {
 function matchKnownProjectChip(text: string): string {
   const t = dedupeRepeatedLabelValue((text || "").replace(/\s+/g, " ").trim());
   if (!t) return "";
-  for (const chip of MYHOME_LISTING_PROJECT_CHIPS) {
+
+  const fromDropdown = resolveProjectTypeDropdownLabel(t);
+  if (fromDropdown) return fromDropdown;
+
+  for (const chip of MYHOME_LISTING_PROJECT_MATCH_LABELS) {
     if (t === chip || t.includes(chip)) return chip;
   }
   return "";
@@ -4087,8 +4100,11 @@ function sanitizeParsedProjectType(raw: string): string {
   const v = dedupeRepeatedLabelValue((raw || "").replace(/\s+/g, " ").trim());
   if (!v) return "";
 
+  const fromDropdown = resolveProjectTypeDropdownLabel(v);
+  if (fromDropdown) return fromDropdown;
+
   const hasProjectWord = /\bProject\b/i.test(v);
-  for (const chip of MYHOME_LISTING_PROJECT_CHIPS) {
+  for (const chip of MYHOME_LISTING_PROJECT_MATCH_LABELS) {
     if (!v.includes(chip)) continue;
     return hasProjectWord ? `Project ${chip}` : chip;
   }
@@ -5883,6 +5899,127 @@ async function applyAdditionalParametersPrefill(
   await closeOpenDropdowns(page);
 }
 
+/** Wait after seller-phone reveal so tel: link / full number is in the DOM. */
+const PHONE_REVEAL_WAIT_MS = 500;
+
+const MASKED_SELLER_PHONE_RE = /\d{3}\s*\d{3}\s*\*{2,}/;
+
+async function waitForSellerMobileInDom(page: Page): Promise<void> {
+  await page
+    .waitForFunction(
+      () => {
+        for (const a of document.querySelectorAll('a[href*="tel:"]')) {
+          const href = a.getAttribute("href") || "";
+          const digits = href.replace(/\D/g, "");
+          const nine = digits.slice(-9);
+          if (nine.length === 9 && nine.startsWith("5")) return true;
+        }
+        const plain = (document.body.innerText || "").replace(/\*/g, "");
+        return /(?:\+995\s*)?5\d{2}[\s\-]?\d{2}[\s\-]?\d{2}[\s\-]?\d{2}/.test(
+          plain
+        );
+      },
+      { timeout: 3000 }
+    )
+    .catch(() => {});
+  await page.waitForTimeout(PHONE_REVEAL_WAIT_MS);
+}
+
+/** myhome masks the seller phone until this CTA is clicked — required for parse. */
+async function revealListingContactPhone(page: Page): Promise<void> {
+  await page
+    .evaluate(() => {
+      for (const el of document.querySelectorAll("span, p, label, h2, h3, div")) {
+        const t = (el.textContent || "").replace(/\s+/g, " ").trim();
+        if (t === "მესაკუთრე" || (/\bმესაკუთრე\b/u.test(t) && t.length <= 24)) {
+          el.scrollIntoView({ block: "center", behavior: "instant" });
+          return;
+        }
+      }
+    })
+    .catch(() => {});
+
+  await page.waitForTimeout(150);
+
+  let clicked = false;
+
+  // Prefer the button that already shows partial seller mobile (593 159 ***).
+  const maskedBtn = page.locator("button").filter({ hasText: MASKED_SELLER_PHONE_RE });
+  if (await maskedBtn.first().isVisible({ timeout: 800 }).catch(() => false)) {
+    await maskedBtn.first().scrollIntoViewIfNeeded().catch(() => {});
+    await maskedBtn.first().click({ timeout: 3000 }).catch(() => {});
+    clicked = true;
+  }
+
+  if (!clicked) {
+    clicked = await page
+      .evaluate(() => {
+        const revealRe = /ნომრის\s*ნახვა|ნომერის\s*ნახვა/i;
+        let ownerAnchor: Element | null = null;
+        for (const el of document.querySelectorAll("span, p, label")) {
+          const t = (el.textContent || "").replace(/\s+/g, " ").trim();
+          if (t === "მესაკუთრე" || (/\bმესაკუთრე\b/u.test(t) && t.length <= 24)) {
+            ownerAnchor = el;
+            break;
+          }
+        }
+
+        const isNearOwner = (el: Element): boolean => {
+          if (!ownerAnchor) return true;
+          let node: Element | null = ownerAnchor;
+          for (let d = 0; d < 10 && node; d++) {
+            if (node.contains(el)) return true;
+            node = node.parentElement;
+          }
+          node = el;
+          for (let d = 0; d < 10 && node; d++) {
+            if (node.contains(ownerAnchor)) return true;
+            node = node.parentElement;
+          }
+          return false;
+        };
+
+        const score = (text: string) => {
+          if (/5\d{2}[\s\-]?\d{2,3}\s*\*{2,}/.test(text)) return 0;
+          if (/\d{3}\s*\d{3}\s*\*{2,}/.test(text)) return 1;
+          if (/\*{2,}/.test(text)) return 2;
+          return 3;
+        };
+
+        const candidates: { el: HTMLElement; text: string }[] = [];
+        for (const el of document.querySelectorAll("button, a")) {
+          const t = (el.textContent || "").replace(/\s+/g, " ").trim();
+          if (!revealRe.test(t) || t.length > 56) continue;
+          if (!isNearOwner(el)) continue;
+          candidates.push({ el: el as HTMLElement, text: t });
+        }
+        candidates.sort(
+          (a, b) => score(a.text) - score(b.text) || a.text.length - b.text.length
+        );
+        const target = candidates[0]?.el;
+        if (!target) return false;
+        target.click();
+        return true;
+      })
+      .catch(() => false);
+  }
+
+  if (!clicked) {
+    const maskedFallback = page
+      .locator("button, a")
+      .filter({ hasText: MASKED_SELLER_PHONE_RE })
+      .first();
+    if (await maskedFallback.isVisible({ timeout: 600 }).catch(() => false)) {
+      await maskedFallback.click({ timeout: 2500 }).catch(() => {});
+      clicked = true;
+    }
+  }
+
+  if (clicked) {
+    await waitForSellerMobileInDom(page);
+  }
+}
+
 /** Close cookie/modals that block clicks on the listing page. */
 async function dismissBlockingOverlays(page: Page): Promise<void> {
   for (let i = 0; i < 2; i++) {
@@ -6391,6 +6528,8 @@ export async function parseListing(url: string): Promise<{
       .scrollIntoViewIfNeeded()
       .catch(() => {});
 
+    await revealListingContactPhone(page);
+
     const pinStreetRaw = await extractPinStreetRaw(page);
 
     const parseParams = {
@@ -6398,7 +6537,7 @@ export async function parseListing(url: string): Promise<{
       furnitureLabels: [...FURNITURE_LABELS],
       preferenceLabels: [...PREFERENCE_PARAM_LABELS],
       labelCanonical: LABEL_CANONICAL,
-      projectTypeChips: MYHOME_LISTING_PROJECT_CHIPS,
+      projectTypeChips: MYHOME_LISTING_PROJECT_MATCH_LABELS,
       flexChipFields: Object.fromEntries(
         Object.entries(FLEX_CHIP_ROW_CONFIGS).map(([label, config]) => [
           label,
@@ -6454,9 +6593,19 @@ export async function parseListing(url: string): Promise<{
         return v;
       };
 
+      const stripProjectTypeLabelPrefix = (text: string): string =>
+        text
+          .replace(/^პროექტის\s*ტიპი\s*/iu, "")
+          .replace(/^Project\s+/i, "")
+          .trim();
+
       const extractProjectTypeChip = (text: string): string => {
-        const t = text.replace(/\s+/g, " ").trim();
+        let t = dedupeRepeated(text.replace(/\s+/g, " ").trim());
         if (!t || isProjectStatusNoise(t)) return "";
+        t = stripProjectTypeLabelPrefix(t);
+        if (!t) return "";
+        t = dedupeRepeated(t);
+        if (isProjectStatusNoise(t)) return "";
         for (const chip of projectTypeChips) {
           if (t === chip || t.includes(chip)) return chip;
         }
@@ -6486,11 +6635,13 @@ export async function parseListing(url: string): Promise<{
       const pickBestValue = (canon: string, candidates: string[]): string => {
         const usable = candidates.filter((v) => v && v.length <= 150 && v !== "არა");
         if (canon === "სვ.წერტილი" || canon === "საძინებელი") {
-          return (
-            usable.find((v) => /^\d+\+?$/.test(v.replace(/\s+/g, ""))) ||
-            usable[0] ||
-            ""
-          );
+          const numericOnly = usable.filter((v) => {
+            const digits = v.replace(/[^\d]/g, "");
+            if (!digits) return false;
+            if (/სტატუსი|აშენებული|მშენებარე/i.test(v)) return false;
+            return /^\d+\+?$/.test(v.replace(/\s+/g, ""));
+          });
+          return numericOnly[0] || "";
         }
         if (canon === "აივანი") {
           const combined = usable.find((v) => /^\d+\s*\/\s*\d/.test(v));
@@ -8235,19 +8386,133 @@ export async function parseListing(url: string): Promise<{
         .map((l) => l.replace(/\s+/g, " ").trim())
         .filter(Boolean);
 
-      // Example layout (myhome): "<name>" then line "მესაკუთრე" then "571 … ***ნომრის ნახვა".
-      const ownerLabelIdx = bodyLines.findIndex((l) =>
-        /\bმესაკუთრე\b/u.test(l) || l.includes("მესაკუთრე")
-      );
-      if (ownerLabelIdx > 0) ownerName = bodyLines[ownerLabelIdx - 1] || "";
-
-      // In "მოკლე აღწერა" the phone is usually present as: "ტელ 571 08 08 71 დავითი".
-      const telPairRe =
-        /ტელ\s*([0-9\s\-]{7,})\s*([A-Za-z\u10A0-\u10FF][A-Za-z\u10A0-\u10FF\s\-]{1,40})/gu;
-      const telPairs = Array.from(description.matchAll(telPairRe));
-
       const normalizeName = (s: string) =>
         (s || "").replace(/\s+/g, " ").trim();
+
+      const isOwnerRoleLabel = (line: string) =>
+        /^(მესაკუთრე|აგენტი|ბროკერი|გამყიდველი|საკონტაქტო)(?:\s|$)/iu.test(line) ||
+        /\bმესაკუთრე\b/u.test(line);
+
+      const isNoiseNameLine = (line: string) => {
+        const s = line.trim();
+        if (!s || s.length > 60) return true;
+        if (/ნომრის\s*ნახვა|ნომერის\s*ნახვა/i.test(s)) return true;
+        if (/₾|\$|USD|მ²|იყიდება|ქირავდება|გირავდება/i.test(s)) return true;
+        if (/^\d[\d\s*\-]{5,}/.test(s)) return true;
+        return false;
+      };
+
+      const extractGeorgianMobile = (text: string): string => {
+        const s = (text || "").replace(/\s+/g, " ").trim();
+        if (!s) return "";
+
+        const m = s.match(/(?:\+995\s*)?(5[\d\s\-]{7,14})/u);
+        if (m) {
+          const digits = m[1].replace(/\D/g, "");
+          if (digits.length === 9 && digits.startsWith("5")) return digits;
+        }
+
+        if (!/\*{2,}/.test(s)) {
+          const digits = s.replace(/\D/g, "");
+          if (digits.length === 9 && digits.startsWith("5")) return digits;
+        }
+
+        return "";
+      };
+
+      const extractMobileFromTelLinks = (): string => {
+        for (const a of document.querySelectorAll('a[href*="tel:"]')) {
+          const href = a.getAttribute("href") || "";
+          let digits = href.replace(/^tel:/i, "").replace(/\D/g, "");
+          if (digits.startsWith("995") && digits.length >= 12) {
+            digits = digits.slice(-9);
+          }
+          if (digits.length === 9 && digits.startsWith("5")) return digits;
+        }
+        return "";
+      };
+
+      const findContactSectionRoot = (): Element | null => {
+        for (const el of document.querySelectorAll("span, p, label")) {
+          const t = (el.textContent || "").replace(/\s+/g, " ").trim();
+          if (t === "მესაკუთრე" || (/\bმესაკუთრე\b/u.test(t) && t.length <= 24)) {
+            return (
+              el.closest("[class*='rounded']") ||
+              el.closest("[class*='border']") ||
+              el.parentElement?.parentElement?.parentElement ||
+              el.parentElement?.parentElement ||
+              el.parentElement
+            );
+          }
+        }
+        return null;
+      };
+
+      const extractNameNearPhone = (line: string, phone: string): string => {
+        const afterPhone = line
+          .replace(phone, "")
+          .replace(/\+995/g, "")
+          .trim()
+          .replace(/^[^A-Za-z\u10A0-\u10FF]+/u, "");
+        const nameToken = afterPhone.match(
+          /[A-Za-z\u10A0-\u10FF][A-Za-z\u10A0-\u10FF\s\-]{1,40}/u
+        );
+        return nameToken?.[0]?.trim() || "";
+      };
+
+      const ownerLabelIdx = bodyLines.findIndex((l) => isOwnerRoleLabel(l));
+      const isDailyRental = dealType === "ქირავდება დღიურად";
+      const phoneLinesAfterOwner = isDailyRental ? 6 : 2;
+
+      mobileNumber = extractMobileFromTelLinks();
+      if (!mobileNumber) {
+        const contactRoot = findContactSectionRoot();
+        if (contactRoot) {
+          mobileNumber = extractGeorgianMobile(
+            (contactRoot.textContent || "").replace(/\*+/g, " ")
+          );
+        }
+      }
+
+      if (ownerLabelIdx > 0) {
+        const candidate = bodyLines[ownerLabelIdx - 1] || "";
+        if (!isNoiseNameLine(candidate)) ownerName = normalizeName(candidate);
+      }
+
+      if (ownerLabelIdx >= 0) {
+        for (
+          let j = ownerLabelIdx + 1;
+          j <= ownerLabelIdx + phoneLinesAfterOwner && j < bodyLines.length;
+          j++
+        ) {
+          if (mobileNumber) break;
+          const mob = extractGeorgianMobile(bodyLines[j]);
+          if (mob) {
+            mobileNumber = mob;
+            if (!ownerName) {
+              const nm = extractNameNearPhone(bodyLines[j], mob);
+              if (nm) ownerName = normalizeName(nm);
+            }
+            break;
+          }
+        }
+      }
+
+      const contactText = `${description}\n${bodyLines.join("\n")}`;
+      const telPairRe =
+        /ტელ\.?\s*([0-9\s\-]{7,})\s*([A-Za-z\u10A0-\u10FF][A-Za-z\u10A0-\u10FF\s\-]{1,40})/giu;
+      const telPhoneRe = /ტელ\.?\s*((?:\+995\s*)?5[\d\s\-]{7,14})/giu;
+      const telPairs = Array.from(contactText.matchAll(telPairRe));
+
+      if (!mobileNumber) {
+        for (const m of contactText.matchAll(telPhoneRe)) {
+          const mob = extractGeorgianMobile(m[1] || "");
+          if (mob) {
+            mobileNumber = mob;
+            break;
+          }
+        }
+      }
 
       if (telPairs.length) {
         const ownerNorm = ownerName ? normalizeName(ownerName) : "";
@@ -8257,43 +8522,53 @@ export async function parseListing(url: string): Promise<{
             const digits = (m[1] || "").replace(/\D/g, "");
             const nm = normalizeName(m[2] || "");
             if (!digits || digits.length < 7 || !nm) return false;
-            if (!ownerNorm) return false;
+            if (!ownerNorm) return true;
             const a = nm.split(/\s+/)[0] || nm;
             const b = ownerNorm.split(/\s+/)[0] || ownerNorm;
             return a === b || nm.includes(ownerNorm) || ownerNorm.includes(nm);
           }) ?? telPairs[0];
 
         const pickedDigits = (pick[1] || "").replace(/\D/g, "");
-        if (pickedDigits && pickedDigits.length >= 7 && pickedDigits.startsWith("5")) {
+        if (pickedDigits.length === 9 && pickedDigits.startsWith("5")) {
           mobileNumber = pickedDigits;
         }
 
         if (!ownerName) ownerName = normalizeName(pick[2] || "");
       }
 
-      // Fallback: pick any single Georgian mobile number from the page text.
       if (!mobileNumber) {
-        for (const line of bodyLines) {
-          const digits = line.replace(/\D/g, "");
-          if (digits.length === 9 && digits.startsWith("5")) {
-            mobileNumber = digits;
+        const scanStart =
+          isDailyRental && ownerLabelIdx >= 0 ? ownerLabelIdx + 1 : 0;
+        const scanEnd =
+          isDailyRental && ownerLabelIdx >= 0
+            ? Math.min(bodyLines.length, ownerLabelIdx + phoneLinesAfterOwner + 2)
+            : bodyLines.length;
+        for (let i = scanStart; i < scanEnd; i++) {
+          const mob = extractGeorgianMobile(bodyLines[i]);
+          if (mob) {
+            mobileNumber = mob;
             break;
+          }
+        }
+        if (!mobileNumber) {
+          for (const line of bodyLines) {
+            const mob = extractGeorgianMobile(line);
+            if (mob) {
+              mobileNumber = mob;
+              break;
+            }
           }
         }
       }
 
       if (!ownerName && mobileNumber) {
-        // Try to read an adjacent name token from the same line.
-        const matchLine = bodyLines.find((l) => l.replace(/\D/g, "") === mobileNumber);
+        const matchLine = bodyLines.find((l) => {
+          const d = l.replace(/\D/g, "");
+          return d === mobileNumber || d.includes(mobileNumber);
+        });
         if (matchLine) {
-          const afterPhone = matchLine
-            .replace(mobileNumber, "")
-            .trim()
-            .replace(/^[^A-Za-z\u10A0-\u10FF]+/u, "");
-          const nameToken = afterPhone.match(
-            /[A-Za-z\u10A0-\u10FF][A-Za-z\u10A0-\u10FF\s\-]{1,30}/u
-          );
-          if (nameToken?.[0]) ownerName = nameToken[0].trim();
+          const nm = extractNameNearPhone(matchLine, mobileNumber);
+          if (nm) ownerName = normalizeName(nm);
         }
       }
 
@@ -8319,10 +8594,10 @@ export async function parseListing(url: string): Promise<{
         }
       });
       if (!pricePerSqm) {
-      const numericPrice = parseFloat(price.replace(/[,.\s]/g, ""));
-      const numericArea = parseFloat(area.replace(/[^\d.]/g, ""));
-      if (numericPrice > 0 && numericArea > 0) {
-        pricePerSqm = Math.round(numericPrice / numericArea).toString();
+        const numericPrice = parseFloat(price.replace(/[,.\s]/g, ""));
+        const numericArea = parseFloat(area.replace(/[^\d.]/g, ""));
+        if (numericPrice > 0 && numericArea > 0) {
+          pricePerSqm = Math.round(numericPrice / numericArea).toString();
         }
       }
 
@@ -8396,15 +8671,23 @@ export async function parseListing(url: string): Promise<{
         data.rawData["უბანი"] = district;
         console.log(`[myhome parse] district="${district}" from listing text/street`);
       }
+      if (!data.rawData?.["ნომერი"]) {
+        console.warn(
+          `[myhome parse] mobile not found` +
+            (data.rawData?.["მესაკუთრე"]
+              ? ` (owner="${data.rawData["მესაკუთრე"]}")`
+              : " (owner unknown)")
+        );
+      }
       if (data.buildingStatus) {
-        data.buildingStatus = dedupeRepeatedLabelValue(data.buildingStatus);
+        data.buildingStatus = sanitizeBuildingStatusValue(data.buildingStatus);
       }
       if (data.condition) {
         data.condition = dedupeRepeatedLabelValue(data.condition);
       }
       const rawStatus = data.rawData?.["სტატუსი"];
       if (rawStatus) {
-        data.rawData["სტატუსი"] = dedupeRepeatedLabelValue(rawStatus);
+        data.rawData["სტატუსი"] = sanitizeBuildingStatusValue(rawStatus);
         if (!data.buildingStatus) data.buildingStatus = data.rawData["სტატუსი"];
       }
       const rawCondition = data.rawData?.["მდგომარეობა"];
