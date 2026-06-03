@@ -25,6 +25,7 @@ import {
   isTruthyAmenityValue,
 } from "@/lib/platform-amenity-mappings";
 import { applyStreetCrossfill } from "@/lib/street-crossfill";
+import { sanitizeBuildingStatusValue } from "@/lib/building-status-sanitize";
 
 const SSGE_HOST = /(?:^|\/\/)(?:[^/]+\.)?ss\.ge\b/i;
 const MYHOME_HOST = /(?:^|\/\/)(?:[^/]+\.)?myhome\.ge\b/i;
@@ -164,10 +165,11 @@ function resolveBuildingStatusForMyhome(
   buildingStatus: string,
   rawData: Record<string, string>
 ): string {
-  const status =
+  const status = sanitizeBuildingStatusValue(
     buildingStatus.trim() ||
-    rawData["სტატუსი"]?.trim() ||
-    "";
+      rawData["სტატუსი"]?.trim() ||
+      ""
+  );
   if (!status || isKnownLandPlotStatus(status)) return "";
   return status;
 }

@@ -1,5 +1,6 @@
 import "@/lib/esbuild-shim";
 import type { MyhomeListing } from "@/lib/myhome-parser";
+import { sanitizeBuildingStatusValue } from "@/lib/building-status-sanitize";
 import { blockParseResources, getParseBrowser } from "@/lib/parse-browser";
 
 const USER_AGENT =
@@ -528,11 +529,16 @@ export async function parseSsgeListing(url: string): Promise<{
       }
     }
 
+    const buildingStatus = sanitizeBuildingStatusValue(data.buildingStatus || "");
+    if (data.rawData?.["სტატუსი"]) {
+      data.rawData["სტატუსი"] = sanitizeBuildingStatusValue(data.rawData["სტატუსი"]);
+    }
+
     const listing: MyhomeListing = {
       title: data.title,
       propertyType,
       dealType,
-      buildingStatus: data.buildingStatus,
+      buildingStatus,
       condition: data.condition,
       city: data.city,
       address: data.address,

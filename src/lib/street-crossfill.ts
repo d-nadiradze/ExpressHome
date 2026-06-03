@@ -21,6 +21,8 @@ export interface MicroStreetCanonical {
   extra?: string;
   /** myhome autocomplete prefix when it differs from the ss.ge district name. */
   myhomeHead?: string;
+  /** Temka block listed as „ზღვისუბანი X კვარტ“ (not „I მ/რ X კვარტ“). */
+  temkaZghvisubani?: boolean;
 }
 
 /** @deprecated Use MicroStreetCanonical */
@@ -74,6 +76,18 @@ const TEMKA_ZGHVISUBANI_QUARTER_TO_MICRO: Record<string, string> = {
   Xა: "I",
   Xბ: "I",
 };
+
+function isTemkaZghvisubaniBlock(micro: string, quarter: string): boolean {
+  return micro === "I" && Boolean(TEMKA_ZGHVISUBANI_QUARTER_TO_MICRO[quarter]);
+}
+
+function stripQuarterSuffix(text: string): string {
+  return text
+    .trim()
+    .replace(/\s*\.+\s*$/, "")
+    .replace(/\s*(?:კვარტ|კ)(?:\.|$)?\s*$/iu, "")
+    .trim();
+}
 
 function normalizeWhitespace(text: string): string {
   return text.replace(/\s+/g, " ").trim();
@@ -208,15 +222,17 @@ function parseMyhomeQuarterOnlyTail(
 
 function parseTemkaZghvisubaniTail(
   tail: string
-): Pick<MicroStreetCanonical, "micro" | "quarter" | "kind"> | null {
-  const m = tail.match(/^ზღვისუბანი\s+(.+?)(?:\s*\.{0,3})?$/iu);
+): Pick<MicroStreetCanonical, "micro" | "quarter" | "kind" | "temkaZghvisubani"> | null {
+  const m = tail.match(/^ზღვისუბანი\s+(.+)$/iu);
   if (!m) return null;
-  const q = normalizeRomanToken(m[1].trim());
+  const rest = stripQuarterSuffix(m[1]);
+  const q = normalizeRomanToken(rest.replace(/\s+/g, " ").trim());
   if (!q) return null;
   return {
     kind: "micro-quarter",
     micro: TEMKA_ZGHVISUBANI_QUARTER_TO_MICRO[q] || "I",
     quarter: q,
+    temkaZghvisubani: true,
   };
 }
 
@@ -335,11 +351,16 @@ export function parseSsgeMicroStreet(text: string): MicroStreetCanonical | null 
       /^(.+?)\s+მიკრორაიონი\s*,\s*([IVXLC]+|X[abა-ჰ]?)\s+კვარტალი$/iu
     );
     if (withQuarter) {
+      const micro = normalizeMicroLabel(withQuarter[1].trim());
+      const quarter = normalizeRomanToken(withQuarter[2]);
       return {
         district,
         kind: "micro-quarter",
-        micro: normalizeMicroLabel(withQuarter[1].trim()),
-        quarter: normalizeRomanToken(withQuarter[2]),
+        micro,
+        quarter,
+        ...(district === "თემქა" && isTemkaZghvisubaniBlock(micro, quarter)
+          ? { temkaZghvisubani: true }
+          : {}),
       };
     }
 
@@ -399,6 +420,11 @@ export function formatMyhomeMicroStreet(canon: MicroStreetCanonical): string {
 
   const micro = formatRomanForMyhome(canon.micro);
   const head = myhomeHeadForDistrict(district, canon);
+
+  if (district === "თემქა" && canon.temkaZghvisubani && canon.quarter) {
+    const q = formatRomanForMyhome(canon.quarter);
+    return `თემქა - ზღვისუბანი ${q} კვარტ.`;
+  }
 
   if (district === "თემქა" && canon.quarter) {
     return `${district} - ${micro} მ/რ ${formatRomanForMyhome(canon.quarter)} კვარტ`;
@@ -472,7 +498,15 @@ export function crossfillStreetForTarget(
       ? formatSsgeMicroStreet(canon)
       : formatMyhomeMicroStreet(canon);
   const normalized = normalizeWhitespace(street);
-  if (normalizeWhitespace(formatted) === normalized) return null;
+  const formattedNorm = normalizeWhitespace(formatted);
+  if (formattedNorm === normalized) return null;
+  // Valid myhome label — do not rewrite to a different myhome spelling.
+  if (target === "myhome" && parseMyhomeMicroStreet(street)) {
+    if (canon.temkaZghvisubani) return null;
+    if (formattedNorm.replace(/\.\s*$/, "") === normalized.replace(/\.\s*$/, "")) {
+      return null;
+    }
+  }
   return formatted;
 }
 
@@ -494,8 +528,14 @@ export function streetCrossfillQueries(
   };
 
   const converted = crossfillStreetForTarget(s, target);
-  if (converted) push(converted);
-  push(s);
+  const parsedMyhome = target === "myhome" ? parseMyhomeMicroStreet(s) : null;
+  if (parsedMyhome) {
+    push(s);
+    if (converted) push(converted);
+  } else {
+    if (converted) push(converted);
+    push(s);
+  }
 
   return ordered;
 }
