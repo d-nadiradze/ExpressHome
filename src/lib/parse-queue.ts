@@ -1,6 +1,13 @@
-import { db } from "@/lib/db";
-import { parseListing } from "@/lib/myhome-parser";
-import { parseSsgeListing } from "@/lib/ssge-listing-parser";
+/**
+ * Parse queue.
+ *
+ * ss.ge  → BullMQ worker (plain HTTP fetch, ~2s, non-blocking)
+ * myhome → in-process background task (Playwright, same speed as before refactor)
+ *
+ * The worker (src/worker/prefill-worker.ts) still handles ss.ge parse jobs
+ * and all prefill jobs.
+ */
+import { getParseQueue } from "@/lib/bullmq-queue";
 import { isValidSsgeUrl } from "@/lib/utils";
 
 interface ParseJob {
@@ -9,24 +16,28 @@ interface ParseJob {
   userId: string;
 }
 
-const MAX_CONCURRENT = parseInt(process.env.PARSE_MAX_CONCURRENT || "2", 10);
-const queue: ParseJob[] = [];
-let running = 0;
-
-export function enqueueParseJob(job: ParseJob) {
-  queue.push(job);
-  processNext();
+export function enqueueParseJob(job: ParseJob): void {
+  if (isValidSsgeUrl(job.url)) {
+    // ss.ge: fast HTTP fetch in the worker, no browser needed
+    void getParseQueue().add(job.listingId, {
+      listingId: job.listingId,
+      url: job.url,
+      userId: job.userId,
+    });
+  } else {
+    // myhome.ge: run Playwright in-process (background) — same speed as before
+    void runMyhomeParseInProcess(job);
+  }
 }
 
-async function processNext() {
-  if (running >= MAX_CONCURRENT || queue.length === 0) return;
-  running++;
-  const job = queue.shift()!;
-
+async function runMyhomeParseInProcess(job: ParseJob): Promise<void> {
   try {
-    const result = isValidSsgeUrl(job.url)
-      ? await parseSsgeListing(job.url)
-      : await parseListing(job.url);
+    const { parseListing } = await import("@/lib/myhome-parser");
+    const { parseMyhomeViaApi } = await import("@/lib/myhome-api-parser");
+    const { db } = await import("@/lib/db");
+
+    // Try the fast API first (~400ms), fall back to Playwright (~15-20s)
+    const result = await parseMyhomeViaApi(job.url, parseListing);
 
     if (!result.success || !result.data) {
       await db.parsedListing.update({
@@ -69,39 +80,36 @@ async function processNext() {
         postStatus: "PENDING",
       },
     });
-  } catch (error) {
-    console.error(`Parse job failed for listing ${job.listingId}:`, error);
-    await db.parsedListing
-      .update({
+    console.log(`[parse] myhome OK: ${job.listingId} — "${d.title}"`);
+  } catch (err) {
+    console.error(`[parse] myhome failed for ${job.listingId}:`, err);
+    try {
+      const { db } = await import("@/lib/db");
+      await db.parsedListing.update({
         where: { id: job.listingId },
         data: { postStatus: "FAILED" },
-      })
-      .catch(() => {});
-  } finally {
-    running--;
-    processNext();
+      });
+    } catch {}
   }
 }
 
-export function getQueuePosition(listingId: string): number {
-  return queue.findIndex((j) => j.listingId === listingId);
+/** Position is approximate — BullMQ queue position, 0-indexed from front. */
+export async function getQueuePositionAsync(listingId: string): Promise<number> {
+  try {
+    const waiting = await getParseQueue().getWaiting();
+    return waiting.findIndex((j) => j.data.listingId === listingId);
+  } catch {
+    return -1;
+  }
+}
+
+/** Sync stub kept for API route compatibility — returns -1 (position unknown). */
+export function getQueuePosition(_listingId: string): number {
+  return -1;
 }
 
 export function getQueueStats() {
-  return { queued: queue.length, running };
+  return { queued: 0, running: 0 };
 }
 
-/** On startup, mark any stuck PARSING listings as FAILED so they can be retried. */
-export async function recoverStuckJobs() {
-  try {
-    const stuck = await db.parsedListing.updateMany({
-      where: { postStatus: "PARSING" },
-      data: { postStatus: "FAILED" },
-    });
-    if (stuck.count > 0) {
-      console.log(`Recovered ${stuck.count} stuck PARSING listings → FAILED`);
-    }
-  } catch (error) {
-    console.error("Failed to recover stuck parsing jobs:", error);
-  }
-}
+export async function recoverStuckJobs(): Promise<void> {}

@@ -2,13 +2,12 @@ import { db } from "@/lib/db";
 import { decrypt } from "@/lib/encryption";
 import { createMyhomePost } from "@/lib/myhome-parser";
 import { createSsgePost } from "@/lib/ssge-parser";
-import { enqueuePrefill } from "@/lib/prefill-queue";
 import {
   completePrefillJob,
   createPrefillReporter,
   failPrefillJob,
   markPrefillRunning,
-} from "@/lib/prefill-progress";
+} from "@/lib/prefill-progress-redis";
 
 function listingPayload(listing: {
   title: string | null;
@@ -71,20 +70,20 @@ function listingPayload(listing: {
 
 export async function runMyhomePrefillJob(jobId: string, listingId: string, userId: string) {
   const reporter = createPrefillReporter(jobId);
-  markPrefillRunning(jobId);
+  await markPrefillRunning(jobId);
 
   try {
     const listing = await db.parsedListing.findFirst({
       where: { id: listingId, userId },
     });
     if (!listing) {
-      failPrefillJob(jobId, "Listing not found");
+      await failPrefillJob(jobId, "Listing not found");
       return;
     }
 
     const myhomeAccount = await db.myhomeAccount.findUnique({ where: { userId } });
     if (!myhomeAccount?.isVerified) {
-      failPrefillJob(jobId, "myhome.ge account not linked");
+      await failPrefillJob(jobId, "myhome.ge account not linked");
       return;
     }
 
@@ -96,12 +95,10 @@ export async function runMyhomePrefillJob(jobId: string, listingId: string, user
     reporter.info("Queued — starting myhome.ge prefill");
 
     const password = decrypt(myhomeAccount.myhomePassword);
-    const result = await enqueuePrefill(`myhome-${listingId}`, () =>
-      createMyhomePost(
-        { email: myhomeAccount.myhomeEmail, password },
-        listingPayload(listing),
-        { listingId, userId, sourceUrl: listing.sourceUrl, reporter }
-      )
+    const result = await createMyhomePost(
+      { email: myhomeAccount.myhomeEmail, password },
+      listingPayload(listing),
+      { listingId, userId, sourceUrl: listing.sourceUrl, reporter }
     );
 
     if (!result.success) {
@@ -109,7 +106,7 @@ export async function runMyhomePrefillJob(jobId: string, listingId: string, user
         where: { id: listingId },
         data: { postStatus: "FAILED" },
       });
-      failPrefillJob(jobId, result.error || "Failed to pre-fill form");
+      await failPrefillJob(jobId, result.error || "Failed to pre-fill form");
       return;
     }
 
@@ -120,7 +117,7 @@ export async function runMyhomePrefillJob(jobId: string, listingId: string, user
       });
     }
 
-    completePrefillJob(jobId, result.postUrl);
+    await completePrefillJob(jobId, result.postUrl);
   } catch (error) {
     await db.parsedListing
       .update({
@@ -128,7 +125,7 @@ export async function runMyhomePrefillJob(jobId: string, listingId: string, user
         data: { postStatus: "FAILED" },
       })
       .catch(() => null);
-    failPrefillJob(
+    await failPrefillJob(
       jobId,
       error instanceof Error ? error.message : "Prefill failed unexpectedly"
     );
@@ -137,20 +134,20 @@ export async function runMyhomePrefillJob(jobId: string, listingId: string, user
 
 export async function runSsgePrefillJob(jobId: string, listingId: string, userId: string) {
   const reporter = createPrefillReporter(jobId);
-  markPrefillRunning(jobId);
+  await markPrefillRunning(jobId);
 
   try {
     const listing = await db.parsedListing.findFirst({
       where: { id: listingId, userId },
     });
     if (!listing) {
-      failPrefillJob(jobId, "Listing not found");
+      await failPrefillJob(jobId, "Listing not found");
       return;
     }
 
     const ssgeAccount = await db.ssgeAccount.findUnique({ where: { userId } });
     if (!ssgeAccount?.isVerified) {
-      failPrefillJob(jobId, "ss.ge account not linked");
+      await failPrefillJob(jobId, "ss.ge account not linked");
       return;
     }
 
@@ -162,12 +159,10 @@ export async function runSsgePrefillJob(jobId: string, listingId: string, userId
     reporter.info("Queued — starting ss.ge prefill");
 
     const password = decrypt(ssgeAccount.ssgePassword);
-    const result = await enqueuePrefill(`ssge-${listingId}`, () =>
-      createSsgePost(
-        { email: ssgeAccount.ssgeEmail, password },
-        listingPayload(listing),
-        { listingId, userId, sourceUrl: listing.sourceUrl, reporter }
-      )
+    const result = await createSsgePost(
+      { email: ssgeAccount.ssgeEmail, password },
+      listingPayload(listing),
+      { listingId, userId, sourceUrl: listing.sourceUrl, reporter }
     );
 
     if (!result.success) {
@@ -175,7 +170,7 @@ export async function runSsgePrefillJob(jobId: string, listingId: string, userId
         where: { id: listingId },
         data: { ssgePostStatus: "FAILED" },
       });
-      failPrefillJob(jobId, result.error || "Failed to pre-fill form");
+      await failPrefillJob(jobId, result.error || "Failed to pre-fill form");
       return;
     }
 
@@ -186,7 +181,7 @@ export async function runSsgePrefillJob(jobId: string, listingId: string, userId
       });
     }
 
-    completePrefillJob(jobId, result.postUrl);
+    await completePrefillJob(jobId, result.postUrl);
   } catch (error) {
     await db.parsedListing
       .update({
@@ -194,7 +189,7 @@ export async function runSsgePrefillJob(jobId: string, listingId: string, userId
         data: { ssgePostStatus: "FAILED" },
       })
       .catch(() => null);
-    failPrefillJob(
+    await failPrefillJob(
       jobId,
       error instanceof Error ? error.message : "Prefill failed unexpectedly"
     );

@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { db } from "@/lib/db";
-import { initPrefillProgress } from "@/lib/prefill-progress";
-import { runMyhomePrefillJob } from "@/lib/prefill-runner";
+import { initPrefillProgress } from "@/lib/prefill-progress-redis";
+import { getPrefillQueue } from "@/lib/bullmq-queue";
 
 export async function POST(request: NextRequest) {
   const userId = request.headers.get("x-user-id");
@@ -34,9 +34,14 @@ export async function POST(request: NextRequest) {
     }
 
     const jobId = `myhome-${listingId}-${Date.now()}`;
-    initPrefillProgress(jobId, "myhome", listingId, userId);
+    await initPrefillProgress(jobId, "myhome", listingId, userId);
 
-    void runMyhomePrefillJob(jobId, listingId, userId);
+    await getPrefillQueue().add(jobId, {
+      type: "myhome",
+      jobId,
+      listingId,
+      userId,
+    });
 
     return NextResponse.json(
       { success: true, jobId, platform: "myhome" },

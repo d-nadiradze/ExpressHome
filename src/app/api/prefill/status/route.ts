@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import { getPrefillStatusPayload } from "@/lib/prefill-progress";
+import { getPrefillStatusPayload } from "@/lib/prefill-progress-redis";
 
 export async function GET(request: NextRequest) {
   const userId = request.headers.get("x-user-id");
@@ -10,7 +10,7 @@ export async function GET(request: NextRequest) {
     return NextResponse.json({ error: "jobId is required" }, { status: 400 });
   }
 
-  const payload = getPrefillStatusPayload(jobId);
+  const payload = await getPrefillStatusPayload(jobId);
   if (!payload) {
     return NextResponse.json({ error: "Job not found" }, { status: 404 });
   }

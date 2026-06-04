@@ -58,6 +58,18 @@ const DOCKER_SAFE_CHROMIUM_ARGS = [
   "--disable-crash-reporter",
 ];
 
+const BROWSER_EVALUATE_SHIM =
+  "globalThis.__name = globalThis.__name || function (t) { return t; };";
+
+/** esbuild keepNames adds __name calls; must exist in the browser before page.evaluate. */
+async function addBrowserEvaluateShim(context: BrowserContext): Promise<void> {
+  await context.addInitScript(BROWSER_EVALUATE_SHIM);
+}
+
+async function ensureBrowserEvaluateShim(page: Page): Promise<void> {
+  await page.evaluate(BROWSER_EVALUATE_SHIM);
+}
+
 const SSGE_CREATE_URL = "https://home.ss.ge/ka/udzravi-qoneba/create";
 /** Standalone login page (მობილური ან ელ.ფოსტა + პაროლი). */
 const SSGE_ACCOUNT_LOGIN_URL = "https://account.ss.ge/ka/account/login";
@@ -615,7 +627,9 @@ export async function loginToSsge(credentials: SsgeCredentials): Promise<{
     locale: "ka-GE",
     viewport: { width: 1920, height: 1080 },
   });
+  await addBrowserEvaluateShim(context);
   const page = await context.newPage();
+  await ensureBrowserEvaluateShim(page);
 
   try {
     const result = await verifySsgeCredentialsOnPage(page, credentials);
@@ -2519,6 +2533,7 @@ export async function createSsgePost(
     context = postSession.context;
     for (const p of context.pages()) await p.close().catch(() => {});
     page = await context.newPage();
+    await ensureBrowserEvaluateShim(page);
     reporter.stepDone("browser", "Reusing active session");
   } else {
     reporter.step("browser");
@@ -2537,7 +2552,9 @@ export async function createSsgePost(
       locale: "ka-GE",
       viewport: headless ? { width: 1920, height: 1080 } : null,
     });
+    await addBrowserEvaluateShim(context);
     page = await context.newPage();
+    await ensureBrowserEvaluateShim(page);
     postSession = { email: credentials.email, browser, context };
     reporter.stepDone("browser");
   }

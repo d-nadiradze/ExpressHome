@@ -21,11 +21,57 @@ services:
       - GOOGLE_CLIENT_ID=${GOOGLE_CLIENT_ID}
       - GOOGLE_CLIENT_SECRET=${GOOGLE_CLIENT_SECRET}
       - GOOGLE_OAUTH_REDIRECT_URI=${GOOGLE_OAUTH_REDIRECT_URI}
+      - REDIS_URL=redis://redis:6379
     volumes:
       - ./data/uploads:/app/data/uploads
     depends_on:
       mysql:
         condition: service_healthy
+      redis:
+        condition: service_healthy
+    networks:
+      - app-network
+
+  worker:
+    build: .
+    container_name: myhome-worker
+    restart: unless-stopped
+    # Override the default Next.js start command — run the prefill worker instead
+    command: npx tsx src/worker/prefill-worker.ts
+    environment:
+      - DATABASE_URL=mysql://myhome:${MYSQL_PASSWORD}@mysql:3306/myhome_parser
+      - ENCRYPTION_KEY=${ENCRYPTION_KEY}
+      - REDIS_URL=redis://redis:6379
+      - MYHOME_PREFILL_HEADLESS=${MYHOME_PREFILL_HEADLESS:-true}
+      - MYHOME_AUTO_PUBLISH=${MYHOME_AUTO_PUBLISH:-false}
+      - SSGE_PREFILL_HEADLESS=${SSGE_PREFILL_HEADLESS:-true}
+      - SSGE_AUTO_PUBLISH=${SSGE_AUTO_PUBLISH:-false}
+      - PREFILL_MAX_CONCURRENT=${PREFILL_MAX_CONCURRENT:-3}
+      - UPLOAD_DIR=/app/data/uploads
+    volumes:
+      - ./data/uploads:/app/data/uploads
+    depends_on:
+      mysql:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    networks:
+      - app-network
+    # Playwright needs shared memory
+    shm_size: "1gb"
+
+  redis:
+    image: redis:7-alpine
+    container_name: myhome-redis
+    restart: unless-stopped
+    command: redis-server --save 60 1 --loglevel warning
+    volumes:
+      - redis-data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
     networks:
       - app-network
 
@@ -76,6 +122,7 @@ services:
 
 volumes:
   mysql-data:
+  redis-data:
 
 networks:
   app-network:
