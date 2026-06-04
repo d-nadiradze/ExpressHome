@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { db } from "@/lib/db";
 import { encrypt } from "@/lib/encryption";
+import { publicUrl } from "@/lib/auth";
 import { exchangeGoogleCode } from "@/lib/google-oauth";
 
 const OAUTH_STATE_COOKIE = "google_oauth_state";
@@ -21,7 +22,7 @@ function decodeStateCookie(value: string | undefined): OauthStatePayload | null 
 }
 
 function errorRedirect(request: NextRequest, path: string, message: string) {
-  const url = new URL(path, request.url);
+  const url = publicUrl(path, request);
   url.searchParams.set("googleError", message);
   return NextResponse.redirect(url);
 }
@@ -63,7 +64,7 @@ export async function GET(request: NextRequest) {
       },
     });
 
-    const successUrl = new URL(nextPath, request.url);
+    const successUrl = publicUrl(nextPath, request);
     successUrl.searchParams.set("googleConnected", "1");
     const response = NextResponse.redirect(successUrl);
     response.cookies.delete(OAUTH_STATE_COOKIE);

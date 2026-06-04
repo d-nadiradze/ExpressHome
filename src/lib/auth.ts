@@ -72,6 +72,39 @@ export async function createSession(
   return token;
 }
 
+/** Public site origin for redirects behind nginx/Docker (avoids 0.0.0.0:3000). */
+export function getPublicOrigin(request?: NextRequest): string {
+  const envUrl = process.env.APP_URL || process.env.NEXT_PUBLIC_APP_URL;
+  if (envUrl) {
+    try {
+      return new URL(envUrl).origin;
+    } catch {
+      // fall through
+    }
+  }
+
+  if (request) {
+    const host =
+      request.headers.get("x-forwarded-host")?.split(",")[0]?.trim() ||
+      request.headers.get("host");
+    const proto =
+      request.headers.get("x-forwarded-proto")?.split(",")[0]?.trim() ||
+      request.nextUrl.protocol.replace(":", "");
+
+    if (host && !host.startsWith("0.0.0.0")) {
+      return `${proto}://${host}`;
+    }
+
+    return request.nextUrl.origin;
+  }
+
+  return "http://localhost:3000";
+}
+
+export function publicUrl(path: string, request?: NextRequest): URL {
+  return new URL(path, getPublicOrigin(request));
+}
+
 /** Use Secure cookies only when the client connection is HTTPS (incl. TLS at nginx). */
 export function shouldUseSecureCookies(request?: NextRequest): boolean {
   if (request) {

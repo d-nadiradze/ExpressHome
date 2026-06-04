@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { jwtVerify } from "jose";
+import { publicUrl } from "@/lib/auth";
 
 const SECRET = new TextEncoder().encode(
   process.env.JWT_SECRET || "fallback-secret-change-in-production"
@@ -32,7 +33,7 @@ export async function middleware(request: NextRequest) {
     if (pathname.startsWith("/api/")) {
       return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
     }
-    return NextResponse.redirect(new URL("/login", request.url));
+    return NextResponse.redirect(publicUrl("/login", request));
   }
 
   // Verify JWT
@@ -45,7 +46,7 @@ export async function middleware(request: NextRequest) {
         if (pathname.startsWith("/api/")) {
           return NextResponse.json({ error: "Forbidden" }, { status: 403 });
         }
-        return NextResponse.redirect(new URL("/dashboard", request.url));
+        return NextResponse.redirect(publicUrl("/dashboard", request));
       }
     }
 
@@ -65,7 +66,7 @@ export async function middleware(request: NextRequest) {
         { status: 401 }
       );
     }
-    const response = NextResponse.redirect(new URL("/login", request.url));
+    const response = NextResponse.redirect(publicUrl("/login", request));
     response.cookies.delete("myhome_session");
     return response;
   }
