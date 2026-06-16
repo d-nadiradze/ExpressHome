@@ -36,12 +36,17 @@ export async function POST(request: NextRequest) {
     const jobId = `myhome-${listingId}-${Date.now()}`;
     await initPrefillProgress(jobId, "myhome", listingId, userId);
 
-    await getPrefillQueue().add(jobId, {
-      type: "myhome",
+    await getPrefillQueue().add(
       jobId,
-      listingId,
-      userId,
-    });
+      {
+        type: "myhome",
+        jobId,
+        listingId,
+        userId,
+      },
+      // Custom BullMQ jobId so the cancel endpoint can look the job up directly
+      { jobId }
+    );
 
     return NextResponse.json(
       { success: true, jobId, platform: "myhome" },

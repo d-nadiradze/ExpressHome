@@ -5903,6 +5903,7 @@ async function applyAdditionalParametersPrefill(
 const PHONE_REVEAL_WAIT_MS = 500;
 
 const MASKED_SELLER_PHONE_RE = /\d{3}\s*\d{3}\s*\*{2,}/;
+const REVEAL_PHONE_RE = /ნომრის\s*ნახვა|ნომერის\s*ნახვა/;
 
 async function waitForSellerMobileInDom(page: Page): Promise<void> {
   await page
@@ -5923,6 +5924,109 @@ async function waitForSellerMobileInDom(page: Page): Promise<void> {
     )
     .catch(() => {});
   await page.waitForTimeout(PHONE_REVEAL_WAIT_MS);
+}
+
+/**
+ * Capture the seller's exact phone from the reveal API instead of the DOM.
+ *
+ * Clicking "ნომრის ნახვა" fires a POST to
+ *   api-statements.tnet.ge/v1/statements/phone/show?statement_uuid=...
+ * whose JSON body is { result, data: { phone_number, uuid } }. The DOM only
+ * ever shows a partially-masked number, so the API response is the single
+ * source of truth for the unmasked digits. The browser supplies the required
+ * X-Website-Key + reCAPTCHA response_token for us, which is why this can't be
+ * called directly from the server.
+ */
+function captureSellerPhoneFromApi(page: Page): { get: () => string } {
+  let phone = "";
+
+  page.on("response", (res) => {
+    try {
+      if (!/\/v1\/statements\/phone\/show/i.test(res.url())) return;
+      if (!res.ok()) return;
+      void res
+        .json()
+        .then((body: unknown) => {
+          const raw = (body as { data?: { phone_number?: string } })?.data
+            ?.phone_number;
+          const digits = String(raw ?? "").replace(/\D/g, "");
+          const nine = digits.slice(-9);
+          if (nine.length === 9 && nine.startsWith("5")) phone = nine;
+        })
+        .catch(() => {});
+    } catch {
+      // ignore non-JSON / detached responses
+    }
+  });
+
+  return { get: () => phone };
+}
+
+/** True when a phone string is still partially masked (e.g. "591645***"). */
+export function isMaskedPhone(phone: string): boolean {
+  return phone.includes("*");
+}
+
+/**
+ * Lightweight browser-only reveal: opens the listing, clicks "ნომრის ნახვა",
+ * and returns the exact 9-digit seller mobile captured from the reveal API.
+ *
+ * The fast statement API only ever returns a masked number, and the reveal
+ * endpoint needs a reCAPTCHA token the browser produces — so this is the only
+ * way to obtain the unmasked number. Returns "" if the reveal didn't happen.
+ */
+export async function revealMyhomeSellerPhone(url: string): Promise<string> {
+  const browser = await getParseBrowser();
+  const context = await browser.newContext({
+    userAgent:
+      "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+    locale: "ka-GE",
+  });
+  await addBrowserEvaluateShim(context);
+  // NOTE: deliberately NOT calling blockParseResources here. Clicking the
+  // reveal CTA fires a reCAPTCHA challenge; if its scripts/styles/frames are
+  // blocked, grecaptcha never produces a token and the phone/show request is
+  // never sent. The full reCAPTCHA flow needs unblocked resources.
+  const page = await context.newPage();
+
+  try {
+    const sellerPhoneApi = captureSellerPhoneFromApi(page);
+    await page.goto(url, { waitUntil: "domcontentloaded", timeout: PARSE_GOTO_MS });
+    await dismissBlockingOverlays(page);
+
+    // Wait for the reveal button to render, then give React time to hydrate so
+    // the click actually triggers its handler (a too-early click is a no-op).
+    await page
+      .locator("button", { hasText: REVEAL_PHONE_RE })
+      .first()
+      .waitFor({ state: "visible", timeout: 8000 })
+      .catch(() => {});
+
+    for (let attempt = 0; attempt < 3 && !sellerPhoneApi.get(); attempt++) {
+      await page.waitForTimeout(1500);
+      await page
+        .evaluate((reSource) => {
+          const re = new RegExp(reSource, "i");
+          for (const el of document.querySelectorAll("button, a")) {
+            const t = (el.textContent || "").replace(/\s+/g, " ").trim();
+            if (re.test(t)) {
+              (el as HTMLElement).click();
+              return;
+            }
+          }
+        }, REVEAL_PHONE_RE.source)
+        .catch(() => {});
+      for (let k = 0; k < 30 && !sellerPhoneApi.get(); k++) {
+        await page.waitForTimeout(100);
+      }
+    }
+
+    return sellerPhoneApi.get();
+  } catch {
+    return "";
+  } finally {
+    await context.close().catch(() => {});
+  }
 }
 
 /** myhome masks the seller phone until this CTA is clicked — required for parse. */
@@ -6528,6 +6632,7 @@ export async function parseListing(url: string): Promise<{
       .scrollIntoViewIfNeeded()
       .catch(() => {});
 
+    const sellerPhoneApi = captureSellerPhoneFromApi(page);
     await revealListingContactPhone(page);
 
     const pinStreetRaw = await extractPinStreetRaw(page);
@@ -8637,6 +8742,20 @@ export async function parseListing(url: string): Promise<{
       ensureFurnitureRawData(data.rawData);
     }
     if (data) {
+      // Prefer the exact number from the reveal API over the masked DOM value.
+      // The response usually arrives before the DOM updates, but poll briefly
+      // in case it lands a moment later.
+      let apiPhone = sellerPhoneApi.get();
+      for (let i = 0; i < 10 && !apiPhone; i++) {
+        await page.waitForTimeout(100);
+        apiPhone = sellerPhoneApi.get();
+      }
+      if (apiPhone) {
+        data.mobileNumber = apiPhone;
+        if (!data.rawData) data.rawData = {};
+        data.rawData["ნომერი"] = apiPhone;
+        console.log(`[myhome parse] seller phone from reveal API: ${apiPhone}`);
+      }
       if (data.city) {
         const cityOnly = cityForPrefill(data.city);
         data.city = cityOnly;

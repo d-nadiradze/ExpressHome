@@ -1,12 +1,14 @@
 import { db } from "@/lib/db";
 import { decrypt } from "@/lib/encryption";
-import { createMyhomePost } from "@/lib/myhome-parser";
-import { createSsgePost } from "@/lib/ssge-parser";
+import { closeMyhomePostSession, createMyhomePost } from "@/lib/myhome-parser";
+import { closeSsgePostSession, createSsgePost } from "@/lib/ssge-parser";
 import {
   completePrefillJob,
-  createPrefillReporter,
+  createCancellablePrefillReporter,
   failPrefillJob,
+  isPrefillCancelled,
   markPrefillRunning,
+  PrefillCancelledError,
 } from "@/lib/prefill-progress-redis";
 
 function listingPayload(listing: {
@@ -69,7 +71,13 @@ function listingPayload(listing: {
 }
 
 export async function runMyhomePrefillJob(jobId: string, listingId: string, userId: string) {
-  const reporter = createPrefillReporter(jobId);
+  // Cancelled while waiting in the queue but picked up before removal
+  if (await isPrefillCancelled(jobId)) return;
+
+  const { reporter, dispose, isCancelled } = createCancellablePrefillReporter(
+    jobId,
+    () => closeMyhomePostSession()
+  );
   await markPrefillRunning(jobId);
 
   try {
@@ -102,6 +110,10 @@ export async function runMyhomePrefillJob(jobId: string, listingId: string, user
     );
 
     if (!result.success) {
+      if (isCancelled() || result.error === "Prefill cancelled by user") {
+        await closeMyhomePostSession();
+        return;
+      }
       await db.parsedListing.update({
         where: { id: listingId },
         data: { postStatus: "FAILED" },
@@ -119,6 +131,10 @@ export async function runMyhomePrefillJob(jobId: string, listingId: string, user
 
     await completePrefillJob(jobId, result.postUrl);
   } catch (error) {
+    if (error instanceof PrefillCancelledError || isCancelled()) {
+      await closeMyhomePostSession();
+      return;
+    }
     await db.parsedListing
       .update({
         where: { id: listingId },
@@ -129,11 +145,19 @@ export async function runMyhomePrefillJob(jobId: string, listingId: string, user
       jobId,
       error instanceof Error ? error.message : "Prefill failed unexpectedly"
     );
+  } finally {
+    dispose();
   }
 }
 
 export async function runSsgePrefillJob(jobId: string, listingId: string, userId: string) {
-  const reporter = createPrefillReporter(jobId);
+  // Cancelled while waiting in the queue but picked up before removal
+  if (await isPrefillCancelled(jobId)) return;
+
+  const { reporter, dispose, isCancelled } = createCancellablePrefillReporter(
+    jobId,
+    () => closeSsgePostSession()
+  );
   await markPrefillRunning(jobId);
 
   try {
@@ -166,6 +190,10 @@ export async function runSsgePrefillJob(jobId: string, listingId: string, userId
     );
 
     if (!result.success) {
+      if (isCancelled() || result.error === "Prefill cancelled by user") {
+        await closeSsgePostSession();
+        return;
+      }
       await db.parsedListing.update({
         where: { id: listingId },
         data: { ssgePostStatus: "FAILED" },
@@ -183,6 +211,10 @@ export async function runSsgePrefillJob(jobId: string, listingId: string, userId
 
     await completePrefillJob(jobId, result.postUrl);
   } catch (error) {
+    if (error instanceof PrefillCancelledError || isCancelled()) {
+      await closeSsgePostSession();
+      return;
+    }
     await db.parsedListing
       .update({
         where: { id: listingId },
@@ -193,5 +225,7 @@ export async function runSsgePrefillJob(jobId: string, listingId: string, userId
       jobId,
       error instanceof Error ? error.message : "Prefill failed unexpectedly"
     );
+  } finally {
+    dispose();
   }
 }

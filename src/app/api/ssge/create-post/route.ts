@@ -36,12 +36,17 @@ export async function POST(request: NextRequest) {
     const jobId = `ssge-${listingId}-${Date.now()}`;
     await initPrefillProgress(jobId, "ssge", listingId, userId);
 
-    await getPrefillQueue().add(jobId, {
-      type: "ssge",
+    await getPrefillQueue().add(
       jobId,
-      listingId,
-      userId,
-    });
+      {
+        type: "ssge",
+        jobId,
+        listingId,
+        userId,
+      },
+      // Custom BullMQ jobId so the cancel endpoint can look the job up directly
+      { jobId }
+    );
 
     return NextResponse.json(
       { success: true, jobId, platform: "ssge" },

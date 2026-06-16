@@ -32,7 +32,9 @@ export function enqueueParseJob(job: ParseJob): void {
 
 async function runMyhomeParseInProcess(job: ParseJob): Promise<void> {
   try {
-    const { parseListing } = await import("@/lib/myhome-parser");
+    const { parseListing, revealMyhomeSellerPhone, isMaskedPhone } = await import(
+      "@/lib/myhome-parser"
+    );
     const { parseMyhomeViaApi } = await import("@/lib/myhome-api-parser");
     const { db } = await import("@/lib/db");
 
@@ -48,6 +50,24 @@ async function runMyhomeParseInProcess(job: ParseJob): Promise<void> {
     }
 
     const d = result.data;
+
+    // The fast API only returns a masked seller number ("591645***"). The exact
+    // number requires the browser reveal (reCAPTCHA-gated), so do it here when
+    // what we have is still masked. The Playwright path already captures it.
+    const currentPhone = d.rawData?.["ნომერი"] ?? d.mobileNumber ?? "";
+    if (!currentPhone || isMaskedPhone(currentPhone)) {
+      const exact = await revealMyhomeSellerPhone(job.url).catch(() => "");
+      if (exact) {
+        d.mobileNumber = exact;
+        if (!d.rawData) d.rawData = {};
+        d.rawData["ნომერი"] = exact;
+        console.log(`[parse] myhome exact seller phone revealed: ${exact}`);
+      } else if (currentPhone && isMaskedPhone(currentPhone)) {
+        // Reveal failed — don't persist a masked number.
+        delete d.rawData?.["ნომერი"];
+        d.mobileNumber = "";
+      }
+    }
     await db.parsedListing.update({
       where: { id: job.listingId },
       data: {

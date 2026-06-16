@@ -127,6 +127,7 @@ export default function ListingDetail({ listing: initial }: { listing: Listing }
     jobId: string;
     platform: "myhome" | "ssge";
   } | null>(null);
+  const [showPrefillModal, setShowPrefillModal] = useState(false);
   const [reparsing, setReparsing] = useState(false);
   const [aiSuggesting, setAiSuggesting] = useState(false);
   const [descriptionEditing, setDescriptionEditing] = useState(false);
@@ -207,14 +208,6 @@ export default function ListingDetail({ listing: initial }: { listing: Listing }
   }, [listing.id, router, stopReparsePolling]);
 
   async function handleReparse() {
-    if (
-      !confirm(
-        "Re-parse this listing from the source URL? Current parsed data will be refreshed."
-      )
-    ) {
-      return;
-    }
-
     setReparsing(true);
     stopReparsePolling();
 
@@ -241,7 +234,10 @@ export default function ListingDetail({ listing: initial }: { listing: Listing }
   }
 
   async function handlePostMyhome() {
-    if (!confirm("Start myhome.ge pre-fill? Progress will be shown step by step.")) return;
+    if (prefillJob?.platform === "myhome") {
+      setShowPrefillModal(true);
+      return;
+    }
     setPostingMyhome(true);
     try {
       const res = await fetch("/api/myhome/create-post", {
@@ -256,6 +252,7 @@ export default function ListingDetail({ listing: initial }: { listing: Listing }
       }
       if (data.jobId) {
         setPrefillJob({ jobId: data.jobId, platform: "myhome" });
+        setShowPrefillModal(true);
       }
     } catch {
       toast.error("Something went wrong");
@@ -265,7 +262,10 @@ export default function ListingDetail({ listing: initial }: { listing: Listing }
   }
 
   async function handlePostSsge() {
-    if (!confirm("Start ss.ge pre-fill? Progress will be shown step by step.")) return;
+    if (prefillJob?.platform === "ssge") {
+      setShowPrefillModal(true);
+      return;
+    }
     setPostingSsge(true);
     try {
       const res = await fetch("/api/ssge/create-post", {
@@ -280,6 +280,7 @@ export default function ListingDetail({ listing: initial }: { listing: Listing }
       }
       if (data.jobId) {
         setPrefillJob({ jobId: data.jobId, platform: "ssge" });
+        setShowPrefillModal(true);
       }
     } catch {
       toast.error("Something went wrong");
@@ -353,7 +354,6 @@ export default function ListingDetail({ listing: initial }: { listing: Listing }
   }
 
   async function handleDisconnectGoogle() {
-    if (!confirm("Disconnect Google account?")) return;
     setDisconnectingGoogle(true);
     try {
       const res = await fetch("/api/google/auth/disconnect", { method: "POST" });
@@ -379,12 +379,26 @@ export default function ListingDetail({ listing: initial }: { listing: Listing }
     if (prefillJob?.platform === "ssge" && postUrl) {
       setListing((prev) => ({ ...prev, ssgePostUrl: postUrl }));
     }
+    if (!showPrefillModal) {
+      setPrefillJob(null);
+    }
     router.refresh();
     toast.success(
       prefillJob?.platform === "ssge"
         ? "ss.ge pre-fill completed"
         : "myhome.ge pre-fill completed"
     );
+  }
+
+  function handlePrefillFailed() {
+    if (!showPrefillModal) {
+      setPrefillJob(null);
+      toast.error(
+        prefillJob?.platform === "ssge"
+          ? "ss.ge pre-fill failed"
+          : "myhome.ge pre-fill failed"
+      );
+    }
   }
 
   function startEditing() {
@@ -441,7 +455,6 @@ export default function ListingDetail({ listing: initial }: { listing: Listing }
   }
 
   async function handleDelete() {
-    if (!confirm("Delete this listing? This cannot be undone.")) return;
     try {
       const res = await fetch("/api/myhome/parse", {
         method: "DELETE",
@@ -663,8 +676,18 @@ export default function ListingDetail({ listing: initial }: { listing: Listing }
         <PrefillProgressPanel
           jobId={prefillJob.jobId}
           platform={prefillJob.platform}
-          onClose={() => setPrefillJob(null)}
+          visible={showPrefillModal}
+          onClose={(finished) => {
+            setShowPrefillModal(false);
+            if (finished) setPrefillJob(null);
+          }}
           onComplete={handlePrefillComplete}
+          onFailed={handlePrefillFailed}
+          onCancel={() => {
+            setPrefillJob(null);
+            setShowPrefillModal(false);
+            toast.success("Prefill job cancelled");
+          }}
         />
       )}
 
@@ -1086,7 +1109,7 @@ export default function ListingDetail({ listing: initial }: { listing: Listing }
                 {listing.postStatus !== "POSTED" && (
                   <button
                     onClick={handlePostMyhome}
-                    disabled={postingMyhome || postingSsge || exportingSheets || !!prefillJob || reparsing}
+                    disabled={postingMyhome || postingSsge || exportingSheets || (!!prefillJob && prefillJob.platform !== "myhome") || reparsing}
                     className="btn-success w-full text-sm"
                   >
                     {postingMyhome ? (
@@ -1097,6 +1120,14 @@ export default function ListingDetail({ listing: initial }: { listing: Listing }
                         </svg>
                         Starting myhome.ge…
                       </>
+                    ) : prefillJob?.platform === "myhome" ? (
+                      <>
+                        <svg className="w-4 h-4 animate-spin" fill="none" viewBox="0 0 24 24" aria-hidden="true">
+                          <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
+                          <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z" />
+                        </svg>
+                        myhome.ge in progress…
+                      </>
                     ) : (
                       "Pre-fill on myhome.ge"
                     )}
@@ -1106,7 +1137,7 @@ export default function ListingDetail({ listing: initial }: { listing: Listing }
                 {listing.ssgePostStatus !== "POSTED" && (
                   <button
                     onClick={handlePostSsge}
-                    disabled={postingMyhome || postingSsge || exportingSheets || !!prefillJob || reparsing}
+                    disabled={postingMyhome || postingSsge || exportingSheets || (!!prefillJob && prefillJob.platform !== "ssge") || reparsing}
                     className="btn-platform-ssge w-full text-sm"
                   >
                     {postingSsge ? (
@@ -1116,6 +1147,14 @@ export default function ListingDetail({ listing: initial }: { listing: Listing }
                           <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z" />
                         </svg>
                         Starting ss.ge…
+                      </>
+                    ) : prefillJob?.platform === "ssge" ? (
+                      <>
+                        <svg className="w-4 h-4 animate-spin" fill="none" viewBox="0 0 24 24" aria-hidden="true">
+                          <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
+                          <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z" />
+                        </svg>
+                        ss.ge in progress…
                       </>
                     ) : (
                       "Pre-fill on ss.ge"

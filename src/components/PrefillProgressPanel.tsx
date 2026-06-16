@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, useRef, useState } from "react";
+import toast from "react-hot-toast";
 import { defaultPrefillSteps } from "@/lib/prefill-steps";
 
 type PrefillPlatform = "myhome" | "ssge";
@@ -36,8 +37,11 @@ interface PrefillStatus {
 interface PrefillProgressPanelProps {
   jobId: string;
   platform: PrefillPlatform;
-  onClose: () => void;
+  visible?: boolean;
+  onClose: (finished: boolean) => void;
   onComplete?: (postUrl?: string) => void;
+  onFailed?: () => void;
+  onCancel?: () => void;
 }
 
 const TERMINAL: PrefillJobStatus[] = ["success", "failed", "partial"];
@@ -118,14 +122,21 @@ function formatTime(ts: number): string {
 export default function PrefillProgressPanel({
   jobId,
   platform,
+  visible = true,
   onClose,
   onComplete,
+  onFailed,
+  onCancel,
 }: PrefillProgressPanelProps) {
   const [status, setStatus] = useState<PrefillStatus | null>(null);
   const [pollError, setPollError] = useState<string | null>(null);
+  const [cancelling, setCancelling] = useState(false);
+  const cancelledRef = useRef(false);
   const logsEndRef = useRef<HTMLDivElement>(null);
   const onCompleteRef = useRef(onComplete);
   onCompleteRef.current = onComplete;
+  const onFailedRef = useRef(onFailed);
+  onFailedRef.current = onFailed;
   const meta = platformMeta[platform];
 
   const fallbackSteps = useMemo(() => defaultPrefillSteps(platform), [platform]);
@@ -171,6 +182,8 @@ export default function PrefillProgressPanel({
           if (intervalId) clearInterval(intervalId);
           if (data.status === "success" || data.status === "partial") {
             onCompleteRef.current?.(data.postUrl);
+          } else if (data.status === "failed" && !cancelledRef.current) {
+            onFailedRef.current?.();
           }
         }
       } catch {
@@ -206,6 +219,31 @@ export default function PrefillProgressPanel({
     TERMINAL.includes(status?.status as PrefillJobStatus) || Boolean(pollError);
   const isSuccess = status?.status === "success";
   const isPartial = status?.status === "partial";
+
+  async function handleCancel() {
+    if (cancelling || isFinished) return;
+    setCancelling(true);
+    try {
+      const res = await fetch("/api/prefill/cancel", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ jobId }),
+      });
+      if (res.ok) {
+        cancelledRef.current = true;
+        onCancel?.();
+      } else {
+        const data = await res.json().catch(() => null);
+        toast.error(data?.error || "Failed to cancel job");
+        setCancelling(false);
+      }
+    } catch {
+      toast.error("Failed to cancel job");
+      setCancelling(false);
+    }
+  }
+
+  if (!visible) return null;
 
   return (
     <div
@@ -244,7 +282,7 @@ export default function PrefillProgressPanel({
             </div>
             <button
               type="button"
-              onClick={onClose}
+              onClick={() => onClose(isFinished)}
               className="rounded-lg bg-white/20 hover:bg-white/30 px-3 py-1.5 text-sm font-medium transition-colors shrink-0"
               aria-label="Close"
             >
@@ -405,14 +443,39 @@ export default function PrefillProgressPanel({
               </div>
             </div>
           ) : (
-            <div className="flex items-center gap-3 text-gray-600">
-              <svg className="h-5 w-5 animate-spin text-blue-500 shrink-0" viewBox="0 0 24 24" fill="none">
-                <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
-                <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" />
-              </svg>
-              <p className="text-sm">
-                Prefill is running. You can close this panel — automation continues in the background.
-              </p>
+            <div className="flex items-center justify-between gap-3">
+              <div className="flex items-center gap-3 text-gray-600 min-w-0">
+                <svg className="h-5 w-5 animate-spin text-blue-500 shrink-0" viewBox="0 0 24 24" fill="none">
+                  <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
+                  <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" />
+                </svg>
+                <p className="text-sm">
+                  Prefill is running…
+                </p>
+              </div>
+              <button
+                type="button"
+                onClick={handleCancel}
+                disabled={cancelling}
+                className="shrink-0 inline-flex items-center gap-1.5 text-sm font-medium text-red-600 hover:text-red-700 border border-red-200 hover:bg-red-50 px-3 py-1.5 rounded-lg transition-colors disabled:opacity-50"
+              >
+                {cancelling ? (
+                  <>
+                    <svg className="w-4 h-4 animate-spin" fill="none" viewBox="0 0 24 24" aria-hidden="true">
+                      <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
+                      <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" />
+                    </svg>
+                    Cancelling…
+                  </>
+                ) : (
+                  <>
+                    <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" aria-hidden="true">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+                    </svg>
+                    Cancel job
+                  </>
+                )}
+              </button>
             </div>
           )}
         </div>
