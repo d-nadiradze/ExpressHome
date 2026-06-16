@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { db } from "@/lib/db";
+import { buildBrokerSheetListingFromDb } from "@/lib/google-sheets-row";
 import { appendListingToGoogleSheet } from "@/lib/google-sheets";
 
 export async function POST(request: NextRequest) {
@@ -48,7 +49,11 @@ export async function POST(request: NextRequest) {
         verandaArea: true,
         loggiaArea: true,
         postStatus: true,
+        postUrl: true,
         ssgePostStatus: true,
+        ssgePostUrl: true,
+        description: true,
+        rawData: true,
         createdAt: true,
       },
     });
@@ -83,10 +88,14 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    await appendListingToGoogleSheet(listing, googleAccount, {
-      spreadsheetId,
-      sheetTab,
-    });
+    await appendListingToGoogleSheet(
+      buildBrokerSheetListingFromDb(listing),
+      googleAccount,
+      {
+        spreadsheetId,
+        sheetTab,
+      }
+    );
 
     if (spreadsheetId || sheetTab) {
       await db.googleAccount.update({

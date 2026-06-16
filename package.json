@@ -13,7 +13,10 @@
     "db:studio": "prisma studio",
     "db:seed": "tsx prisma/seed.ts",
     "worker": "tsx src/worker/prefill-worker.ts",
-    "worker:dev": "tsx watch src/worker/prefill-worker.ts"
+    "worker:dev": "tsx watch src/worker/prefill-worker.ts",
+    "redis:up": "docker compose up -d redis",
+    "redis:down": "docker compose stop redis",
+    "redis:logs": "docker compose logs -f redis"
   },
   "dependencies": {
     "@prisma/client": "^5.22.0",

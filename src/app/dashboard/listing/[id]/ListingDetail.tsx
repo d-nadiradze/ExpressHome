@@ -6,6 +6,7 @@ import toast from "react-hot-toast";
 import Link from "next/link";
 import ListingImageGallery from "@/components/ListingImageGallery";
 import PrefillProgressPanel from "@/components/PrefillProgressPanel";
+import { resolveListingDisplayArea } from "@/lib/listing-area";
 
 interface Listing {
   id: string;
@@ -629,6 +630,11 @@ export default function ListingDetail({ listing: initial }: { listing: Listing }
   const images = listing.images || [];
   const ed = editData || ({} as EditableFields);
   const projectTypeDisplay = resolveProjectType(listing);
+  const quickSpecArea = resolveListingDisplayArea(
+    listing.area,
+    listing.propertyType,
+    listing.rawData
+  );
 
   const renderField = (label: string, value: string | null) => {
     if (!value) return null;
@@ -825,25 +831,6 @@ export default function ListingDetail({ listing: initial }: { listing: Listing }
               </div>
             </div>
 
-            {/* Description */}
-            <div className="card space-y-4">
-              <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
-                <div>
-                  <h3 className="font-semibold text-slate-900 dark:text-slate-50">Description</h3>
-                  <p className="text-xs text-subtle mt-0.5">
-                    Improve an existing description — removes seller info and polishes the text.
-                  </p>
-                </div>
-                {renderDescriptionActions(ed.description)}
-              </div>
-              <textarea
-                className="input w-full min-h-[160px] leading-relaxed"
-                value={ed.description}
-                onChange={(e) => setEditData({ ...ed, description: e.target.value })}
-                placeholder="აღწერა myhome.ge / ss.ge-სთვის…"
-              />
-            </div>
-
             {/* Raw Data / Additional Parameters */}
             <div className="card space-y-4">
               <h3 className="card-heading">Additional Parameters (rawData)</h3>
@@ -902,6 +889,25 @@ export default function ListingDetail({ listing: initial }: { listing: Listing }
                 </button>
               </div>
             </div>
+
+            {/* Description */}
+            <div className="card space-y-4">
+              <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
+                <div>
+                  <h3 className="font-semibold text-slate-900 dark:text-slate-50">Description</h3>
+                  <p className="text-xs text-subtle mt-0.5">
+                    Improve an existing description — removes seller info and polishes the text.
+                  </p>
+                </div>
+                {renderDescriptionActions(ed.description)}
+              </div>
+              <textarea
+                className="input w-full min-h-[160px] leading-relaxed"
+                value={ed.description}
+                onChange={(e) => setEditData({ ...ed, description: e.target.value })}
+                placeholder="აღწერა myhome.ge / ss.ge-სთვის…"
+              />
+            </div>
           </>
         ) : (
           <>
@@ -958,11 +964,11 @@ export default function ListingDetail({ listing: initial }: { listing: Listing }
             </div>
 
             {/* Specs */}
-            {(listing.area || listing.rooms || listing.bedrooms || listing.floor || listing.bathrooms || projectTypeDisplay) && (
+            {(quickSpecArea || listing.rooms || listing.bedrooms || listing.floor || listing.bathrooms || projectTypeDisplay) && (
               <div className="card">
                 <h3 className="section-title mb-4">Quick specs</h3>
                 <div className="grid grid-cols-2 sm:grid-cols-3 xl:grid-cols-6 gap-3">
-                  {listing.area && renderSpecTile("m²", listing.area, { numeric: true })}
+                  {quickSpecArea && renderSpecTile("m²", quickSpecArea, { numeric: true })}
                   {listing.rooms && renderSpecTile("Rooms", listing.rooms, { numeric: true })}
                   {listing.bedrooms && renderSpecTile("Bedrooms", listing.bedrooms, { numeric: true })}
                   {listing.floor &&
@@ -999,6 +1005,20 @@ export default function ListingDetail({ listing: initial }: { listing: Listing }
               {renderField("Veranda", listing.verandaArea ? `${listing.verandaArea} m²` : null)}
               {renderField("Loggia", listing.loggiaArea ? `${listing.loggiaArea} m²` : null)}
             </div>
+
+            {listing.rawData && Object.keys(listing.rawData).length > 0 && (
+              <div className="card">
+                <h3 className="section-title mb-3">Additional parameters</h3>
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-x-6">
+                  {Object.entries(listing.rawData).map(([key, value]) => (
+                    <div key={key} className="detail-row">
+                      <span className="detail-row-label truncate pr-4" title={key}>{key}</span>
+                      <span className="detail-row-value shrink-0">{value}</span>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
 
             {/* Description */}
             <div className="card space-y-4">
@@ -1054,20 +1074,6 @@ export default function ListingDetail({ listing: initial }: { listing: Listing }
                 </p>
               )}
             </div>
-
-            {listing.rawData && Object.keys(listing.rawData).length > 0 && (
-              <div className="card">
-                <h3 className="section-title mb-3">Additional parameters</h3>
-                <div className="grid grid-cols-1 sm:grid-cols-2 gap-x-6">
-                  {Object.entries(listing.rawData).map(([key, value]) => (
-                    <div key={key} className="detail-row">
-                      <span className="detail-row-label truncate pr-4" title={key}>{key}</span>
-                      <span className="detail-row-value shrink-0">{value}</span>
-                    </div>
-                  ))}
-                </div>
-              </div>
-            )}
           </>
         )}
           </div>

@@ -1,6 +1,7 @@
 import "@/lib/esbuild-shim";
 import type { MyhomeListing } from "@/lib/myhome-parser";
 import { sanitizeBuildingStatusValue } from "@/lib/building-status-sanitize";
+import { resolveListingDisplayArea } from "@/lib/listing-area";
 import { blockParseResources, getParseBrowser } from "@/lib/parse-browser";
 
 const USER_AGENT =
@@ -433,7 +434,12 @@ export async function parseSsgeListing(url: string): Promise<{
 
       if (houseArea) {
         rawData["სახლის ფართი"] = houseArea;
-        if (!specLabels.area) specLabels.area = houseArea;
+        const estateTypeForArea = norm(String(app?.realEstateType || ""));
+        if (/კერძო\s*სახლი|აგარაკი/i.test(estateTypeForArea)) {
+          specLabels.area = houseArea;
+        } else if (!specLabels.area) {
+          specLabels.area = houseArea;
+        }
       }
       if (yardArea) rawData["ეზოს ფართი"] = yardArea;
 
@@ -548,7 +554,7 @@ export async function parseSsgeListing(url: string): Promise<{
       price: data.price,
       pricePerSqm: data.pricePerSqm,
       currency: data.currency,
-      area: data.area,
+      area: resolveListingDisplayArea(data.area, propertyType, data.rawData),
       rooms: data.rooms,
       bedrooms: data.bedrooms,
       floor: data.floor,
