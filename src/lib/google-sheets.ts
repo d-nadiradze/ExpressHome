@@ -2,37 +2,13 @@ import { google } from "googleapis";
 import { decrypt, encrypt } from "@/lib/encryption";
 import { getGoogleOAuthClient } from "@/lib/google-oauth";
 import { db } from "@/lib/db";
-
-type ListingForSheet = {
-  id: string;
-  sourceUrl: string;
-  title: string | null;
-  propertyType: string | null;
-  dealType: string | null;
-  buildingStatus: string | null;
-  condition: string | null;
-  city: string | null;
-  address: string | null;
-  street: string | null;
-  streetNumber: string | null;
-  cadastralCode: string | null;
-  price: string | null;
-  pricePerSqm: string | null;
-  currency: string | null;
-  area: string | null;
-  rooms: string | null;
-  bedrooms: string | null;
-  floor: string | null;
-  totalFloors: string | null;
-  projectType: string | null;
-  bathrooms: string | null;
-  balconyArea: string | null;
-  verandaArea: string | null;
-  loggiaArea: string | null;
-  postStatus: string;
-  ssgePostStatus: string;
-  createdAt: Date;
-};
+import {
+  BROKER_SHEET_COLUMN_COUNT,
+  BROKER_SHEET_HEADERS,
+  listingToBrokerSheetRow,
+  padBrokerSheetRow,
+  type BrokerSheetListing,
+} from "@/lib/google-sheets-row";
 
 type GoogleAccountForSheets = {
   userId: string;
@@ -43,76 +19,8 @@ type GoogleAccountForSheets = {
   defaultSheetTab: string | null;
 };
 
-function toCell(value: string | null | undefined): string {
-  return value ?? "";
-}
-
-const SHEET_HEADERS = [
-  "listingId",
-  "title",
-  "propertyType",
-  "dealType",
-  "buildingStatus",
-  "condition",
-  "city",
-  "address",
-  "street",
-  "streetNumber",
-  "cadastralCode",
-  "price",
-  "currency",
-  "pricePerSqm",
-  "area",
-  "rooms",
-  "bedrooms",
-  "floor",
-  "totalFloors",
-  "projectType",
-  "bathrooms",
-  "balconyArea",
-  "verandaArea",
-  "loggiaArea",
-  "myhomePostStatus",
-  "ssgePostStatus",
-  "sourceUrl",
-  "parsedAt",
-];
-
-function listingToRow(listing: ListingForSheet): string[] {
-  return [
-    listing.id,
-    toCell(listing.title),
-    toCell(listing.propertyType),
-    toCell(listing.dealType),
-    toCell(listing.buildingStatus),
-    toCell(listing.condition),
-    toCell(listing.city),
-    toCell(listing.address),
-    toCell(listing.street),
-    toCell(listing.streetNumber),
-    toCell(listing.cadastralCode),
-    toCell(listing.price),
-    toCell(listing.currency),
-    toCell(listing.pricePerSqm),
-    toCell(listing.area),
-    toCell(listing.rooms),
-    toCell(listing.bedrooms),
-    toCell(listing.floor),
-    toCell(listing.totalFloors),
-    toCell(listing.projectType),
-    toCell(listing.bathrooms),
-    toCell(listing.balconyArea),
-    toCell(listing.verandaArea),
-    toCell(listing.loggiaArea),
-    listing.postStatus,
-    listing.ssgePostStatus,
-    listing.sourceUrl,
-    listing.createdAt.toISOString(),
-  ];
-}
-
 export async function appendListingToGoogleSheet(
-  listing: ListingForSheet,
+  listing: BrokerSheetListing,
   googleAccount: GoogleAccountForSheets,
   options?: { spreadsheetId?: string; sheetTab?: string }
 ): Promise<void> {
@@ -146,7 +54,7 @@ export async function appendListingToGoogleSheet(
   }
 
   const sheets = google.sheets({ version: "v4", auth: oauth2 });
-  const headerRange = `${sheetTab}!A1:ZZ1`;
+  const headerRange = `${sheetTab}!A1:P1`;
 
   const existingHeader = await sheets.spreadsheets.values.get({
     spreadsheetId,
@@ -160,16 +68,87 @@ export async function appendListingToGoogleSheet(
       spreadsheetId,
       range: `${sheetTab}!A1`,
       valueInputOption: "RAW",
-      requestBody: { values: [SHEET_HEADERS] },
+      requestBody: { values: [[...BROKER_SHEET_HEADERS]] },
     });
+    await styleBrokerSheetHeader(sheets, spreadsheetId, sheetTab);
   }
 
-  await sheets.spreadsheets.values.append({
+  const row = padBrokerSheetRow(listingToBrokerSheetRow(listing));
+  const nextRow = await findNextDataRow(sheets, spreadsheetId, sheetTab);
+
+  // Explicit A:P update — append() trims leading empty cells and shifts columns right.
+  await sheets.spreadsheets.values.update({
     spreadsheetId,
-    range: `${sheetTab}!A:ZZ`,
+    range: `${sheetTab}!A${nextRow}:P${nextRow}`,
     valueInputOption: "USER_ENTERED",
-    requestBody: {
-      values: [listingToRow(listing)],
-    },
+    requestBody: { values: [row] },
   });
+}
+
+/** First empty row at or below row 2 (row 1 = headers). */
+async function findNextDataRow(
+  sheets: ReturnType<typeof google.sheets>,
+  spreadsheetId: string,
+  sheetTab: string
+): Promise<number> {
+  const res = await sheets.spreadsheets.values.get({
+    spreadsheetId,
+    range: `${sheetTab}!A2:P`,
+  });
+  const values = res.data.values ?? [];
+  if (values.length === 0) return 2;
+
+  for (let i = values.length - 1; i >= 0; i--) {
+    const cells = values[i] ?? [];
+    const hasData = cells.some((c) => String(c ?? "").trim() !== "");
+    if (hasData) return i + 3;
+  }
+  return 2;
+}
+
+/** Yellow header row to match broker template. */
+async function styleBrokerSheetHeader(
+  sheets: ReturnType<typeof google.sheets>,
+  spreadsheetId: string,
+  sheetTab: string
+): Promise<void> {
+  try {
+    const meta = await sheets.spreadsheets.get({
+      spreadsheetId,
+      fields: "sheets.properties",
+    });
+    const sheet = meta.data.sheets?.find(
+      (s) => s.properties?.title === sheetTab
+    );
+    const sheetId = sheet?.properties?.sheetId;
+    if (sheetId == null) return;
+
+    await sheets.spreadsheets.batchUpdate({
+      spreadsheetId,
+      requestBody: {
+        requests: [
+          {
+            repeatCell: {
+              range: {
+                sheetId,
+                startRowIndex: 0,
+                endRowIndex: 1,
+                startColumnIndex: 0,
+                endColumnIndex: BROKER_SHEET_COLUMN_COUNT,
+              },
+              cell: {
+                userEnteredFormat: {
+                  backgroundColor: { red: 1, green: 0.95, blue: 0.6 },
+                  textFormat: { bold: true },
+                },
+              },
+              fields: "userEnteredFormat(backgroundColor,textFormat)",
+            },
+          },
+        ],
+      },
+    });
+  } catch (err) {
+    console.warn("[google-sheets] header styling skipped:", err);
+  }
 }

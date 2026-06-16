@@ -1,0 +1,22 @@
+# Standalone Redis for local dev (app + worker run on the host via npm).
+# Usage: docker compose -f docker-compose.redis.yml up -d
+# Same as: npm run redis:up (uses the redis service in docker-compose.yml)
+
+services:
+  redis:
+    image: redis:7-alpine
+    container_name: myhome-redis-dev
+    restart: unless-stopped
+    command: redis-server --save 60 1 --loglevel warning
+    ports:
+      - "127.0.0.1:6379:6379"
+    volumes:
+      - redis-dev-data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+volumes:
+  redis-dev-data:

@@ -86,7 +86,35 @@ npm run db:push
 npm run db:seed
 ```
 
-### 6. Run the app
+### 6. Redis (required for parse & prefill jobs)
+
+Parse and statement prefill use **BullMQ** backed by Redis. Production Docker Compose includes Redis automatically.
+
+**Local development (Docker):**
+
+```bash
+npm run redis:up
+```
+
+This starts Redis on `127.0.0.1:6379`. Set in `.env`:
+
+```env
+REDIS_URL="redis://localhost:6379"
+```
+
+**Process jobs** — run the worker in a **second terminal** (alongside `npm run dev`):
+
+```bash
+npm run worker:dev
+```
+
+Without Redis + worker, prefill/parse requests stay queued and never complete.
+
+**Production:** `docker compose up -d` starts `redis`, `app`, and `worker` together.
+
+See **[docs/REDIS.md](docs/REDIS.md)** for Windows without Docker (Memurai / WSL).
+
+### 7. Run the app
 
 ```bash
 npm run dev

@@ -9,6 +9,7 @@
  */
 import type { MyhomeListing } from "@/lib/myhome-parser";
 import { sanitizeBuildingStatusValue } from "@/lib/building-status-sanitize";
+import { resolveListingDisplayArea } from "@/lib/listing-area";
 
 const USER_AGENT =
   "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36";
@@ -241,7 +242,7 @@ export async function parseSsgeListingViaFetch(url: string): Promise<{
   }
 
   // ---- Specs (real field names from the API) --------------------------------
-  const area        = extractArea(app.totalArea ?? app.areaOfHouse ?? "");
+  let area = extractArea(app.totalArea ?? "");
   const rooms       = norm(app.rooms ?? "");
   const bedrooms    = norm(app.bedrooms ?? "");
   const floor       = norm(app.floor ?? "");
@@ -298,9 +299,15 @@ export async function parseSsgeListingViaFetch(url: string): Promise<{
   const houseArea = extractArea(app.areaOfHouse ?? "");
   const yardArea  = extractArea(app.areaOfYard ?? "");
   const kitchenArea = extractArea(app.kitchenArea ?? "");
-  if (houseArea)   rawData["სახლის ფართი"] = houseArea;
-  if (yardArea)    rawData["ეზოს ფართი"] = yardArea;
+  if (houseArea) rawData["სახლის ფართი"] = houseArea;
+  if (yardArea) rawData["ეზოს ფართი"] = yardArea;
   if (kitchenArea) rawData["სამზარეულოს ფართი"] = kitchenArea;
+
+  area = resolveListingDisplayArea(
+    area || houseArea,
+    propertyType,
+    rawData
+  );
 
   // Balcony/loggia from balcony_Loggia field
   const balconyLoggia = norm(app.balcony_Loggia ?? "");
