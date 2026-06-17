@@ -2,7 +2,7 @@
  * Unified browser worker — handles both PARSE and PREFILL jobs.
  *
  * Run with:   npm run worker
- * Docker:     command: npx tsx src/worker/prefill-worker.ts
+ * Docker:     node node_modules/tsx/dist/cli.mjs src/worker/prefill-worker.ts
  *
  * All Playwright browser work runs here, completely isolated from the
  * Next.js web server. Next.js only enqueues jobs and polls the DB for status.

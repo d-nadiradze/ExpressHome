@@ -33,12 +33,14 @@ services:
       - app-network
 
   worker:
-    build: .
+    build:
+      context: .
+      target: worker-runner
     container_name: myhome-worker
     restart: unless-stopped
-    # Override the default Next.js start command — run the prefill worker instead
-    command: npx tsx src/worker/prefill-worker.ts
+    command: ["node", "node_modules/tsx/dist/cli.mjs", "src/worker/prefill-worker.ts"]
     environment:
+      - HOME=/app
       - DATABASE_URL=mysql://myhome:${MYSQL_PASSWORD}@mysql:3306/myhome_parser
       - ENCRYPTION_KEY=${ENCRYPTION_KEY}
       - REDIS_URL=redis://redis:6379
