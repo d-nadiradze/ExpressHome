@@ -5,7 +5,7 @@
  *   1. Get the Next.js buildId from the myhome.ge homepage (cached 30 min).
  *   2. Fetch /_next/data/{buildId}/ka/pr/{id}.json — returns full listing JSON
  *      without bot protection, much faster than loading the full page.
- *   3. If that fails, fall back to Playwright (parseListing from myhome-parser.ts).
+ *   3. Returns an error if fetch fails (no browser fallback).
  */
 import type { MyhomeListing } from "@/lib/myhome-parser";
 
@@ -206,16 +206,10 @@ function isUsableListing(l: MyhomeListing): boolean {
 // ---- Main export ------------------------------------------------------------
 
 /**
- * Parse a myhome.ge listing via /_next/data/ JSON first, Playwright fallback.
- * The `playwrightFallback` argument is parseListing() from myhome-parser.ts.
+ * Parse a myhome.ge listing via /_next/data/ JSON only.
  */
 export async function parseMyhomeListingWithFallback(
-  url: string,
-  playwrightFallback: (url: string) => Promise<{
-    success: boolean;
-    data?: MyhomeListing;
-    error?: string;
-  }>
+  url: string
 ): Promise<{ success: boolean; data?: MyhomeListing; error?: string }> {
   const listingId = extractListingId(url);
 
@@ -239,13 +233,13 @@ export async function parseMyhomeListingWithFallback(
             console.log(`[myhome fetch] OK (no browser): "${listing.title}" — ${listing.price} ${listing.currency}`);
             return { success: true, data: listing };
           }
-          console.log("[myhome fetch] /_next/data/ returned insufficient data, falling back to Playwright");
+          console.log("[myhome fetch] /_next/data/ returned insufficient data");
         } else if (res.status === 404) {
           // Build ID is stale — clear cache so next call refreshes it
           cachedBuildId = null;
-          console.log("[myhome fetch] /_next/data/ 404 (stale buildId), falling back to Playwright");
+          console.log("[myhome fetch] /_next/data/ 404 (stale buildId)");
         } else {
-          console.log(`[myhome fetch] /_next/data/ HTTP ${res.status}, falling back to Playwright`);
+          console.log(`[myhome fetch] /_next/data/ HTTP ${res.status}`);
         }
       }
     } catch (err) {
@@ -253,7 +247,6 @@ export async function parseMyhomeListingWithFallback(
     }
   }
 
-  // 2. Playwright fallback
-  console.log(`[myhome fetch] Using Playwright for ${url}`);
-  return playwrightFallback(url);
+  // 2. No browser fallback — API-only parsing is handled by myhome-api-parser.
+  return { success: false, error: "myhome /_next/data/ fetch failed" };
 }

@@ -31,6 +31,7 @@ const PROPERTY_TYPE_KEYWORDS: [RegExp, string][] = [
 ];
 
 /** ss.ge listing detail sections: #details_desc and its children. */
+/** @deprecated Use parseSsgeListingViaFetch from ssge-fetch-parser.ts instead. */
 export async function parseSsgeListing(url: string): Promise<{
   success: boolean;
   data?: MyhomeListing;

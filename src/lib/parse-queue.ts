@@ -1,11 +1,10 @@
 /**
  * Parse queue.
  *
- * ss.ge  → BullMQ worker (plain HTTP fetch, ~2s, non-blocking)
- * myhome → in-process background task (Playwright, same speed as before refactor)
+ * ss.ge  → BullMQ worker (HTTP fetch via ssge-fetch-parser)
+ * myhome → in-process background task (tnet API via myhome-api-parser)
  *
- * The worker (src/worker/prefill-worker.ts) still handles ss.ge parse jobs
- * and all prefill jobs.
+ * The worker handles ss.ge parse jobs and all prefill jobs.
  */
 import { getParseQueue } from "@/lib/bullmq-queue";
 import { isValidSsgeUrl } from "@/lib/utils";
@@ -16,32 +15,38 @@ interface ParseJob {
   userId: string;
 }
 
+function stripMaskedPhone(data: {
+  mobileNumber?: string;
+  rawData?: Record<string, string>;
+}): void {
+  const phone = data.rawData?.["ნომერი"] ?? data.mobileNumber ?? "";
+  if (phone.includes("*")) {
+    delete data.rawData?.["ნომერი"];
+    data.mobileNumber = "";
+  }
+}
+
 export function enqueueParseJob(job: ParseJob): void {
   if (isValidSsgeUrl(job.url)) {
-    // ss.ge: fast HTTP fetch in the worker, no browser needed
     void getParseQueue().add(job.listingId, {
       listingId: job.listingId,
       url: job.url,
       userId: job.userId,
     });
   } else {
-    // myhome.ge: run Playwright in-process (background) — same speed as before
     void runMyhomeParseInProcess(job);
   }
 }
 
 async function runMyhomeParseInProcess(job: ParseJob): Promise<void> {
   try {
-    const { parseListing, revealMyhomeSellerPhone, isMaskedPhone } = await import(
-      "@/lib/myhome-parser"
-    );
     const { parseMyhomeViaApi } = await import("@/lib/myhome-api-parser");
     const { db } = await import("@/lib/db");
 
-    // Try the fast API first (~400ms), fall back to Playwright (~15-20s)
-    const result = await parseMyhomeViaApi(job.url, parseListing);
+    const result = await parseMyhomeViaApi(job.url);
 
     if (!result.success || !result.data) {
+      console.warn(`[parse] myhome failed for ${job.listingId}: ${result.error ?? "unknown error"}`);
       await db.parsedListing.update({
         where: { id: job.listingId },
         data: { postStatus: "FAILED" },
@@ -50,24 +55,8 @@ async function runMyhomeParseInProcess(job: ParseJob): Promise<void> {
     }
 
     const d = result.data;
+    stripMaskedPhone(d);
 
-    // The fast API only returns a masked seller number ("591645***"). The exact
-    // number requires the browser reveal (reCAPTCHA-gated), so do it here when
-    // what we have is still masked. The Playwright path already captures it.
-    const currentPhone = d.rawData?.["ნომერი"] ?? d.mobileNumber ?? "";
-    if (!currentPhone || isMaskedPhone(currentPhone)) {
-      const exact = await revealMyhomeSellerPhone(job.url).catch(() => "");
-      if (exact) {
-        d.mobileNumber = exact;
-        if (!d.rawData) d.rawData = {};
-        d.rawData["ნომერი"] = exact;
-        console.log(`[parse] myhome exact seller phone revealed: ${exact}`);
-      } else if (currentPhone && isMaskedPhone(currentPhone)) {
-        // Reveal failed — don't persist a masked number.
-        delete d.rawData?.["ნომერი"];
-        d.mobileNumber = "";
-      }
-    }
     await db.parsedListing.update({
       where: { id: job.listingId },
       data: {

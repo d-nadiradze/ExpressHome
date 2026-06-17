@@ -4,8 +4,7 @@
  * Endpoint: GET https://api-statements.tnet.ge/v1/statements/{id}
  * Headers:  x-website-key: myhome
  *
- * ~400ms vs ~15-20s with Playwright. No browser needed.
- * Falls back to Playwright (parseListing) if the API call fails.
+ * ~400ms, no browser needed.
  */
 import type { MyhomeListing } from "@/lib/myhome-parser";
 import {
@@ -56,18 +55,18 @@ function extractId(url: string): string | null {
   return m ? m[1] : null;
 }
 
+function fail(message: string): { success: false; error: string } {
+  console.log(`[myhome-api] ${message}`);
+  return { success: false, error: message };
+}
+
 // ---- Main export ------------------------------------------------------------
 
 export async function parseMyhomeViaApi(
-  url: string,
-  playwrightFallback: (url: string) => Promise<{
-    success: boolean;
-    data?: MyhomeListing;
-    error?: string;
-  }>
+  url: string
 ): Promise<{ success: boolean; data?: MyhomeListing; error?: string }> {
   const listingId = extractId(url);
-  if (!listingId) return playwrightFallback(url);
+  if (!listingId) return fail("Invalid myhome.ge URL");
 
   try {
     const controller = new AbortController();
@@ -79,15 +78,13 @@ export async function parseMyhomeViaApi(
     clearTimeout(timer);
 
     if (!res.ok) {
-      console.log(`[myhome-api] HTTP ${res.status} for ${listingId}, falling back to Playwright`);
-      return playwrightFallback(url);
+      return fail(`HTTP ${res.status} for listing ${listingId}`);
     }
 
     const json = await res.json();
     const s = json?.data?.statement;
     if (!s) {
-      console.log(`[myhome-api] No statement in response for ${listingId}`);
-      return playwrightFallback(url);
+      return fail(`No statement in API response for ${listingId}`);
     }
 
     // ---- Price ---------------------------------------------------------------
@@ -176,8 +173,7 @@ export async function parseMyhomeViaApi(
     }
 
     if (!title && !price) {
-      console.log(`[myhome-api] Insufficient data for ${listingId}, falling back to Playwright`);
-      return playwrightFallback(url);
+      return fail(`Insufficient data in API response for ${listingId}`);
     }
 
     console.log(`[myhome-api] OK: "${title}" — ${price} ${currency}, ${rooms} rooms, ${area}m², floor ${floor}/${totalFloors}`);
@@ -194,7 +190,7 @@ export async function parseMyhomeViaApi(
       },
     };
   } catch (err) {
-    console.log(`[myhome-api] Error: ${err instanceof Error ? err.message : err}, falling back to Playwright`);
-    return playwrightFallback(url);
+    const message = err instanceof Error ? err.message : String(err);
+    return fail(`Request failed for ${listingId}: ${message}`);
   }
 }

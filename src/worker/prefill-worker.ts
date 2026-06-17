@@ -4,8 +4,8 @@
  * Run with:   npm run worker
  * Docker:     node node_modules/tsx/dist/cli.mjs src/worker/prefill-worker.ts
  *
- * All Playwright browser work runs here, completely isolated from the
- * Next.js web server. Next.js only enqueues jobs and polls the DB for status.
+ * All Playwright browser work for prefills runs here, isolated from Next.js.
+ * Listing parse uses HTTP only: ss.ge fetch in this worker, myhome API in the app.
  *
  * Concurrency:
  *   PARSE_MAX_CONCURRENT  — parallel listing parses   (default 3)
@@ -27,7 +27,6 @@ import {
 } from "@/lib/bullmq-queue";
 import { runMyhomePrefillJob, runSsgePrefillJob } from "@/lib/prefill-runner";
 import { closeAllBrowsers, registerBrowserShutdownHooks } from "@/lib/browser-lifecycle";
-import { warmupParseBrowser } from "@/lib/parse-browser";
 import { db } from "@/lib/db";
 import { parseSsgeListingViaFetch } from "@/lib/ssge-fetch-parser";
 import { isValidSsgeUrl } from "@/lib/utils";
@@ -169,13 +168,6 @@ async function recoverStuckParseJobs() {
 }
 
 void recoverStuckParseJobs();
-
-// Pre-launch Chromium so the first parse job skips cold-boot (~5-8s saved)
-void warmupParseBrowser().then(() =>
-  console.log("[worker] Parse browser warmed up.")
-).catch((e) =>
-  console.warn("[worker] Parse browser warmup failed:", e)
-);
 
 // ---- Graceful shutdown -----------------------------------------------------
 

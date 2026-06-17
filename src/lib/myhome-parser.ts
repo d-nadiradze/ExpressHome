@@ -6577,7 +6577,7 @@ function applyPinStreetToListing(listing: MyhomeListing, pinRaw: string): void {
   }
 }
 
-// Parse a myhome.ge listing page
+/** @deprecated Use parseMyhomeViaApi from myhome-api-parser.ts instead. */
 export async function parseListing(url: string): Promise<{
   success: boolean;
   data?: MyhomeListing;
