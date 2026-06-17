@@ -1,6 +1,8 @@
 services:
   app:
-    build: .
+    build:
+      context: .
+      target: runner
     container_name: myhome-app
     restart: unless-stopped
     ports:
@@ -112,7 +114,8 @@ services:
       - ./certbot/conf:/etc/letsencrypt:ro
       - ./certbot/www:/var/www/certbot:ro
     depends_on:
-      - app
+      app:
+        condition: service_started
     networks:
       - app-network
 
