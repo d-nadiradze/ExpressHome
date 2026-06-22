@@ -1,5 +1,8 @@
 services:
   app:
+    # On the server, `docker compose pull` fetches this prebuilt image (built in CI).
+    # Locally, `docker compose build` still works and tags the image with this name.
+    image: ${APP_IMAGE:-ghcr.io/d-nadiradze/expresshome-app:latest}
     build:
       context: .
       target: runner
@@ -35,6 +38,7 @@ services:
       - app-network
 
   worker:
+    image: ${WORKER_IMAGE:-ghcr.io/d-nadiradze/expresshome-worker:latest}
     build:
       context: .
       target: worker-runner

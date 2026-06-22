@@ -36,7 +36,21 @@ You do not need to configure anything for CI to run after the workflow files are
 
 ## Part B — Deploy to your VPS (CD)
 
-Deploy uses SSH: GitHub connects to your server, runs `git pull`, then `sudo docker compose up -d --build app`.
+Deploy now **builds the Docker images on GitHub's runners and pushes them to GHCR**
+(GitHub Container Registry). The VPS only **pulls** the prebuilt images and restarts —
+no more slow `docker build` on the server.
+
+The `Deploy` workflow has two jobs:
+
+1. **build-and-push** — builds the `app` (`runner`) and `worker` (`worker-runner`)
+   targets with layer caching and pushes them to:
+   - `ghcr.io/d-nadiradze/expresshome-app:latest`
+   - `ghcr.io/d-nadiradze/expresshome-worker:latest`
+2. **deploy** — SSHes to the VPS, runs `git pull` (to refresh `docker-compose.yml`),
+   logs in to GHCR with the built-in token, then `docker compose pull` + `up -d`.
+
+No extra registry secret is required: the workflow uses the built-in `GITHUB_TOKEN`
+to push, and passes the same token to the server for the pull.
 
 ### Step 1 — Server is ready
 
@@ -123,8 +137,15 @@ sudo docker ps
 
 ### Step 5 — Git must be able to `git pull` on the server
 
+The deploy still runs `git pull` to refresh `docker-compose.yml` and the `Dockerfile`.
+
 - If the repo is **public**: no extra step.
 - If the repo is **private**: on the server, use a deploy key or HTTPS with a credential helper / PAT so `git pull` works for the same user used in Step 3.
+
+> **GHCR access:** images are pushed under your GitHub account and the server logs
+> in with the workflow's `GITHUB_TOKEN` at deploy time, so no long-lived registry
+> credential lives on the VPS. The first successful push creates the packages
+> (`expresshome-app`, `expresshome-worker`) under your account.
 
 ### Step 6 — Add GitHub Actions secrets
 
@@ -152,14 +173,16 @@ Ensure `.github/workflows/deploy.yml` is on the `default` branch (usually `main`
 4. Choose the branch (default `main`) → **Run workflow**.
 5. Open the run and wait until it is green.
 
-On the server, the script effectively runs:
+GitHub first builds + pushes the images, then on the server the script effectively runs:
 
 ```bash
 cd "$DEPLOY_APP_DIR"   # default /opt/myhome-parser
 git fetch origin
 git checkout <branch>
 git pull origin <branch>
-sudo docker compose up -d --build app
+echo "$GHCR_TOKEN" | sudo docker login ghcr.io -u "$GHCR_USER" --password-stdin
+sudo docker compose pull app worker
+sudo docker compose up -d app worker
 ```
 
 ### Step 9 — Verify

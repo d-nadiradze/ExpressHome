@@ -1,12 +1,18 @@
+# syntax=docker/dockerfile:1
 # Stage 1: Build
 FROM node:20-slim AS builder
 WORKDIR /app
+ENV NEXT_TELEMETRY_DISABLED=1
 COPY package.json package-lock.json* ./
-RUN npm ci
+# Cache the npm download cache across builds so `npm ci` only re-fetches changed deps.
+RUN --mount=type=cache,target=/root/.npm npm ci
 COPY . .
 ENV NODE_OPTIONS="--max-old-space-size=2048"
 ENV SKIP_BUILD_CHECKS=1
-RUN mkdir -p public && npx prisma generate && npm run build
+RUN npx prisma generate
+# Persist Next.js' incremental build cache (.next/cache) so repeat builds only
+# recompile changed modules instead of the whole app.
+RUN --mount=type=cache,target=/app/.next/cache mkdir -p public && npm run build
 
 # Stage 2: Production
 FROM node:20-slim AS runner
