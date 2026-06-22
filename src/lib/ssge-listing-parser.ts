@@ -3,6 +3,7 @@ import type { MyhomeListing } from "@/lib/myhome-parser";
 import { sanitizeBuildingStatusValue } from "@/lib/building-status-sanitize";
 import { resolveListingDisplayArea } from "@/lib/listing-area";
 import { blockParseResources, getParseBrowser } from "@/lib/parse-browser";
+import { ssgeOriginalImageUrl } from "@/lib/ssge-image";
 
 const USER_AGENT =
   "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36";
@@ -536,6 +537,11 @@ export async function parseSsgeListing(url: string): Promise<{
       }
     }
 
+    // Prefer ss.ge watermark-free `_Original` image variants.
+    const images = (data.images || []).map(
+      (url: string) => ssgeOriginalImageUrl(url) ?? url
+    );
+
     const buildingStatus = sanitizeBuildingStatusValue(data.buildingStatus || "");
     if (data.rawData?.["სტატუსი"]) {
       data.rawData["სტატუსი"] = sanitizeBuildingStatusValue(data.rawData["სტატუსი"]);
@@ -566,7 +572,7 @@ export async function parseSsgeListing(url: string): Promise<{
       verandaArea: "",
       loggiaArea: "",
       description: data.description,
-      images: data.images,
+      images,
       rawData: data.rawData,
       ownerName: data.ownerName || "",
       mobileNumber: data.mobileNumber || "",

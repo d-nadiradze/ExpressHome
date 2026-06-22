@@ -3,6 +3,8 @@
  * blocks between myhome.ge and ss.ge naming conventions.
  */
 
+import { resolveStreetForTarget } from "@/lib/street-dictionary";
+
 export const TEMKA_DISTRICT = "თემქა" as const;
 
 export type LocationBlockKind =
@@ -526,6 +528,10 @@ export function streetCrossfillQueries(
     seen.add(v);
     ordered.push(v);
   };
+
+  // Prebuilt street crosswalk: exact target-site spelling takes top priority.
+  const dictionarySpelling = resolveStreetForTarget(s, target);
+  if (dictionarySpelling) push(dictionarySpelling);
 
   const converted = crossfillStreetForTarget(s, target);
   const parsedMyhome = target === "myhome" ? parseMyhomeMicroStreet(s) : null;

@@ -12,6 +12,7 @@
     "db:migrate": "prisma migrate dev",
     "db:studio": "prisma studio",
     "db:seed": "tsx prisma/seed.ts",
+    "streets:build": "tsx scripts/build-street-crosswalk.ts",
     "worker": "tsx src/worker/prefill-worker.ts",
     "worker:dev": "tsx watch src/worker/prefill-worker.ts",
     "redis:up": "docker compose up -d redis",

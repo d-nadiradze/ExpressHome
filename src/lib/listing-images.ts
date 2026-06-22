@@ -2,6 +2,7 @@ import fs from "fs/promises";
 import path from "path";
 import { randomUUID } from "crypto";
 import os from "os";
+import { ssgeWatermarkedImageUrl } from "@/lib/ssge-image";
 
 export const MAX_LISTING_IMAGES = 16;
 export const MAX_IMAGE_BYTES = 10 * 1024 * 1024;
@@ -142,36 +143,46 @@ function extFromUrl(url: string): string {
   return "jpg";
 }
 
-async function downloadRemoteImage(url: string): Promise<string | null> {
-  try {
-    const res = await fetch(url, {
-      headers: { "User-Agent": FETCH_USER_AGENT },
-      signal: AbortSignal.timeout(30000),
-    });
-    if (!res.ok) {
-      console.warn(`Failed to download image ${url}: ${res.status}`);
-      return null;
-    }
-
-    const contentType = res.headers.get("content-type");
-    const ext = extFromContentType(contentType) || extFromUrl(url);
-    const buffer = Buffer.from(await res.arrayBuffer());
-
-    if (buffer.length > MAX_IMAGE_BYTES) {
-      console.warn(`Image too large, skipping: ${url}`);
-      return null;
-    }
-
-    const tempPath = path.join(
-      os.tmpdir(),
-      `myhome-img-${randomUUID()}.${ext}`
-    );
-    await fs.writeFile(tempPath, buffer);
-    return tempPath;
-  } catch (e) {
-    console.warn(`Failed to download image ${url}:`, e);
+async function downloadImageCandidate(url: string): Promise<string | null> {
+  const res = await fetch(url, {
+    headers: { "User-Agent": FETCH_USER_AGENT },
+    signal: AbortSignal.timeout(30000),
+  });
+  if (!res.ok) {
+    console.warn(`Failed to download image ${url}: ${res.status}`);
     return null;
   }
+
+  const contentType = res.headers.get("content-type");
+  const ext = extFromContentType(contentType) || extFromUrl(url);
+  const buffer = Buffer.from(await res.arrayBuffer());
+
+  if (buffer.length > MAX_IMAGE_BYTES) {
+    console.warn(`Image too large, skipping: ${url}`);
+    return null;
+  }
+
+  const tempPath = path.join(os.tmpdir(), `myhome-img-${randomUUID()}.${ext}`);
+  await fs.writeFile(tempPath, buffer);
+  return tempPath;
+}
+
+async function downloadRemoteImage(url: string): Promise<string | null> {
+  // For ss.ge `_Original` (watermark-free) URLs, fall back to the watermarked
+  // base variant if the original is missing, so the photo is never dropped.
+  const candidates = [url];
+  const fallback = ssgeWatermarkedImageUrl(url);
+  if (fallback) candidates.push(fallback);
+
+  for (const candidate of candidates) {
+    try {
+      const result = await downloadImageCandidate(candidate);
+      if (result) return result;
+    } catch (e) {
+      console.warn(`Failed to download image ${candidate}:`, e);
+    }
+  }
+  return null;
 }
 
 async function resolveUploadedImagePath(

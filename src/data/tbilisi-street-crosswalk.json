@@ -1,0 +1,7022 @@
+[
+  {
+    "myhome": "13 ასურელი მამის ქ.",
+    "ssge": "13 ასურელი მამის ქ.",
+    "district": "ვაკე-საბურთალო",
+    "confidence": "exact"
+  },
+  {
+    "myhome": "17 შინდისელი გმირის ქ.",
+    "ssge": "17 შინდისელი გმირის ქ.",
+    "district": "ისანი-სამგორი",
+    "confidence": "exact"
+  },
+  {
+    "myhome": "26 მაისის მოედანი",
+    "ssge": "26 მაისის მოედანი.",
+    "district": "ვაკე-საბურთალო",
+    "confidence": "exact"
+  },
+  {
+    "myhome": "26 მაისის ქ.",
+    "ssge": "26 მაისის ქ.",
+    "district": "გლდანი-ნაძალადევი",
+    "confidence": "exact"
+  },
+  {
+    "myhome": "300 არაგველის ქ.",
+    "ssge": "300 არაგველის ქ.",
+    "district": "თბილისის შემოგარენი",
+    "confidence": "exact"
+  },
+  {
+    "myhome": "4000 მესხის ქ.",
+    "ssge": "4000 მესხის ქ.",
+    "district": "ვაკე-საბურთალო",
+    "confidence": "exact"
+  },
+  {
+    "myhome": "66 ქ.",
+    "ssge": "უგრელიძის ქ.",
+    "district": "ვაკე-საბურთალო",
+    "confidence": "fuzzy"
+  },
+  {
+    "myhome": "9 აპრილის ქუჩა (წყნეთი)",
+    "ssge": "9 აპრილის ქ.",
+    "district": "თბილისის შემოგარენი",
+    "confidence": "exact"
+  },
+  {
+    "myhome": "ა. ბაქრაძის ქ.",
+    "ssge": "ა. ბაქრაძის ქ.",
+    "district": "დიდუბე-ჩუღურეთი",
+    "confidence": "exact"
+  },
+  {
+    "myhome": "ა. გელოვანის ქ.",
+    "ssge": "ა.გელოვანის ქ.",
+    "district": "ვაკე-საბურთალო",
+    "confidence": "exact"
+  },
+  {
+    "myhome": "ა. ვარაზის ქ.",
+    "ssge": "ავთო ვარაზის ქ.",
+    "district": "ვაკე-საბურთალო",
+    "confidence": "fuzzy"
+  },
+  {
+    "myhome": "ა. იოსელიანის ქ.",
+    "ssge": "ალ. იოსელიანის ქ.",
+    "district": "ვაკე-საბურთალო",
+    "confidence": "fuzzy"
+  },
+  {
+    "myhome": "ა. ლაისტის ქ.",
+    "ssge": "არტურ ლაისტის ქ.",
+    "district": "ძველი თბილისი",
+    "confidence": "fuzzy"
+  },
+  {
+    "myhome": "ა. მაჭავარიანის ქ.",
+    "ssge": "მუხრან მაჭავარიანის ქ.",
+    "district": "ვაკე-საბურთალო",
+    "confidence": "fuzzy"
+  },
+  {
+    "myhome": "ა.წერეთლის ქუჩა",
+    "ssge": "ს.წერეთლის ქ.",
+    "district": "გლდანი-ნაძალადევი",
+    "confidence": "fuzzy"
+  },
+  {
+    "myhome": "აბანოს ქ.",
+    "ssge": "აბანოს ქ.",
+    "district": "ძველი თბილისი",
+    "confidence": "exact"
+  },
+  {
+    "myhome": "აბანოს შესახვევი",
+    "ssge": "ამაღლების შეს.",
+    "district": "ძველი თბილისი",
+    "confidence": "fuzzy"
+  },
+  {
+    "myhome": "აბანოს I ჩიხი",
+    "ssge": "აბანოს I ჩიხი",
+    "district": "ძველი თბილისი",
+    "confidence": "exact"
+  },
+  {
+    "myhome": "აბასთუმანის ქ.",
+    "ssge": "ასპინძის ქ.",
+    "district": "დიდუბე-ჩუღურეთი",
+    "confidence": "fuzzy"
+  },
+  {
+    "myhome": "აბაშელის ჩიხი",
+    "ssge": "ბარათაშვილის ჩიხი",
+    "district": "ვაკე-საბურთალო",
+    "confidence": "fuzzy"
+  },
+  {
+    "myhome": "აბაშის ქ.",
+    "ssge": "აბაშის ქ.",
+    "district": "დიდუბე-ჩუღურეთი",
+    "confidence": "exact"
+  },
+  {
+    "myhome": "აბო თბილელის ქ.",
+    "ssge": "აბო თბილელის ქ.",
+    "district": "ძველი თბილისი",
+    "confidence": "exact"
+  },
+  {
+    "myhome": "აბულის ქ.",
+    "ssge": "აბულის ქ.",
+    "district": "ძველი თბილისი",
+    "confidence": "exact"
+  },
+  {
+    "myhome": "აბუსერიძე ტბელის ქ.",
+    "ssge": "აბუსერიძე ტბელის ქ.",
+    "district": "ისანი-სამგორი",
+    "confidence": "exact"
+  },
+  {
+    "myhome": "აგარაკის ქ.",
+    "ssge": "აგარაკის ქ.",
+    "district": "ვაკე-საბურთალო",
+    "confidence": "exact"
+  },
+  {
+    "myhome": "აგარას ქ.",
+    "ssge": "ართვინის ქ.",
+    "district": "დიდუბე-ჩუღურეთი",
+    "confidence": "fuzzy"
+  },
+  {
+    "myhome": "აგარის ქ.",
+    "ssge": "აგარის ქ.",
+    "district": "დიდუბე-ჩუღურეთი",
+    "confidence": "exact"
+  },
+  {
+    "myhome": "აგლაძის ქუჩა #2",
+    "ssge": "აგლაძის ქ.",
+    "district": "დიდუბე-ჩუღურეთი",
+    "confidence": "exact"
+  },
+  {
+    "myhome": "ადიგენის ქ.",
+    "ssge": "ადიგენის ქ.",
+    "district": "დიდუბე-ჩუღურეთი",
+    "confidence": "exact"
+  },
+  {
+    "myhome": "აეროპორტის დას.",
+    "ssge": "აეროპორტის დას.",
+    "district": "ისანი-სამგორი",
+    "confidence": "exact"
+  },
+  {
+    "myhome": "ავთანდილის ქ.",
+    "ssge": "ავთანდილის ქ.",
+    "district": "ვაკე-საბურთალო",
+    "confidence": "exact"
+  },
+  {
+    "myhome": "ავლაბრის მოედანი",
+    "ssge": "გუდიაშვილის მოედ.",
+    "district": "ძველი თბილისი",
+    "confidence": "fuzzy"
+  },
+  {
+    "myhome": "ავშნის ქ.",
+    "ssge": "ავშნის ქ.",
+    "district": "გლდანი-ნაძალადევი",
+    "confidence": "exact"
+  },
+  {
+    "myhome": "ავშნის შეს.",
+    "ssge": "კიკვიძის შესახვევი",
+    "district": "გლდანი-ნაძალადევი",
+    "confidence": "fuzzy"
+  },
+  {
+    "myhome": "ავშნის I გას.",
+    "ssge": "ნაკადულის I გას.",
+    "district": "გლდანი-ნაძალადევი",
+    "confidence": "fuzzy"
+  },
+  {
+    "myhome": "ავშნის I ჩიხ.",
+    "ssge": "აბანოს I ჩიხი",
+    "district": "გლდანი-ნაძალადევი",
+    "confidence": "fuzzy"
+  },
+  {
+    "myhome": "ავშნის III შეს.",
+    "ssge": "ავშნის III შესახვევი",
+    "district": "გლდანი-ნაძალადევი",
+    "confidence": "exact"
+  },
+  {
+    "myhome": "ავშნის IV შეს.",
+    "ssge": "ნიაბის IV შეს.",
+    "district": "გლდანი-ნაძალადევი",
+    "confidence": "fuzzy"
+  },
+  {
+    "myhome": "ავჭალის ქ.",
+    "ssge": "ავჭალის ქ.",
+    "district": "გლდანი-ნაძალადევი",
+    "confidence": "exact"
+  },
+  {
+    "myhome": "ათონელის ქ.",
+    "ssge": "ათონელის ქ.",
+    "district": "ძველი თბილისი",
+    "confidence": "exact"
+  },
+  {
+    "myhome": "აისის ქ.",
+    "ssge": "აისის ქ.",
+    "district": "ვაკე-საბურთალო",
+    "confidence": "exact"
+  },
+  {
+    "myhome": "აისის I ჩიხ.",
+    "ssge": "აისის I ჩიხი",
+    "district": "ვაკე-საბურთალო",
+    "confidence": "exact"
+  },
+  {
+    "myhome": "აისის II ჩიხ.",
+    "ssge": "აისის II ჩიხი",
+    "district": "ვაკე-საბურთალო",
+    "confidence": "exact"
+  },
+  {
+    "myhome": "აკაკი გელოვანის ქ.",
+    "ssge": "მ.გელოვანის ქ.",
+    "district": "ვაკე-საბურთალო",
+    "confidence": "fuzzy"
+  },
+  {
+    "myhome": "აკაკი წერეთლის გამზირი #1-15, 8-10",
+    "ssge": "ა.წერეთლის გამზ.",
+    "district": "დიდუბე-ჩუღურეთი",
+    "confidence": "fuzzy"
+  },
+  {
+    "myhome": "აკაციის ქ.",
+    "ssge": "დოლიძის ქ.",
+    "district": "ვაკე-საბურთალო",
+    "confidence": "fuzzy"
+  },
+  {
+    "myhome": "ალადასტურის ქ.",
+    "ssge": "ალადასტურის ქ.",
+    "district": "ისანი-სამგორი",
+    "confidence": "exact"
+  },
+  {
+    "myhome": "ალადაშვილის ქ",
+    "ssge": "ალადაშვილის ქ.",
+    "district": "ძველი თბილისი",
+    "confidence": "exact"
+  },
+  {
+    "myhome": "ალადაშვილის შესახვევი",
+    "ssge": "ირგვლივის შეს.",
+    "district": "ძველი თბილისი",
+    "confidence": "fuzzy"
+  },
+  {
+    "myhome": "ალავერდის ქ.",
+    "ssge": "ალავერდის ქ.",
+    "district": "გლდანი-ნაძალადევი",
+    "confidence": "exact"
+  },
+  {
+    "myhome": "ალაზნის ქ",
+    "ssge": "ალაზნის ქ.",
+    "district": "ძველი თბილისი",
+    "confidence": "exact"
+  },
+  {
+    "myhome": "ალაზნის შესახვევი",
+    "ssge": "ავლევის შეს.",
+    "district": "ძველი თბილისი",
+    "confidence": "fuzzy"
+  },
+  {
+    "myhome": "ალგეთის ქ.",
+    "ssge": "ალგეთის ქ.",
+    "district": "ძველი თბილისი",
+    "confidence": "exact"
+  },
+  {
+    "myhome": "ალექსანდრე ყაზბეგის გამზირი #1-25, 2-16",
+    "ssge": "ალ.ყაზბეგის გამზ.",
+    "district": "ვაკე-საბურთალო",
+    "confidence": "fuzzy"
+  },
+  {
+    "myhome": "ალექსანდრე ჩხეიძის ქ.",
+    "ssge": "ო.ჩხეიძის ქ.",
+    "district": "თბილისის შემოგარენი",
+    "confidence": "fuzzy"
+  },
+  {
+    "myhome": "ალექსიძის I შეს.",
+    "ssge": "უჩანეიშვილის I შეს.",
+    "district": "ვაკე-საბურთალო",
+    "confidence": "fuzzy"
+  },
+  {
+    "myhome": "ალექსიძის II შეს.",
+    "ssge": "უჩანეიშვილის II შეს.",
+    "district": "ვაკე-საბურთალო",
+    "confidence": "fuzzy"
+  },
+  {
+    "myhome": "ალუბლების ქ.",
+    "ssge": "ალუბლების ქ.",
+    "district": "თბილისის შემოგარენი",
+    "confidence": "exact"
+  },
+  {
+    "myhome": "ამაღლების ქ.",
+    "ssge": "ამაღლების ქ.",
+    "district": "თბილისის შემოგარენი",
+    "confidence": "exact"
+  },
+  {
+    "myhome": "ამაღლების I შეს.",
+    "ssge": "ნიაბის I შეს.",
+    "district": "ძველი თბილისი",
+    "confidence": "fuzzy"
+  },
+  {
+    "myhome": "ამაღლების II ჩიხ.",
+    "ssge": "აბანოს II ჩიხი",
+    "district": "ძველი თბილისი",
+    "confidence": "fuzzy"
+  },
+  {
+    "myhome": "ამბერკ ტაბიძის ქ.",
+    "ssge": "ა.ტაბიძის ქ.",
+    "district": "ვაკე-საბურთალო",
+    "confidence": "fuzzy"
+  },
+  {
+    "myhome": "ამბროლაურის ქ.",
+    "ssge": "ამბროლაურის ქ.",
+    "district": "გლდანი-ნაძალადევი",
+    "confidence": "exact"
+  },
+  {
+    "myhome": "ანაგის ქ.",
+    "ssge": "ენერგეტიკის ქ.",
+    "district": "გლდანი-ნაძალადევი",
+    "confidence": "fuzzy"
+  },
+  {
+    "myhome": "ანაპის 414-ე დივიზიის ქ.",
+    "ssge": "ანაპის 414-ე დივიზიის ქ.",
+    "district": "გლდანი-ნაძალადევი",
+    "confidence": "exact"
+  },
+  {
+    "myhome": "ანდრია რაზმაძის ქ.",
+    "ssge": "ა.რაზმაძის ქ.",
+    "district": "გლდანი-ნაძალადევი",
+    "confidence": "fuzzy"
+  },
+  {
+    "myhome": "ანდრონიკაშვილის I შეს.",
+    "ssge": "ჯავახეთის I შესახვევი",
+    "district": "გლდანი-ნაძალადევი",
+    "confidence": "fuzzy"
+  },
+  {
+    "myhome": "ანტონ კათალიკოსის ჩიხი",
+    "ssge": "ა. კათალიკოსის ჩიხი,",
+    "district": "ძველი თბილისი",
+    "confidence": "fuzzy"
+  },
+  {
+    "myhome": "ანტონ II ქ.",
+    "ssge": "ძმობის II ქ.",
+    "district": "გლდანი-ნაძალადევი",
+    "confidence": "fuzzy"
+  },
+  {
+    "myhome": "ანტონოვსკაიას ქ.",
+    "ssge": "ანტონოვსკაიას ქ.",
+    "district": "ვაკე-საბურთალო",
+    "confidence": "exact"
+  },
+  {
+    "myhome": "არალეთის ქ.",
+    "ssge": "არალეთის ქ.",
+    "district": "გლდანი-ნაძალადევი",
+    "confidence": "exact"
+  },
+  {
+    "myhome": "არარატის ქ.",
+    "ssge": "არარატის ქ.",
+    "district": "ძველი თბილისი",
+    "confidence": "exact"
+  },
+  {
+    "myhome": "არარატის შესახვევი",
+    "ssge": "ვერის შეს.",
+    "district": "ძველი თბილისი",
+    "confidence": "fuzzy"
+  },
+  {
+    "myhome": "არბოს ქ.",
+    "ssge": "არბოს ქ.",
+    "district": "გლდანი-ნაძალადევი",
+    "confidence": "exact"
+  },
+  {
+    "myhome": "არბოშიკის ქ.",
+    "ssge": "არბოშიკის ქ.",
+    "district": "ისანი-სამგორი",
+    "confidence": "exact"
+  },
+  {
+    "myhome": "არგვეთის ქ.",
+    "ssge": "არგვეთის ქ.",
+    "district": "დიდუბე-ჩუღურეთი",
+    "confidence": "exact"
+  },
+  {
+    "myhome": "არზაყან ემუხვარის ქ.",
+    "ssge": "არზაყან ემუხვარის ქ.",
+    "district": "ვაკე-საბურთალო",
+    "confidence": "exact"
+  },
+  {
+    "myhome": "ართვინის ქ.",
+    "ssge": "ართვინის ქ.",
+    "district": "დიდუბე-ჩუღურეთი",
+    "confidence": "exact"
+  },
+  {
+    "myhome": "ართვინის II ჩიხი",
+    "ssge": "ფიროსმანის II ჩიხი",
+    "district": "დიდუბე-ჩუღურეთი",
+    "confidence": "fuzzy"
+  },
+  {
+    "myhome": "არმაზის ქ.",
+    "ssge": "არმაზის ქ.",
+    "district": "ძველი თბილისი",
+    "confidence": "exact"
+  },
+  {
+    "myhome": "არმაზის შესახვევი",
+    "ssge": "ფაბრიკის შესახვევი",
+    "district": "ძველი თბილისი",
+    "confidence": "fuzzy"
+  },
+  {
+    "myhome": "არსენას ქ.",
+    "ssge": "არსენას ქ.",
+    "district": "ძველი თბილისი",
+    "confidence": "exact"
+  },
+  {
+    "myhome": "არტანუჯის ქ.",
+    "ssge": "კასკადის ქ.",
+    "district": "გლდანი-ნაძალადევი",
+    "confidence": "fuzzy"
+  },
+  {
+    "myhome": "არჩილ ამაღლობელის ქ.",
+    "ssge": "ა. ამაღლობელის ქ.",
+    "district": "ვაკე-საბურთალო",
+    "confidence": "fuzzy"
+  },
+  {
+    "myhome": "არჩილ მეფის ქ.",
+    "ssge": "არჩილ მეფის ქ.",
+    "district": "ვაკე-საბურთალო",
+    "confidence": "exact"
+  },
+  {
+    "myhome": "არწივის ქ.",
+    "ssge": "თავისუფლების ქ.",
+    "district": "გლდანი-ნაძალადევი",
+    "confidence": "fuzzy"
+  },
+  {
+    "myhome": "ასი ათასი მოწამის ქ.",
+    "ssge": "ასი ათასი მოწამის ქ.",
+    "district": "ვაკე-საბურთალო",
+    "confidence": "exact"
+  },
+  {
+    "myhome": "ასკანის ქ.",
+    "ssge": "ასკანის ქ.",
+    "district": "ძველი თბილისი",
+    "confidence": "exact"
+  },
+  {
+    "myhome": "ასკანის შესახვევი",
+    "ssge": "ლიხაურის შეს.",
+    "district": "ძველი თბილისი",
+    "confidence": "fuzzy"
+  },
+  {
+    "myhome": "ასმათის ქ.",
+    "ssge": "ასმათის ქ.",
+    "district": "ვაკე-საბურთალო",
+    "confidence": "exact"
+  },
+  {
+    "myhome": "ასპინძის ქ.",
+    "ssge": "ასპინძის ქ.",
+    "district": "დიდუბე-ჩუღურეთი",
+    "confidence": "exact"
+  },
+  {
+    "myhome": "ასპინძის შესახვევი",
+    "ssge": "ბახვის შეს.",
+    "district": "დიდუბე-ჩუღურეთი",
+    "confidence": "fuzzy"
+  },
+  {
+    "myhome": "ასპინძის I ქ.",
+    "ssge": "ბოდავის I ქ.",
+    "district": "დიდუბე-ჩუღურეთი",
+    "confidence": "fuzzy"
+  },
+  {
+    "myhome": "ასპინძის II ქ.",
+    "ssge": "ბოდავის II ქ.",
+    "district": "დიდუბე-ჩუღურეთი",
+    "confidence": "fuzzy"
+  },
+  {
+    "myhome": "ასურეთის ქ.",
+    "ssge": "ასურეთის ქ.",
+    "district": "გლდანი-ნაძალადევი",
+    "confidence": "exact"
+  },
+  {
+    "myhome": "ასურეთის შესახვევი",
+    "ssge": "მეგრელაძის შეს.",
+    "district": "გლდანი-ნაძალადევი",
+    "confidence": "fuzzy"
+  },
+  {
+    "myhome": "ასხინის ქ.",
+    "ssge": "ასხინის ქ.",
+    "district": "დიდუბე-ჩუღურეთი",
+    "confidence": "exact"
+  },
+  {
+    "myhome": "ატენის ქ.",
+    "ssge": "ატენის ქ.",
+    "district": "ვაკე-საბურთალო",
+    "confidence": "exact"
+  },
+  {
+    "myhome": "ატოცის ქ.",
+    "ssge": "ატოცის ქ.",
+    "district": "დიდუბე-ჩუღურეთი",
+    "confidence": "exact"
+  },
+  {
+    "myhome": "აფხაზეთის ქ.",
+    "ssge": "აფხაზეთის ქ.",
+    "district": "თბილისის შემოგარენი",
+    "confidence": "exact"
+  },
+  {
+    "myhome": "აფხაზეთის I შეს.",
+    "ssge": "გოძიაშვილის I შეს.",
+    "district": "თბილისის შემოგარენი",
+    "confidence": "fuzzy"
+  },
+  {
+    "myhome": "აფხაზეთის II შესახვევი",
+    "ssge": "გოძიაშვილის II შეს.",
+    "district": "დიდუბე-ჩუღურეთი",
+    "confidence": "fuzzy"
+  },
+  {
+    "myhome": "აღმაშენებლის გამზ.",
+    "ssge": "აღმაშენებლის გამზ.",
+    "district": "დიდუბე-ჩუღურეთი",
+    "confidence": "exact"
+  },
+  {
+    "myhome": "აღმაშენებლის ქ.",
+    "ssge": "კეცხოველის ქ.",
+    "district": "გლდანი-ნაძალადევი",
+    "confidence": "fuzzy"
+  },
+  {
+    "myhome": "აღმაშენებლის ხეივანი",
+    "ssge": "აღმაშენებლის ხეივანი",
+    "district": "ვაკე-საბურთალო",
+    "confidence": "exact"
+  },
+  {
+    "myhome": "აღმაშენებლის I შეს.",
+    "ssge": "ბუდაპეშტის I შეს.",
+    "district": "ვაკე-საბურთალო",
+    "confidence": "fuzzy"
+  },
+  {
+    "myhome": "აღმაშენებლის II შეს.",
+    "ssge": "ბუდაპეშტის II შეს.",
+    "district": "ვაკე-საბურთალო",
+    "confidence": "fuzzy"
+  },
+  {
+    "myhome": "აჩაბეთის ქ.",
+    "ssge": "აჩაბეთის ქ.",
+    "district": "ისანი-სამგორი",
+    "confidence": "exact"
+  },
+  {
+    "myhome": "აჩაბეთის I შეს.",
+    "ssge": "ჩიკვაიძის I შესახვევი",
+    "district": "ისანი-სამგორი",
+    "confidence": "fuzzy"
+  },
+  {
+    "myhome": "აჩაბეთის II შეს.",
+    "ssge": "ანჯაფარიძის II შესახვევი",
+    "district": "ისანი-სამგორი",
+    "confidence": "fuzzy"
+  },
+  {
+    "myhome": "აწყურის ქ.",
+    "ssge": "აწყურის ქ.",
+    "district": "ისანი-სამგორი",
+    "confidence": "exact"
+  },
+  {
+    "myhome": "აჭარას ქ.",
+    "ssge": "ახალარსენალის ქ.",
+    "district": "დიდუბე-ჩუღურეთი",
+    "confidence": "fuzzy"
+  },
+  {
+    "myhome": "ახალდაბის დასახლება (წყნეთი)",
+    "ssge": "აეროდრომის დას.",
+    "district": "თბილისის შემოგარენი",
+    "confidence": "fuzzy"
+  },
+  {
+    "myhome": "ახალდაბის ქ.",
+    "ssge": "ახალდაბის ქ.",
+    "district": "გლდანი-ნაძალადევი",
+    "confidence": "exact"
+  },
+  {
+    "myhome": "ახალდაბის შესახვევი",
+    "ssge": "მთისძირის შეს.",
+    "district": "გლდანი-ნაძალადევი",
+    "confidence": "fuzzy"
+  },
+  {
+    "myhome": "ახალი ხეივნის ქ.",
+    "ssge": "ახალი ხეივნის ქ.",
+    "district": "ძველი თბილისი",
+    "confidence": "exact"
+  },
+  {
+    "myhome": "ახალმოწამეთა ქ.",
+    "ssge": "ახალმოწამეთა ქ.",
+    "district": "გლდანი-ნაძალადევი",
+    "confidence": "exact"
+  },
+  {
+    "myhome": "ახალუბნის ქ.",
+    "ssge": "ახალუბნის ქ.",
+    "district": "ძველი თბილისი",
+    "confidence": "exact"
+  },
+  {
+    "myhome": "ახალქალაქის ქ.",
+    "ssge": "ახალქალაქის ქ.",
+    "district": "გლდანი-ნაძალადევი",
+    "confidence": "exact"
+  },
+  {
+    "myhome": "ახალციხის ქ.",
+    "ssge": "ახალციხის ქ.",
+    "district": "დიდუბე-ჩუღურეთი",
+    "confidence": "exact"
+  },
+  {
+    "myhome": "ახმეტის ქუჩა # 1-9; 2-12",
+    "ssge": "ახმეტის ქ.",
+    "district": "ძველი თბილისი",
+    "confidence": "exact"
+  },
+  {
+    "myhome": "ახმეტის ჩიხი",
+    "ssge": "ბნელი ჩიხი,",
+    "district": "ძველი თბილისი",
+    "confidence": "fuzzy"
+  },
+  {
+    "myhome": "ახუთის ქ.",
+    "ssge": "ახუთის ქ.",
+    "district": "დიდუბე-ჩუღურეთი",
+    "confidence": "exact"
+  },
+  {
+    "myhome": "ახუნდოვის ქ.",
+    "ssge": "ახუნდოვის ქ.",
+    "district": "ძველი თბილისი",
+    "confidence": "exact"
+  },
+  {
+    "myhome": "აჯამეთის ქ.",
+    "ssge": "აჯამეთის ქ.",
+    "district": "დიდუბე-ჩუღურეთი",
+    "confidence": "exact"
+  },
+  {
+    "myhome": "აჰმედ ჯავადის ქ.",
+    "ssge": "აჰმედ ჯავადის ქ.",
+    "district": "ისანი-სამგორი",
+    "confidence": "exact"
+  },
+  {
+    "myhome": "ბ. კალანდაძის ქ.",
+    "ssge": "ა.კალანდაძის ქ.",
+    "district": "ძველი თბილისი",
+    "confidence": "fuzzy"
+  },
+  {
+    "myhome": "ბ. კვერნაძის ქ.",
+    "ssge": "ბ.კვერნაძის ქ.",
+    "district": "ვაკე-საბურთალო",
+    "confidence": "exact"
+  },
+  {
+    "myhome": "ბაგინეთის ქ.",
+    "ssge": "ბაგინეთის ქ.",
+    "district": "გლდანი-ნაძალადევი",
+    "confidence": "exact"
+  },
+  {
+    "myhome": "ბაგრატ III ქ.",
+    "ssge": "ბაგრატ III ქ.",
+    "district": "ვაკე-საბურთალო",
+    "confidence": "exact"
+  },
+  {
+    "myhome": "ბადიაურის ქ.",
+    "ssge": "ბადიაურის ქ.",
+    "district": "ძველი თბილისი",
+    "confidence": "exact"
+  },
+  {
+    "myhome": "ბაზალეთის ქ.",
+    "ssge": "ბაზალეთის ქ.",
+    "district": "ვაკე-საბურთალო",
+    "confidence": "exact"
+  },
+  {
+    "myhome": "ბათუმის ქ.",
+    "ssge": "ბათუმის ქ.",
+    "district": "დიდუბე-ჩუღურეთი",
+    "confidence": "exact"
+  },
+  {
+    "myhome": "ბათუმის შესახვევი",
+    "ssge": "გრემის შეს.",
+    "district": "დიდუბე-ჩუღურეთი",
+    "confidence": "fuzzy"
+  },
+  {
+    "myhome": "ბაირამაშვილის ქ.",
+    "ssge": "პლატინის ქ.",
+    "district": "გლდანი-ნაძალადევი",
+    "confidence": "fuzzy"
+  },
+  {
+    "myhome": "ბაკურიანის ქ.",
+    "ssge": "ბაკურიანის ქ.",
+    "district": "ვაკე-საბურთალო",
+    "confidence": "exact"
+  },
+  {
+    "myhome": "ბაკურციხის ქ.",
+    "ssge": "ბაკურციხის ქ.",
+    "district": "ვაკე-საბურთალო",
+    "confidence": "exact"
+  },
+  {
+    "myhome": "ბალანჩივაძის ქ.",
+    "ssge": "ბალანჩივაძის ქ.",
+    "district": "ვაკე-საბურთალო",
+    "confidence": "exact"
+  },
+  {
+    "myhome": "ბამბის რიგი",
+    "ssge": "ბამბის რიგი,",
+    "district": "ძველი თბილისი",
+    "confidence": "exact"
+  },
+  {
+    "myhome": "ბანეთაშვილის ქუჩა (ორხევი)",
+    "ssge": "გოკიელის ქ.",
+    "district": "ისანი-სამგორი",
+    "confidence": "fuzzy"
+  },
+  {
+    "myhome": "ბარათაშვილის აღმ.",
+    "ssge": "ბარათაშვილის აღმ.",
+    "district": "ძველი თბილისი",
+    "confidence": "exact"
+  },
+  {
+    "myhome": "ბარათაშვილის ქ.",
+    "ssge": "ბარათაშვილის ქ.",
+    "district": "გლდანი-ნაძალადევი",
+    "confidence": "exact"
+  },
+  {
+    "myhome": "ბარაკონის ქ.",
+    "ssge": "ბარაკონის ქ.",
+    "district": "დიდუბე-ჩუღურეთი",
+    "confidence": "exact"
+  },
+  {
+    "myhome": "ბარალეთის შესახვევი",
+    "ssge": "კოდის შეს.",
+    "district": "გლდანი-ნაძალადევი",
+    "confidence": "fuzzy"
+  },
+  {
+    "myhome": "ბარამიძის ქ.",
+    "ssge": "მშვიდობის ქ.",
+    "district": "გლდანი-ნაძალადევი",
+    "confidence": "fuzzy"
+  },
+  {
+    "myhome": "ბარისახოს ქ.",
+    "ssge": "ბარისახოს ქ.",
+    "district": "გლდანი-ნაძალადევი",
+    "confidence": "exact"
+  },
+  {
+    "myhome": "ბარისახოს შესახვევი",
+    "ssge": "სოღანლუღის შეს.",
+    "district": "გლდანი-ნაძალადევი",
+    "confidence": "fuzzy"
+  },
+  {
+    "myhome": "ბარისახოს ჩიხი",
+    "ssge": "მონასტრის ჩიხი",
+    "district": "გლდანი-ნაძალადევი",
+    "confidence": "fuzzy"
+  },
+  {
+    "myhome": "ბარნოვის ქ.",
+    "ssge": "ბარნოვის ქ.",
+    "district": "ვაკე-საბურთალო",
+    "confidence": "exact"
+  },
+  {
+    "myhome": "ბარნოვის II შესახვევი",
+    "ssge": "ნიაბის II შეს.",
+    "district": "ძველი თბილისი",
+    "confidence": "fuzzy"
+  },
+  {
+    "myhome": "ბარონ დე ბაის ქ.",
+    "ssge": "ბარონ დე ბაის ქ.",
+    "district": "ვაკე-საბურთალო",
+    "confidence": "exact"
+  },
+  {
+    "myhome": "ბაქოს ქ.",
+    "ssge": "ბაქოს ქ.",
+    "district": "დიდუბე-ჩუღურეთი",
+    "confidence": "exact"
+  },
+  {
+    "myhome": "ბაღის ქ.",
+    "ssge": "ბაღის ქ.",
+    "district": "დიდუბე-ჩუღურეთი",
+    "confidence": "exact"
+  },
+  {
+    "myhome": "ბაღნარის ქ.",
+    "ssge": "ბაღნარის ქ.",
+    "district": "გლდანი-ნაძალადევი",
+    "confidence": "exact"
+  },
+  {
+    "myhome": "ბაჩანას ქ.",
+    "ssge": "ბაჩანას ქ.",
+    "district": "თბილისის შემოგარენი",
+    "confidence": "exact"
+  },
+  {
+    "myhome": "ბაჩანას ჩიხი",
+    "ssge": "ტელეგრაფის ჩიხი,",
+    "district": "ძველი თბილისი",
+    "confidence": "fuzzy"
+  },
+  {
+    "myhome": "ბახვის შესახვევი",
+    "ssge": "ბახვის შეს.",
+    "district": "დიდუბე-ჩუღურეთი",
+    "confidence": "exact"
+  },
+  {
+    "myhome": "ბახმაროს ქ.",
+    "ssge": "ბახმაროს ქ.",
+    "district": "გლდანი-ნაძალადევი",
+    "confidence": "exact"
+  },
+  {
+    "myhome": "ბახმაროს შესახვევი",
+    "ssge": "ერეკლეს შესახვევი",
+    "district": "გლდანი-ნაძალადევი",
+    "confidence": "fuzzy"
+  },
+  {
+    "myhome": "ბახტრიონის ქ.",
+    "ssge": "ბახტრიონის ქ.",
+    "district": "ვაკე-საბურთალო",
+    "confidence": "exact"
+  },
+  {
+    "myhome": "ბედიას ქ.",
+    "ssge": "ბედიას ქ.",
+    "district": "ძველი თბილისი",
+    "confidence": "exact"
+  },
+  {
+    "myhome": "ბეთანიის ქ.",
+    "ssge": "ბეთანიის ქ.",
+    "district": "ძველი თბილისი",
+    "confidence": "exact"
+  },
+  {
+    "myhome": "ბეთლემის აღმ",
+    "ssge": "მაყაშვილის აღმ.",
+    "district": "ძველი თბილისი",
+    "confidence": "fuzzy"
+  },
+  {
+    "myhome": "ბეთლემის ქ.",
+    "ssge": "ბეთლემის ქ.",
+    "district": "ძველი თბილისი",
+    "confidence": "exact"
+  },
+  {
+    "myhome": "ბეთლემის ჩიხი",
+    "ssge": "კამანის ჩიხი",
+    "district": "ძველი თბილისი",
+    "confidence": "fuzzy"
+  },
+  {
+    "myhome": "ბელიაშვილი ქ.",
+    "ssge": "თამარაშენის ქ.",
+    "district": "დიდუბე-ჩუღურეთი",
+    "confidence": "fuzzy"
+  },
+  {
+    "myhome": "ბელინსკის ქ.",
+    "ssge": "ბელინსკის ქ.",
+    "district": "ძველი თბილისი",
+    "confidence": "exact"
+  },
+  {
+    "myhome": "ბენდელიანის გორა (ზემო დასახლება)",
+    "ssge": "ბენდელიანის გორა,",
+    "district": "გლდანი-ნაძალადევი",
+    "confidence": "exact"
+  },
+  {
+    "myhome": "ბეჟანიშვილის ქ.",
+    "ssge": "ბეჟანიშვილის ქ.",
+    "district": "გლდანი-ნაძალადევი",
+    "confidence": "exact"
+  },
+  {
+    "myhome": "ბერბუკის ქ.",
+    "ssge": "ბერბუკის ქ.",
+    "district": "ვაკე-საბურთალო",
+    "confidence": "exact"
+  },
+  {
+    "myhome": "ბერი გაბრიელ სალოსის გამზ.",
+    "ssge": "ბერი გაბრიელ სალოსის გამზ.",
+    "district": "ისანი-სამგორი",
+    "confidence": "exact"
+  },
+  {
+    "myhome": "ბერიტაშვილის ქ.",
+    "ssge": "ბერიტაშვილის ქ.",
+    "district": "ვაკე-საბურთალო",
+    "confidence": "exact"
+  },
+  {
+    "myhome": "ბერიძის ქ.",
+    "ssge": "ბერიძის ქ.",
+    "district": "ძველი თბილისი",
+    "confidence": "exact"
+  },
+  {
+    "myhome": "ბერტა ფონ ზუტნერის ქ.",
+    "ssge": "ბერტა ფონ ზუტნერის ქ.",
+    "district": "ვაკე-საბურთალო",
+    "confidence": "exact"
+  },
+  {
+    "myhome": "ბერძენის ქ.",
+    "ssge": "აბაკელიას ქ.",
+    "district": "ძველი თბილისი",
+    "confidence": "fuzzy"
+  },
+  {
+    "myhome": "ბერძენიშვილის ქ.",
+    "ssge": "ბერძენიშვილის ქ.",
+    "district": "ვაკე-საბურთალო",
+    "confidence": "exact"
+  },
+  {
+    "myhome": "ბესარიონ ჟღენტის ქ.",
+    "ssge": "ბ.ჟღენტის ქ.",
+    "district": "ვაკე-საბურთალო",
+    "confidence": "fuzzy"
+  },
+  {
+    "myhome": "ბესარიონ ჭიჭინაძის ქ.",
+    "ssge": "ბ.ჭიჭინაძის ქ.",
+    "district": "ისანი-სამგორი",
+    "confidence": "fuzzy"
+  },
+  {
+    "myhome": "ბესიკის მოედანი",
+    "ssge": "თავისუფლების მოედანი,",
+    "district": "ძველი თბილისი",
+    "confidence": "fuzzy"
+  },
+  {
+    "myhome": "ბესიკის ქ.",
+    "ssge": "ბესიკის ქ.",
+    "district": "ძველი თბილისი",
+    "confidence": "exact"
+  },
+  {
+    "myhome": "ბეღლეთის ქ.",
+    "ssge": "ბეღლეთის ქ.",
+    "district": "ძველი თბილისი",
+    "confidence": "exact"
+  },
+  {
+    "myhome": "ბეშენოვას ქ.",
+    "ssge": "ბეშენოვას ქ.",
+    "district": "გლდანი-ნაძალადევი",
+    "confidence": "exact"
+  },
+  {
+    "myhome": "ბზითაგორის ქ.",
+    "ssge": "დევდარიანის ქ.",
+    "district": "ისანი-სამგორი",
+    "confidence": "fuzzy"
+  },
+  {
+    "myhome": "ბზიფის ქ.",
+    "ssge": "ბზიფის ქ.",
+    "district": "ძველი თბილისი",
+    "confidence": "exact"
+  },
+  {
+    "myhome": "ბზიფის შესახვევი",
+    "ssge": "ლალიონის შესახვევი",
+    "district": "ძველი თბილისი",
+    "confidence": "fuzzy"
+  },
+  {
+    "myhome": "ბიჭვინთის ქ.",
+    "ssge": "ბიჭვინთის ქ.",
+    "district": "გლდანი-ნაძალადევი",
+    "confidence": "exact"
+  },
+  {
+    "myhome": "ბობ უოლშის ქ.",
+    "ssge": "ბობ უოლშის ქ.",
+    "district": "ვაკე-საბურთალო",
+    "confidence": "exact"
+  },
+  {
+    "myhome": "ბოგდან ხმელნიცკის ქ.",
+    "ssge": "ბ.ხმელნიცკის ქ.",
+    "district": "ისანი-სამგორი",
+    "confidence": "fuzzy"
+  },
+  {
+    "myhome": "ბოგვის ქ.",
+    "ssge": "ბოგვის ქ.",
+    "district": "გლდანი-ნაძალადევი",
+    "confidence": "exact"
+  },
+  {
+    "myhome": "ბოდავი II-ქ",
+    "ssge": "დელისის II ქ.",
+    "district": "დიდუბე-ჩუღურეთი",
+    "confidence": "fuzzy"
+  },
+  {
+    "myhome": "ბოდავის I-ქ",
+    "ssge": "ბოდავის I ქ.",
+    "district": "დიდუბე-ჩუღურეთი",
+    "confidence": "exact"
+  },
+  {
+    "myhome": "ბოლნისის ქ.",
+    "ssge": "ბოლნისის ქ.",
+    "district": "გლდანი-ნაძალადევი",
+    "confidence": "exact"
+  },
+  {
+    "myhome": "ბოლნისის ჩიხ.",
+    "ssge": "ისნის ჩიხი,",
+    "district": "ისანი-სამგორი",
+    "confidence": "fuzzy"
+  },
+  {
+    "myhome": "ბოლო აღმართი",
+    "ssge": "ფეთხაინის აღმ.",
+    "district": "ძველი თბილისი",
+    "confidence": "fuzzy"
+  },
+  {
+    "myhome": "ბორითის ქ.",
+    "ssge": "სხვიტორის ქ.",
+    "district": "გლდანი-ნაძალადევი",
+    "confidence": "fuzzy"
+  },
+  {
+    "myhome": "ბოროდინის ქ.",
+    "ssge": "ბოროდინის ქ.",
+    "district": "ძველი თბილისი",
+    "confidence": "exact"
+  },
+  {
+    "myhome": "ბორჯომის ქ.",
+    "ssge": "შოთაძის ქ.",
+    "district": "გლდანი-ნაძალადევი",
+    "confidence": "fuzzy"
+  },
+  {
+    "myhome": "ბოჭორიშვილის ქ.",
+    "ssge": "ბოჭორიშვილის ქ.",
+    "district": "ვაკე-საბურთალო",
+    "confidence": "exact"
+  },
+  {
+    "myhome": "ბოჭორმის ქ.",
+    "ssge": "ბოჭორმის ქ.",
+    "district": "ძველი თბილისი",
+    "confidence": "exact"
+  },
+  {
+    "myhome": "ბჟოლეთის ქ.",
+    "ssge": "ბჟოლეთის ქ.",
+    "district": "გლდანი-ნაძალადევი",
+    "confidence": "exact"
+  },
+  {
+    "myhome": "ბროლოსანის ქ.",
+    "ssge": "ბროლოსანის ქ.",
+    "district": "ვაკე-საბურთალო",
+    "confidence": "exact"
+  },
+  {
+    "myhome": "ბროწეულის ქ.",
+    "ssge": "ბროწეულის ქ.",
+    "district": "ვაკე-საბურთალო",
+    "confidence": "exact"
+  },
+  {
+    "myhome": "ბუაჩიძის ქ.",
+    "ssge": "ხანძთელის ქ.",
+    "district": "გლდანი-ნაძალადევი",
+    "confidence": "fuzzy"
+  },
+  {
+    "myhome": "ბუგეულის ქ.",
+    "ssge": "ბუგეულის ქ.",
+    "district": "გლდანი-ნაძალადევი",
+    "confidence": "exact"
+  },
+  {
+    "myhome": "ბუდაპეშტის ქ",
+    "ssge": "ბუდაპეშტის ქ.",
+    "district": "ვაკე-საბურთალო",
+    "confidence": "exact"
+  },
+  {
+    "myhome": "ბუდაპეშტის I შესახვევი",
+    "ssge": "ბუდაპეშტის I შეს.",
+    "district": "ვაკე-საბურთალო",
+    "confidence": "exact"
+  },
+  {
+    "myhome": "ბუდაპეშტის II შესახვევი",
+    "ssge": "ბუდაპეშტის II შეს.",
+    "district": "ვაკე-საბურთალო",
+    "confidence": "exact"
+  },
+  {
+    "myhome": "ბულაჩაურის ქ.",
+    "ssge": "ბულაჩაურის ქ.",
+    "district": "ვაკე-საბურთალო",
+    "confidence": "exact"
+  },
+  {
+    "myhome": "ბურკიაშვილის ქ.",
+    "ssge": "ბურკიაშვილის ქ.",
+    "district": "ვაკე-საბურთალო",
+    "confidence": "exact"
+  },
+  {
+    "myhome": "გ. ადამიას ქ.",
+    "ssge": "გენო ადამიას ქ.",
+    "district": "გლდანი-ნაძალადევი",
+    "confidence": "fuzzy"
+  },
+  {
+    "myhome": "გ. გოგიშვილის ქ.",
+    "ssge": "გელა გოგიშვილის ქ.",
+    "district": "ვაკე-საბურთალო",
+    "confidence": "fuzzy"
+  },
+  {
+    "myhome": "გ. ნიკოლაძის ქ.",
+    "ssge": "გ. ნიკოლაძის ქ.",
+    "district": "ძველი თბილისი",
+    "confidence": "exact"
+  },
+  {
+    "myhome": "გ. ფერაძის ქ.",
+    "ssge": "გ. ფერაძის ქ.",
+    "district": "ვაკე-საბურთალო",
+    "confidence": "exact"
+  },
+  {
+    "myhome": "გ. ჩოხელის ქ.",
+    "ssge": "გ.ჩოხელის ქ.",
+    "district": "ვაკე-საბურთალო",
+    "confidence": "exact"
+  },
+  {
+    "myhome": "გ. ჯაფარიძის ქ.",
+    "ssge": "მ. ჯაფარიძის ქ.",
+    "district": "ვაკე-საბურთალო",
+    "confidence": "fuzzy"
+  },
+  {
+    "myhome": "გ.ხანძთელის ქ.",
+    "ssge": "გრ.ხანძთელის ქ.",
+    "district": "ვაკე-საბურთალო",
+    "confidence": "fuzzy"
+  },
+  {
+    "myhome": "გაგარინის ქ.",
+    "ssge": "გაგარინის ქ.",
+    "district": "ვაკე-საბურთალო",
+    "confidence": "exact"
+  },
+  {
+    "myhome": "გაგრის ქ.",
+    "ssge": "გაგრის ქ.",
+    "district": "გლდანი-ნაძალადევი",
+    "confidence": "exact"
+  },
+  {
+    "myhome": "გაზაფხულის ქ.",
+    "ssge": "გაზაფხულის ქ.",
+    "district": "ვაკე-საბურთალო",
+    "confidence": "exact"
+  },
+  {
+    "myhome": "გალავნის ქ.",
+    "ssge": "გალავნის ქ.",
+    "district": "ძველი თბილისი",
+    "confidence": "exact"
+  },
+  {
+    "myhome": "გალაკტიონ ტაბიძის ქ.",
+    "ssge": "გ.ტაბიძის ქ.",
+    "district": "ძველი თბილისი",
+    "confidence": "fuzzy"
+  },
+  {
+    "myhome": "გალის ქ",
+    "ssge": "გალის ქ.",
+    "district": "ძველი თბილისი",
+    "confidence": "exact"
+  },
+  {
+    "myhome": "გალის ჩიხი",
+    "ssge": "ლიხაურის ჩიხი,",
+    "district": "ძველი თბილისი",
+    "confidence": "fuzzy"
+  },
+  {
+    "myhome": "გამარჯვების ქ.",
+    "ssge": "ჭიჭინაძის ქ.",
+    "district": "გლდანი-ნაძალადევი",
+    "confidence": "fuzzy"
+  },
+  {
+    "myhome": "გამყრელიძის ქ.",
+    "ssge": "გამყრელიძის ქ.",
+    "district": "გლდანი-ნაძალადევი",
+    "confidence": "exact"
+  },
+  {
+    "myhome": "გამცემლიძის ქ.",
+    "ssge": "გამცემლიძის ქ.",
+    "district": "დიდუბე-ჩუღურეთი",
+    "confidence": "exact"
+  },
+  {
+    "myhome": "განთიადის ქ.",
+    "ssge": "განთიადის ქ.",
+    "district": "გლდანი-ნაძალადევი",
+    "confidence": "exact"
+  },
+  {
+    "myhome": "გარდაბნის გზატკეცილი",
+    "ssge": "გარდაბნის გზატკეცილი,",
+    "district": "ისანი-სამგორი",
+    "confidence": "exact"
+  },
+  {
+    "myhome": "გარეკახეთის ქ.",
+    "ssge": "იუმაშევის ქ.",
+    "district": "ისანი-სამგორი",
+    "confidence": "fuzzy"
+  },
+  {
+    "myhome": "გარეჯელის ქ.",
+    "ssge": "ყაზბეგის ქ.",
+    "district": "გლდანი-ნაძალადევი",
+    "confidence": "fuzzy"
+  },
+  {
+    "myhome": "გარეჯის ქ.",
+    "ssge": "გარეჯის ქ.",
+    "district": "გლდანი-ნაძალადევი",
+    "confidence": "exact"
+  },
+  {
+    "myhome": "გარიყულის ქ.",
+    "ssge": "გარიყულის ქ.",
+    "district": "გლდანი-ნაძალადევი",
+    "confidence": "exact"
+  },
+  {
+    "myhome": "გაფრინდაულის ქ.",
+    "ssge": "გაფრინდაულის ქ.",
+    "district": "დიდუბე-ჩუღურეთი",
+    "confidence": "exact"
+  },
+  {
+    "myhome": "გახოკიძის ქუჩა #50-დან ზემოთ, #111-დან ზემოთ",
+    "ssge": "გახოკიძის ქ.",
+    "district": "ისანი-სამგორი",
+    "confidence": "exact"
+  },
+  {
+    "myhome": "გეგუთის ქ.",
+    "ssge": "გეგუთის ქ.",
+    "district": "გლდანი-ნაძალადევი",
+    "confidence": "exact"
+  },
+  {
+    "myhome": "გედევანიშვილის ჩიხი",
+    "ssge": "ჯავახეთის ჩიხი",
+    "district": "ძველი თბილისი",
+    "confidence": "fuzzy"
+  },
+  {
+    "myhome": "გეზათის ქ.",
+    "ssge": "გეზათის ქ.",
+    "district": "ისანი-სამგორი",
+    "confidence": "exact"
+  },
+  {
+    "myhome": "გელაზის ქ.",
+    "ssge": "იმედაძის ქ.",
+    "district": "თბილისის შემოგარენი",
+    "confidence": "fuzzy"
+  },
+  {
+    "myhome": "გენერალ კვინიტაძის ქ.",
+    "ssge": "გენერალ კვინიტაძის ქ.",
+    "district": "დიდუბე-ჩუღურეთი",
+    "confidence": "exact"
+  },
+  {
+    "myhome": "გვაზავას I შეს.",
+    "ssge": "გორგასლის I შეს.",
+    "district": "ისანი-სამგორი",
+    "confidence": "fuzzy"
+  },
+  {
+    "myhome": "გვაზაურის ქ.",
+    "ssge": "გვაზაურის ქ.",
+    "district": "გლდანი-ნაძალადევი",
+    "confidence": "exact"
+  },
+  {
+    "myhome": "გვაზაურის ხევი",
+    "ssge": "ლოტკინის ხევი,",
+    "district": "გლდანი-ნაძალადევი",
+    "confidence": "fuzzy"
+  },
+  {
+    "myhome": "გვაზაურის II შესახვევი",
+    "ssge": "ერეკლე II შესახვევი",
+    "district": "გლდანი-ნაძალადევი",
+    "confidence": "fuzzy"
+  },
+  {
+    "myhome": "გვეტაძის ქ.",
+    "ssge": "გვეტაძის ქ.",
+    "district": "დიდუბე-ჩუღურეთი",
+    "confidence": "exact"
+  },
+  {
+    "myhome": "გვირილების ქ.",
+    "ssge": "გვირილების ქ.",
+    "district": "ვაკე-საბურთალო",
+    "confidence": "exact"
+  },
+  {
+    "myhome": "გიგა ლორთქიფანიძის ქ.",
+    "ssge": "ო.ლორთქიფანიძის ქ.",
+    "district": "ძველი თბილისი",
+    "confidence": "fuzzy"
+  },
+  {
+    "myhome": "გიგო ზაზიაშვილის ქ.",
+    "ssge": "გ.ზაზიაშვილის ქ.",
+    "district": "დიდუბე-ჩუღურეთი",
+    "confidence": "fuzzy"
+  },
+  {
+    "myhome": "გივიშვილის ქ.",
+    "ssge": "გივიშვილის ქ.",
+    "district": "დიდუბე-ჩუღურეთი",
+    "confidence": "exact"
+  },
+  {
+    "myhome": "გიორგი ახვლედიანის ქ.",
+    "ssge": "გ. ახვლედიანის ქ.",
+    "district": "ძველი თბილისი",
+    "confidence": "fuzzy"
+  },
+  {
+    "myhome": "გიორგი ბრწყინვალეს ქ.",
+    "ssge": "გიორგი ბრწყინვალეს ქ.",
+    "district": "ვაკე-საბურთალო",
+    "confidence": "exact"
+  },
+  {
+    "myhome": "გიორგი გურამიშვილის ქ.",
+    "ssge": "გიორგი გურამიშვილის ქ.",
+    "district": "ძველი თბილისი",
+    "confidence": "exact"
+  },
+  {
+    "myhome": "გიორგი დანელიას ქ.",
+    "ssge": "გ. დანელიას ქ.",
+    "district": "ვაკე-საბურთალო",
+    "confidence": "fuzzy"
+  },
+  {
+    "myhome": "გიორგი ნადარეიშვილის ქ.",
+    "ssge": "თ. ნადარეიშვილის ქ.",
+    "district": "ისანი-სამგორი",
+    "confidence": "fuzzy"
+  },
+  {
+    "myhome": "გიორგი წერეთლის ქ.",
+    "ssge": "გ.წერეთლის ქ.",
+    "district": "ვაკე-საბურთალო",
+    "confidence": "fuzzy"
+  },
+  {
+    "myhome": "გლდანის ქ.",
+    "ssge": "ბერთუბნის ქ.",
+    "district": "გლდანი-ნაძალადევი",
+    "confidence": "fuzzy"
+  },
+  {
+    "myhome": "გლდანისხევის ქ.",
+    "ssge": "ბოჭორიშვილის ქ.",
+    "district": "გლდანი-ნაძალადევი",
+    "confidence": "fuzzy"
+  },
+  {
+    "myhome": "გლდანულას დას.",
+    "ssge": "გლდანულას დას.",
+    "district": "გლდანი-ნაძალადევი",
+    "confidence": "exact"
+  },
+  {
+    "myhome": "გლინკას ქ.",
+    "ssge": "გლინკას ქ.",
+    "district": "გლდანი-ნაძალადევი",
+    "confidence": "exact"
+  },
+  {
+    "myhome": "გმირთა მოედანი",
+    "ssge": "გმირთა მოედანი,",
+    "district": "ვაკე-საბურთალო",
+    "confidence": "exact"
+  },
+  {
+    "myhome": "გოგებაშვილის ქ.",
+    "ssge": "გოგებაშვილის ქ.",
+    "district": "ძველი თბილისი",
+    "confidence": "exact"
+  },
+  {
+    "myhome": "გოგიბერიძის ქ.",
+    "ssge": "გოგიბერიძის ქ.",
+    "district": "დიდუბე-ჩუღურეთი",
+    "confidence": "exact"
+  },
+  {
+    "myhome": "გოგნის ქ.",
+    "ssge": "ექიმების ქ.",
+    "district": "გლდანი-ნაძალადევი",
+    "confidence": "fuzzy"
+  },
+  {
+    "myhome": "გოგოლაურის ქ.",
+    "ssge": "გოგოლაურის ქ.",
+    "district": "დიდუბე-ჩუღურეთი",
+    "confidence": "exact"
+  },
+  {
+    "myhome": "გოგჩას ქ.",
+    "ssge": "ბარათაშვილის ქ.",
+    "district": "ძველი თბილისი",
+    "confidence": "fuzzy"
+  },
+  {
+    "myhome": "გოკიელის ქ.",
+    "ssge": "გოკიელის ქ.",
+    "district": "ისანი-სამგორი",
+    "confidence": "exact"
+  },
+  {
+    "myhome": "გომარეთის ქ.",
+    "ssge": "გომარეთის ქ.",
+    "district": "გლდანი-ნაძალადევი",
+    "confidence": "exact"
+  },
+  {
+    "myhome": "გომბორის ქ.",
+    "ssge": "გომბორის ქ.",
+    "district": "გლდანი-ნაძალადევი",
+    "confidence": "exact"
+  },
+  {
+    "myhome": "გომის ქ.",
+    "ssge": "გომის ქ.",
+    "district": "ძველი თბილისი",
+    "confidence": "exact"
+  },
+  {
+    "myhome": "გორგასალის ქუჩა # 37-117, 2-54, 1,3 ჩიხები",
+    "ssge": "ბორბალოს ქ.",
+    "district": "ძველი თბილისი",
+    "confidence": "fuzzy"
+  },
+  {
+    "myhome": "გორგასლის ქ.",
+    "ssge": "გორგასლის ქ.",
+    "district": "ვაკე-საბურთალო",
+    "confidence": "exact"
+  },
+  {
+    "myhome": "გორგულის ქ.",
+    "ssge": "ბორჩალოელის ქ.",
+    "district": "გლდანი-ნაძალადევი",
+    "confidence": "fuzzy"
+  },
+  {
+    "myhome": "გორდის ქ.",
+    "ssge": "გორდის ქ.",
+    "district": "გლდანი-ნაძალადევი",
+    "confidence": "exact"
+  },
+  {
+    "myhome": "გორის ქ.",
+    "ssge": "გორის ქ.",
+    "district": "დიდუბე-ჩუღურეთი",
+    "confidence": "exact"
+  },
+  {
+    "myhome": "გორკის ქ.",
+    "ssge": "გორკის ქ.",
+    "district": "დიდუბე-ჩუღურეთი",
+    "confidence": "exact"
+  },
+  {
+    "myhome": "გორკის ჩიხი",
+    "ssge": "ხარაგაულის ჩიხი,",
+    "district": "დიდუბე-ჩუღურეთი",
+    "confidence": "fuzzy"
+  },
+  {
+    "myhome": "გოძიაშვილის I შეს.",
+    "ssge": "გოძიაშვილის I შეს.",
+    "district": "ვაკე-საბურთალო",
+    "confidence": "exact"
+  },
+  {
+    "myhome": "გოძიაშვილის III შეს.",
+    "ssge": "გოძიაშვილის III შეს.",
+    "district": "ვაკე-საბურთალო",
+    "confidence": "exact"
+  },
+  {
+    "myhome": "გრ. ვოლსკის ქ.",
+    "ssge": "გ. ვოლსკის ქ.",
+    "district": "ძველი თბილისი",
+    "confidence": "fuzzy"
+  },
+  {
+    "myhome": "გრ. ლორთქიფანიძის ქ.",
+    "ssge": "გრ. ლორთქიფანიძის ქ.",
+    "district": "ისანი-სამგორი",
+    "confidence": "exact"
+  },
+  {
+    "myhome": "გრ. რობაქიძის გამზ.",
+    "ssge": "გრ. რობაქიძის გამზ.",
+    "district": "დიდუბე-ჩუღურეთი",
+    "confidence": "exact"
+  },
+  {
+    "myhome": "გრანელის ქ.",
+    "ssge": "ლამის ქ.",
+    "district": "დიდუბე-ჩუღურეთი",
+    "confidence": "fuzzy"
+  },
+  {
+    "myhome": "გრანელის ჩიხ.",
+    "ssge": "ბერძნის ჩიხი,",
+    "district": "დიდუბე-ჩუღურეთი",
+    "confidence": "fuzzy"
+  },
+  {
+    "myhome": "გრემის ქ.",
+    "ssge": "გულისაშვილის ქ.",
+    "district": "გლდანი-ნაძალადევი",
+    "confidence": "fuzzy"
+  },
+  {
+    "myhome": "გრემის შესახვევი",
+    "ssge": "გრემის შეს.",
+    "district": "ძველი თბილისი",
+    "confidence": "exact"
+  },
+  {
+    "myhome": "გრიბოედოვის ქ",
+    "ssge": "გრიბოედოვის ქ.",
+    "district": "ძველი თბილისი",
+    "confidence": "exact"
+  },
+  {
+    "myhome": "გრიგოლ აბაშიძის ქ.",
+    "ssge": "ი.აბაშიძის ქ.",
+    "district": "ძველი თბილისი",
+    "confidence": "fuzzy"
+  },
+  {
+    "myhome": "გრიგოლ ჩხიკვაძის ქ.",
+    "ssge": "გრიგოლ ჩხიკვაძის ქ.",
+    "district": "ვაკე-საბურთალო",
+    "confidence": "exact"
+  },
+  {
+    "myhome": "გრიშაშვილის ქ.",
+    "ssge": "გრიშაშვილის ქ.",
+    "district": "ძველი თბილისი",
+    "confidence": "exact"
+  },
+  {
+    "myhome": "გრუზინსკის ქ.",
+    "ssge": "გრუზინსკის ქ.",
+    "district": "გლდანი-ნაძალადევი",
+    "confidence": "exact"
+  },
+  {
+    "myhome": "გუდამაყრის ქ.",
+    "ssge": "გუდამაყრის ქ.",
+    "district": "ისანი-სამგორი",
+    "confidence": "exact"
+  },
+  {
+    "myhome": "გუდაუთის ქ.",
+    "ssge": "გუდაუთის ქ.",
+    "district": "დიდუბე-ჩუღურეთი",
+    "confidence": "exact"
+  },
+  {
+    "myhome": "გუდაურის ქუჩა (ყოფ. ტარიელ სვანიძის ქუჩა)",
+    "ssge": "გუდაურის ქ.",
+    "district": "ძველი თბილისი",
+    "confidence": "exact"
+  },
+  {
+    "myhome": "გუდიაშვილის მოედანი",
+    "ssge": "გუდიაშვილის მოედ.",
+    "district": "ძველი თბილისი",
+    "confidence": "exact"
+  },
+  {
+    "myhome": "გუდიაშვილის ქ.",
+    "ssge": "გუდიაშვილის ქ.",
+    "district": "თბილისის შემოგარენი",
+    "confidence": "exact"
+  },
+  {
+    "myhome": "გუთნის ქუჩა #1-31, 2-30",
+    "ssge": "გუთნის ქ.",
+    "district": "ძველი თბილისი",
+    "confidence": "exact"
+  },
+  {
+    "myhome": "გულანშაროს ქ.",
+    "ssge": "მცხეთის ქ.",
+    "district": "ვაკე-საბურთალო",
+    "confidence": "fuzzy"
+  },
+  {
+    "myhome": "გულიას ქ.",
+    "ssge": "გულიას ქ.",
+    "district": "ძველი თბილისი",
+    "confidence": "exact"
+  },
+  {
+    "myhome": "გულისაშვილის ქ.",
+    "ssge": "გულისაშვილის ქ.",
+    "district": "გლდანი-ნაძალადევი",
+    "confidence": "exact"
+  },
+  {
+    "myhome": "გულრიფშის ქ.",
+    "ssge": "გულრიფშის ქ.",
+    "district": "გლდანი-ნაძალადევი",
+    "confidence": "exact"
+  },
+  {
+    "myhome": "გულუას ქ.",
+    "ssge": "გულუას ქ.",
+    "district": "ძველი თბილისი",
+    "confidence": "exact"
+  },
+  {
+    "myhome": "გუმათის ქ.",
+    "ssge": "გუმათის ქ.",
+    "district": "დიდუბე-ჩუღურეთი",
+    "confidence": "exact"
+  },
+  {
+    "myhome": "გუმათჰესის ქ.",
+    "ssge": "გუმათჰესის ქ.",
+    "district": "ისანი-სამგორი",
+    "confidence": "exact"
+  },
+  {
+    "myhome": "გუმბრის ქ.",
+    "ssge": "გუმბრის ქ.",
+    "district": "ძველი თბილისი",
+    "confidence": "exact"
+  },
+  {
+    "myhome": "გურამ რჩეულიშვილის ქ.",
+    "ssge": "ლევან რჩეულიშვილის ქ.",
+    "district": "ძველი თბილისი",
+    "confidence": "fuzzy"
+  },
+  {
+    "myhome": "გურამიშვილის გამზ.",
+    "ssge": "გურამიშვილის გამზ. (სანზონა)",
+    "district": "გლდანი-ნაძალადევი",
+    "confidence": "exact"
+  },
+  {
+    "myhome": "გურამიშვილის ქ.",
+    "ssge": "კაკლების ქ.",
+    "district": "ვაკე-საბურთალო",
+    "confidence": "fuzzy"
+  },
+  {
+    "myhome": "გურგენიძის ქ.",
+    "ssge": "გურგენიძის ქ.",
+    "district": "დიდუბე-ჩუღურეთი",
+    "confidence": "exact"
+  },
+  {
+    "myhome": "გურიელის ქ.",
+    "ssge": "გურიელის ქ.",
+    "district": "ვაკე-საბურთალო",
+    "confidence": "exact"
+  },
+  {
+    "myhome": "გურიის ქ.",
+    "ssge": "გურიის ქ.",
+    "district": "გლდანი-ნაძალადევი",
+    "confidence": "exact"
+  },
+  {
+    "myhome": "გურჯაანის ქ.",
+    "ssge": "გურჯაანის ქ.",
+    "district": "ძველი თბილისი",
+    "confidence": "exact"
+  },
+  {
+    "myhome": "გურჯაანის ჩიხი",
+    "ssge": "საბატონეს ჩიხი",
+    "district": "ძველი თბილისი",
+    "confidence": "fuzzy"
+  },
+  {
+    "myhome": "გუჯარეთის I ქ.",
+    "ssge": "დოლაბაურის I ქ.",
+    "district": "ისანი-სამგორი",
+    "confidence": "fuzzy"
+  },
+  {
+    "myhome": "გუჯარეთის II ქ.",
+    "ssge": "შორაპანის II ქ.",
+    "district": "ისანი-სამგორი",
+    "confidence": "fuzzy"
+  },
+  {
+    "myhome": "დ. ბაქრაძის ქ.",
+    "ssge": "დ.ბაქრაძის ქ.",
+    "district": "დიდუბე-ჩუღურეთი",
+    "confidence": "exact"
+  },
+  {
+    "myhome": "დ. მირიანაშვილის ქ.",
+    "ssge": "ს. მირიანაშვილის ქ.",
+    "district": "ვაკე-საბურთალო",
+    "confidence": "fuzzy"
+  },
+  {
+    "myhome": "დ. სარაჯიშვილის ქ.",
+    "ssge": "დ.სარაჯიშვილის ქ.",
+    "district": "ვაკე-საბურთალო",
+    "confidence": "exact"
+  },
+  {
+    "myhome": "დადიანის ქ.",
+    "ssge": "დრანდის ქ.",
+    "district": "გლდანი-ნაძალადევი",
+    "confidence": "fuzzy"
+  },
+  {
+    "myhome": "დავარის ქ.",
+    "ssge": "დავარის ქ.",
+    "district": "ვაკე-საბურთალო",
+    "confidence": "exact"
+  },
+  {
+    "myhome": "დავით აღმაშენებლის ქ.",
+    "ssge": "დავით აღმაშენებლის ქ.",
+    "district": "თბილისის შემოგარენი",
+    "confidence": "exact"
+  },
+  {
+    "myhome": "დავით ყიფიანის ქ.",
+    "ssge": "დ.ყიფიანის ქ.",
+    "district": "დიდუბე-ჩუღურეთი",
+    "confidence": "fuzzy"
+  },
+  {
+    "myhome": "დავითაიას ქ.",
+    "ssge": "ლორთქიფანიძის ქ.",
+    "district": "ისანი-სამგორი",
+    "confidence": "fuzzy"
+  },
+  {
+    "myhome": "დაისის ქ.",
+    "ssge": "დაისის ქ.",
+    "district": "გლდანი-ნაძალადევი",
+    "confidence": "exact"
+  },
+  {
+    "myhome": "დარიალის ქ.",
+    "ssge": "დარიალის ქ.",
+    "district": "ვაკე-საბურთალო",
+    "confidence": "exact"
+  },
+  {
+    "myhome": "დარკვეთის ქ.",
+    "ssge": "დარკვეთის ქ.",
+    "district": "გლდანი-ნაძალადევი",
+    "confidence": "exact"
+  },
+  {
+    "myhome": "დები იშხნელების ქ.",
+    "ssge": "დები იშხნელების ქ.",
+    "district": "ვაკე-საბურთალო",
+    "confidence": "exact"
+  },
+  {
+    "myhome": "დეკაბრისტების მოედანი",
+    "ssge": "გულიას მოედ.",
+    "district": "ძველი თბილისი",
+    "confidence": "fuzzy"
+  },
+  {
+    "myhome": "დელისის ქ.",
+    "ssge": "დელისის ქ.",
+    "district": "ვაკე-საბურთალო",
+    "confidence": "exact"
+  },
+  {
+    "myhome": "დელისის I ქ.",
+    "ssge": "დელისის I ქ.",
+    "district": "ვაკე-საბურთალო",
+    "confidence": "exact"
+  },
+  {
+    "myhome": "დელისის II ქ.",
+    "ssge": "დელისის II ქ.",
+    "district": "ვაკე-საბურთალო",
+    "confidence": "exact"
+  },
+  {
+    "myhome": "დელისის III ქ.",
+    "ssge": "დოლაბაურის III ქ.",
+    "district": "ვაკე-საბურთალო",
+    "confidence": "fuzzy"
+  },
+  {
+    "myhome": "დემეტრე თავდადებულის ქ.",
+    "ssge": "დემეტრე თავდადებულის ქ.",
+    "district": "თბილისის შემოგარენი",
+    "confidence": "exact"
+  },
+  {
+    "myhome": "დვალის ქ.",
+    "ssge": "მეფრინველეობის ქ.",
+    "district": "ისანი-სამგორი",
+    "confidence": "fuzzy"
+  },
+  {
+    "myhome": "დიდგორის ქ.",
+    "ssge": "დიდგორის ქ.",
+    "district": "გლდანი-ნაძალადევი",
+    "confidence": "exact"
+  },
+  {
+    "myhome": "დიდგორის III შეს.",
+    "ssge": "უჩანეიშვილის III შეს.",
+    "district": "ვაკე-საბურთალო",
+    "confidence": "fuzzy"
+  },
+  {
+    "myhome": "დიდგორის V შეს.",
+    "ssge": "ნიაბის V შეს.",
+    "district": "ვაკე-საბურთალო",
+    "confidence": "fuzzy"
+  },
+  {
+    "myhome": "დიდების ქ.",
+    "ssge": "საყანდელიძის ქ.",
+    "district": "თბილისის შემოგარენი",
+    "confidence": "fuzzy"
+  },
+  {
+    "myhome": "დიდი ხეივნის ქ.",
+    "ssge": "დიდი ხეივნის ქ.",
+    "district": "ძველი თბილისი",
+    "confidence": "exact"
+  },
+  {
+    "myhome": "დიდი ჯიხაიშის ქ.",
+    "ssge": "დიდი ჯიხაიშის ქ.",
+    "district": "გლდანი-ნაძალადევი",
+    "confidence": "exact"
+  },
+  {
+    "myhome": "დიდუბის ქუჩა;",
+    "ssge": "დიდუბის ქ.",
+    "district": "დიდუბე-ჩუღურეთი",
+    "confidence": "exact"
+  },
+  {
+    "myhome": "დიდუბის III შესახვევი",
+    "ssge": "ნიაბის III შეს.",
+    "district": "დიდუბე-ჩუღურეთი",
+    "confidence": "fuzzy"
+  },
+  {
+    "myhome": "დირსიჭალას ქ.",
+    "ssge": "რუსთაველის ქ.",
+    "district": "ისანი-სამგორი",
+    "confidence": "fuzzy"
+  },
+  {
+    "myhome": "დისევის ქ.",
+    "ssge": "დისევის ქ.",
+    "district": "დიდუბე-ჩუღურეთი",
+    "confidence": "exact"
+  },
+  {
+    "myhome": "დიუმას ქ.",
+    "ssge": "დიუმას ქ.",
+    "district": "ძველი თბილისი",
+    "confidence": "exact"
+  },
+  {
+    "myhome": "დიღმისწყლის ქ.",
+    "ssge": "დიღმისწყლის ქ.",
+    "district": "ვაკე-საბურთალო",
+    "confidence": "exact"
+  },
+  {
+    "myhome": "დიღომბარის ქ",
+    "ssge": "დიღომბარის ქ.",
+    "district": "დიდუბე-ჩუღურეთი",
+    "confidence": "exact"
+  },
+  {
+    "myhome": "დიღომი 7",
+    "ssge": "დიღომი 1",
+    "district": "ვაკე-საბურთალო",
+    "confidence": "exact"
+  },
+  {
+    "myhome": "დმანისის ქ",
+    "ssge": "დმანისის ქ.",
+    "district": "ძველი თბილისი",
+    "confidence": "exact"
+  },
+  {
+    "myhome": "დოდაშვილის მოედანი",
+    "ssge": "ზაარბრიუკენის მოედ.",
+    "district": "ისანი-სამგორი",
+    "confidence": "fuzzy"
+  },
+  {
+    "myhome": "დოდო აბაშიძის ქ.",
+    "ssge": "დ. აბაშიძის ქ.",
+    "district": "დიდუბე-ჩუღურეთი",
+    "confidence": "fuzzy"
+  },
+  {
+    "myhome": "დოესის ქ.",
+    "ssge": "დოესის ქ.",
+    "district": "ისანი-სამგორი",
+    "confidence": "exact"
+  },
+  {
+    "myhome": "დოლაბაურის მოედანი",
+    "ssge": "მარჯანიშვილის მოედანი",
+    "district": "ისანი-სამგორი",
+    "confidence": "fuzzy"
+  },
+  {
+    "myhome": "დოლაბაურის ხევის ქ.",
+    "ssge": "თეთრი ხევის ქ.",
+    "district": "ისანი-სამგორი",
+    "confidence": "fuzzy"
+  },
+  {
+    "myhome": "დოლაბაურის I ქ.",
+    "ssge": "დოლაბაურის I ქ.",
+    "district": "ისანი-სამგორი",
+    "confidence": "exact"
+  },
+  {
+    "myhome": "დრანდის ქ.",
+    "ssge": "დრანდის ქ.",
+    "district": "გლდანი-ნაძალადევი",
+    "confidence": "exact"
+  },
+  {
+    "myhome": "დურმიშიძის ქ.",
+    "ssge": "დურმიშიძის ქ.",
+    "district": "ისანი-სამგორი",
+    "confidence": "exact"
+  },
+  {
+    "myhome": "დუტა მეგრელის ქ.",
+    "ssge": "დუტუ მეგრელის ქ.",
+    "district": "ძველი თბილისი",
+    "confidence": "fuzzy"
+  },
+  {
+    "myhome": "დუშეთის ქ.",
+    "ssge": "დუშეთის ქ.",
+    "district": "ძველი თბილისი",
+    "confidence": "exact"
+  },
+  {
+    "myhome": "ე. ამაშუკელის ქ.",
+    "ssge": "ე. ამაშუკელის ქ.",
+    "district": "ვაკე-საბურთალო",
+    "confidence": "exact"
+  },
+  {
+    "myhome": "ე. ანდრონიკაშვილის ქ.",
+    "ssge": "ე. ანდრონიკაშვილის ქ. (ზაჰესი)",
+    "district": "გლდანი-ნაძალადევი",
+    "confidence": "exact"
+  },
+  {
+    "myhome": "ე. მიქელაძის ქ.",
+    "ssge": "ლ.მიქელაძის ქ.",
+    "district": "დიდუბე-ჩუღურეთი",
+    "confidence": "fuzzy"
+  },
+  {
+    "myhome": "ე. ტატიშვილის ქ.",
+    "ssge": "ე.ტატიშვილის ქ.",
+    "district": "ძველი თბილისი",
+    "confidence": "exact"
+  },
+  {
+    "myhome": "ედისიის ქ.",
+    "ssge": "ვართაგავას ქ.",
+    "district": "გლდანი-ნაძალადევი",
+    "confidence": "fuzzy"
+  },
+  {
+    "myhome": "ევდოშვილის ქ.",
+    "ssge": "ევდოშვილის ქ.",
+    "district": "დიდუბე-ჩუღურეთი",
+    "confidence": "exact"
+  },
+  {
+    "myhome": "ევროპის მოედ.",
+    "ssge": "ორბელიანის მოედ.",
+    "district": "ძველი თბილისი",
+    "confidence": "fuzzy"
+  },
+  {
+    "myhome": "ეთიმ გურჯის ქ",
+    "ssge": "იეთიმ გურჯის ქ.",
+    "district": "ძველი თბილისი",
+    "confidence": "fuzzy"
+  },
+  {
+    "myhome": "ეკალაძის ქ.",
+    "ssge": "ეკალაძის ქ.",
+    "district": "ძველი თბილისი",
+    "confidence": "exact"
+  },
+  {
+    "myhome": "ეკატერინე გაბაშვილის ქ.",
+    "ssge": "ე.გაბაშვილის ქ.",
+    "district": "ძველი თბილისი",
+    "confidence": "fuzzy"
+  },
+  {
+    "myhome": "ელდარის ქ.",
+    "ssge": "ელდარის ქ.",
+    "district": "ისანი-სამგორი",
+    "confidence": "exact"
+  },
+  {
+    "myhome": "ელენე ახვლედიანის ქ.",
+    "ssge": "ე.ახვლედიანის ქ.",
+    "district": "დიდუბე-ჩუღურეთი",
+    "confidence": "fuzzy"
+  },
+  {
+    "myhome": "ელეფთერ ანდრონიკაშვილის ქუჩა # 35-145",
+    "ssge": "ე. ანდრონიკაშვილის ქ.",
+    "district": "გლდანი-ნაძალადევი",
+    "confidence": "fuzzy"
+  },
+  {
+    "myhome": "ენგურჰესის ქ.",
+    "ssge": "ენგურჰესის ქ.",
+    "district": "ისანი-სამგორი",
+    "confidence": "exact"
+  },
+  {
+    "myhome": "ენერგეტიკის ქ.",
+    "ssge": "ენერგეტიკის ქ.",
+    "district": "გლდანი-ნაძალადევი",
+    "confidence": "exact"
+  },
+  {
+    "myhome": "ენისელის ქ.",
+    "ssge": "ენისელის ქ.",
+    "district": "გლდანი-ნაძალადევი",
+    "confidence": "exact"
+  },
+  {
+    "myhome": "ენუქიძის ქუჩა #1-11",
+    "ssge": "ენუქიძის ქ.",
+    "district": "ისანი-სამგორი",
+    "confidence": "exact"
+  },
+  {
+    "myhome": "ერედვის ქ.",
+    "ssge": "ერედვის ქ.",
+    "district": "ვაკე-საბურთალო",
+    "confidence": "exact"
+  },
+  {
+    "myhome": "ერეკლე II -ის ქ",
+    "ssge": "ერეკლე II-ის ქ.",
+    "district": "ძველი თბილისი",
+    "confidence": "exact"
+  },
+  {
+    "myhome": "ერეკლე II შესახვევი",
+    "ssge": "ერეკლე II შესახვევი",
+    "district": "ძველი თბილისი",
+    "confidence": "exact"
+  },
+  {
+    "myhome": "ერთობის ქ.",
+    "ssge": "ვასაძის ქ.",
+    "district": "გლდანი-ნაძალადევი",
+    "confidence": "fuzzy"
+  },
+  {
+    "myhome": "ერისთავ-ხოშტარიას ქ.",
+    "ssge": "ერისთავ-ხოშტარიას ქ.",
+    "district": "ძველი თბილისი",
+    "confidence": "exact"
+  },
+  {
+    "myhome": "ერწოს ქ.",
+    "ssge": "ერწოს ქ.",
+    "district": "გლდანი-ნაძალადევი",
+    "confidence": "exact"
+  },
+  {
+    "myhome": "ესენინის ქ.",
+    "ssge": "ესენინის ქ.",
+    "district": "ისანი-სამგორი",
+    "confidence": "exact"
+  },
+  {
+    "myhome": "ეფრემ ზაქარაიას ქ.",
+    "ssge": "ე. ზაქარაიას ქ.",
+    "district": "გლდანი-ნაძალადევი",
+    "confidence": "fuzzy"
+  },
+  {
+    "myhome": "ექიმის ქ",
+    "ssge": "ექიმის ქ.",
+    "district": "ისანი-სამგორი",
+    "confidence": "exact"
+  },
+  {
+    "myhome": "ვ. ანჯაფარიძის ქ.",
+    "ssge": "ზ. ანჯაფარიძის ქ.",
+    "district": "ძველი თბილისი",
+    "confidence": "fuzzy"
+  },
+  {
+    "myhome": "ვ. ბატონიშვილის ქ.",
+    "ssge": "ვახუშტი ბატონიშვილის ქ.",
+    "district": "ვაკე-საბურთალო",
+    "confidence": "fuzzy"
+  },
+  {
+    "myhome": "ვ. ბერიძის ქ.",
+    "ssge": "ვახტანგ ბერიძის ქ.",
+    "district": "ძველი თბილისი",
+    "confidence": "fuzzy"
+  },
+  {
+    "myhome": "ვ. გაბაშვილის ქ.",
+    "ssge": "გ. გაბაშვილის ქ.",
+    "district": "ვაკე-საბურთალო",
+    "confidence": "fuzzy"
+  },
+  {
+    "myhome": "ვ. თამარაშვილის ქ.",
+    "ssge": "ვასილ თამარაშვილის ქ.",
+    "district": "გლდანი-ნაძალადევი",
+    "confidence": "fuzzy"
+  },
+  {
+    "myhome": "ვ. ნოზაძის ქ.",
+    "ssge": "ვ.ნოზაძის ქ.",
+    "district": "ვაკე-საბურთალო",
+    "confidence": "exact"
+  },
+  {
+    "myhome": "ვ. ხორნაულის ქ.",
+    "ssge": "ვანო ხორნაულის ქ.",
+    "district": "გლდანი-ნაძალადევი",
+    "confidence": "fuzzy"
+  },
+  {
+    "myhome": "ვაზიანის ქ.",
+    "ssge": "ვაზიანის ქ.",
+    "district": "გლდანი-ნაძალადევი",
+    "confidence": "exact"
+  },
+  {
+    "myhome": "ვაზის ქ.",
+    "ssge": "ვაზის ქ.",
+    "district": "ისანი-სამგორი",
+    "confidence": "exact"
+  },
+  {
+    "myhome": "ვაზისუბნის დას",
+    "ssge": "ვაზისუბნის დასახლება",
+    "district": "ისანი-სამგორი",
+    "confidence": "exact"
+  },
+  {
+    "myhome": "ვაზისუბნის ქ.",
+    "ssge": "ვაზისუბნის ქ.",
+    "district": "ვაკე-საბურთალო",
+    "confidence": "exact"
+  },
+  {
+    "myhome": "ვალენტინ თოფურიძის ქ.",
+    "ssge": "ვ თოფურიძის ქ.",
+    "district": "ვაკე-საბურთალო",
+    "confidence": "fuzzy"
+  },
+  {
+    "myhome": "ვანათის ქ.",
+    "ssge": "ინგუშეთის ქ.",
+    "district": "გლდანი-ნაძალადევი",
+    "confidence": "fuzzy"
+  },
+  {
+    "myhome": "ვანის ქ.",
+    "ssge": "ვანის ქ.",
+    "district": "გლდანი-ნაძალადევი",
+    "confidence": "exact"
+  },
+  {
+    "myhome": "ვაჟა-ფშაველას გამზირი",
+    "ssge": "ვაჟა-ფშაველას გამზ.",
+    "district": "ვაკე-საბურთალო",
+    "confidence": "exact"
+  },
+  {
+    "myhome": "ვაჟა-ფშაველას ქ.",
+    "ssge": "ვაჟა-ფშაველას ქ.",
+    "district": "თბილისის შემოგარენი",
+    "confidence": "exact"
+  },
+  {
+    "myhome": "ვაჟა-ფშაველას I ჩიხ.",
+    "ssge": "ვაჟა ფშაველას I ჩიხი,",
+    "district": "თბილისის შემოგარენი",
+    "confidence": "exact"
+  },
+  {
+    "myhome": "ვაჟა-ფშაველას III შეს.",
+    "ssge": "ვაჟა ფშაველას III შეს.",
+    "district": "ვაკე-საბურთალო",
+    "confidence": "exact"
+  },
+  {
+    "myhome": "ვარაზისხევის ქ.",
+    "ssge": "ვარაზისხევის ქ.",
+    "district": "ვაკე-საბურთალო",
+    "confidence": "exact"
+  },
+  {
+    "myhome": "ვარდევანის ქ",
+    "ssge": "ვარდევანის ქ.",
+    "district": "გლდანი-ნაძალადევი",
+    "confidence": "exact"
+  },
+  {
+    "myhome": "ვარდისუბნის ქ.",
+    "ssge": "ვარდისუბნის ქ.",
+    "district": "გლდანი-ნაძალადევი",
+    "confidence": "exact"
+  },
+  {
+    "myhome": "ვართაგავას ქ.",
+    "ssge": "ვართაგავას ქ.",
+    "district": "გლდანი-ნაძალადევი",
+    "confidence": "exact"
+  },
+  {
+    "myhome": "ვარკეთილის მეურნეობა",
+    "ssge": "ვარკეთილის მეურნეობა",
+    "district": "ისანი-სამგორი",
+    "confidence": "exact"
+  },
+  {
+    "myhome": "ვასაძის ქ.",
+    "ssge": "ვასაძის ქ.",
+    "district": "გლდანი-ნაძალადევი",
+    "confidence": "exact"
+  },
+  {
+    "myhome": "ვასო აბაშიძის ქ.",
+    "ssge": "ვ.აბაშიძის ქ.",
+    "district": "ძველი თბილისი",
+    "confidence": "fuzzy"
+  },
+  {
+    "myhome": "ვაშლიჯვარის დასახლება",
+    "ssge": "სამგორის დასახლება",
+    "district": "ვაკე-საბურთალო",
+    "confidence": "fuzzy"
+  },
+  {
+    "myhome": "ვაშლოვანის ქ.",
+    "ssge": "ვაშლოვანის ქ.",
+    "district": "ძველი თბილისი",
+    "confidence": "exact"
+  },
+  {
+    "myhome": "ვაჩნაძის ქ.",
+    "ssge": "ვაჩნაძის ქ.",
+    "district": "ძველი თბილისი",
+    "confidence": "exact"
+  },
+  {
+    "myhome": "ვახტანგ გორგასლის ქ.",
+    "ssge": "ვახტან გორგასლის ქ",
+    "district": "ძველი თბილისი",
+    "confidence": "fuzzy"
+  },
+  {
+    "myhome": "ვახუშტი ბაგრატიონის ქ.",
+    "ssge": "ვ.ბაგრატიონის ქ.",
+    "district": "დიდუბე-ჩუღურეთი",
+    "confidence": "fuzzy"
+  },
+  {
+    "myhome": "ვეზიროვის ქ.",
+    "ssge": "ვეზიროვის ქ.",
+    "district": "ძველი თბილისი",
+    "confidence": "exact"
+  },
+  {
+    "myhome": "ველისციხის ქ.",
+    "ssge": "ველისციხის ქ.",
+    "district": "გლდანი-ნაძალადევი",
+    "confidence": "exact"
+  },
+  {
+    "myhome": "ვერცხლის ქ",
+    "ssge": "ვერცხლის ქ.",
+    "district": "ძველი თბილისი",
+    "confidence": "exact"
+  },
+  {
+    "myhome": "ვერჰარნის ქ",
+    "ssge": "ვერჰარნის ქ.",
+    "district": "დიდუბე-ჩუღურეთი",
+    "confidence": "exact"
+  },
+  {
+    "myhome": "ვეფხისტყაოსნის ქ.",
+    "ssge": "ვეფხისტყაოსნის ქ.",
+    "district": "ვაკე-საბურთალო",
+    "confidence": "exact"
+  },
+  {
+    "myhome": "ვეშაპურის ქ.",
+    "ssge": "ვეშაპურის ქ.",
+    "district": "დიდუბე-ჩუღურეთი",
+    "confidence": "exact"
+  },
+  {
+    "myhome": "ვეძათხევის ქ.",
+    "ssge": "ვეძათხევის ქ.",
+    "district": "დიდუბე-ჩუღურეთი",
+    "confidence": "exact"
+  },
+  {
+    "myhome": "ვეძინის ქ.",
+    "ssge": "ვეძინის ქ.",
+    "district": "ძველი თბილისი",
+    "confidence": "exact"
+  },
+  {
+    "myhome": "ვირსალაძის ქ.",
+    "ssge": "ვირსალაძის ქ.",
+    "district": "ძველი თბილისი",
+    "confidence": "exact"
+  },
+  {
+    "myhome": "ზ. მხარგრძელის ქ.",
+    "ssge": "ზ. მხარგრძელის ქ.",
+    "district": "ისანი-სამგორი",
+    "confidence": "exact"
+  },
+  {
+    "myhome": "ზ. სარაჯიშვილის ქ.",
+    "ssge": "პ.სარაჯიშვილის ქ.",
+    "district": "ვაკე-საბურთალო",
+    "confidence": "fuzzy"
+  },
+  {
+    "myhome": "ზ. ქიქოძის ქ.",
+    "ssge": "ზ. ქიქოძის ქ.",
+    "district": "ძველი თბილისი",
+    "confidence": "exact"
+  },
+  {
+    "myhome": "ზავრიევის ქ.",
+    "ssge": "სტურუას ქ.",
+    "district": "ისანი-სამგორი",
+    "confidence": "fuzzy"
+  },
+  {
+    "myhome": "ზანდუკელის ქუჩა;",
+    "ssge": "ზანდუკელის ქ.",
+    "district": "ძველი თბილისი",
+    "confidence": "exact"
+  },
+  {
+    "myhome": "ზარზმის ქ.",
+    "ssge": "ზარზმის ქ.",
+    "district": "გლდანი-ნაძალადევი",
+    "confidence": "exact"
+  },
+  {
+    "myhome": "ზარწემის ქ.",
+    "ssge": "უჩანეიშვილის ქ.",
+    "district": "ვაკე-საბურთალო",
+    "confidence": "fuzzy"
+  },
+  {
+    "myhome": "ზაქარაიას ქ.",
+    "ssge": "მაისურაძის ქ.",
+    "district": "გლდანი-ნაძალადევი",
+    "confidence": "fuzzy"
+  },
+  {
+    "myhome": "ზაქარია ჯორჯაძის ქ.",
+    "ssge": "ზაქარია ჯორჯაძის ქ.",
+    "district": "დიდუბე-ჩუღურეთი",
+    "confidence": "exact"
+  },
+  {
+    "myhome": "ზაქარიაძის ქ.",
+    "ssge": "ზაქარიაძის ქ.",
+    "district": "ვაკე-საბურთალო",
+    "confidence": "exact"
+  },
+  {
+    "myhome": "ზახაროვის ქ.",
+    "ssge": "ზახაროვის ქ.",
+    "district": "ისანი-სამგორი",
+    "confidence": "exact"
+  },
+  {
+    "myhome": "ზაჰესის ქ.",
+    "ssge": "ლესელიძის ქ.",
+    "district": "გლდანი-ნაძალადევი",
+    "confidence": "fuzzy"
+  },
+  {
+    "myhome": "ზედაზნის ქ.",
+    "ssge": "ზედაზნის ქ.",
+    "district": "გლდანი-ნაძალადევი",
+    "confidence": "exact"
+  },
+  {
+    "myhome": "ზედამზის ქუჩა",
+    "ssge": "ზედამზის ქ.",
+    "district": "გლდანი-ნაძალადევი",
+    "confidence": "exact"
+  },
+  {
+    "myhome": "ზედაუბნის ქუჩა;",
+    "ssge": "ზედაუბნის ქ.",
+    "district": "გლდანი-ნაძალადევი",
+    "confidence": "exact"
+  },
+  {
+    "myhome": "ზედგენიძის ქ.",
+    "ssge": "ზედგენიძის ქ.",
+    "district": "ძველი თბილისი",
+    "confidence": "exact"
+  },
+  {
+    "myhome": "ზეთისხილის ქ.",
+    "ssge": "ზეთისხილის ქ.",
+    "district": "დიდუბე-ჩუღურეთი",
+    "confidence": "exact"
+  },
+  {
+    "myhome": "ზეკარის ქ.",
+    "ssge": "ზეკარის ქ.",
+    "district": "გლდანი-ნაძალადევი",
+    "confidence": "exact"
+  },
+  {
+    "myhome": "ზემო ვაკის ქ.",
+    "ssge": "ზემო ვაკის ქ.",
+    "district": "ვაკე-საბურთალო",
+    "confidence": "exact"
+  },
+  {
+    "myhome": "ზემო ვეძისის ქ.",
+    "ssge": "ზემო ვეძისის ქ.",
+    "district": "ვაკე-საბურთალო",
+    "confidence": "exact"
+  },
+  {
+    "myhome": "ზვარეთის ქ.",
+    "ssge": "ზვარეთის ქ.",
+    "district": "გლდანი-ნაძალადევი",
+    "confidence": "exact"
+  },
+  {
+    "myhome": "ზიარის ქ.",
+    "ssge": "ზიარის ქ.",
+    "district": "გლდანი-ნაძალადევი",
+    "confidence": "exact"
+  },
+  {
+    "myhome": "ზიგზაგის I-ქ.",
+    "ssge": "ნავთლუღის I ქ.",
+    "district": "გლდანი-ნაძალადევი",
+    "confidence": "fuzzy"
+  },
+  {
+    "myhome": "ზინდისის ქ.",
+    "ssge": "ზინდისის ქ.",
+    "district": "ძველი თბილისი",
+    "confidence": "exact"
+  },
+  {
+    "myhome": "ზიჩის ქ.",
+    "ssge": "ზიჩის ქ.",
+    "district": "ძველი თბილისი",
+    "confidence": "exact"
+  },
+  {
+    "myhome": "ზნაკვის ქ.",
+    "ssge": "მარსელის ქ.",
+    "district": "გლდანი-ნაძალადევი",
+    "confidence": "fuzzy"
+  },
+  {
+    "myhome": "ზოვრეთის ქ.",
+    "ssge": "ზოვრეთის ქ.",
+    "district": "ვაკე-საბურთალო",
+    "confidence": "exact"
+  },
+  {
+    "myhome": "ზუგდიდის ქ.",
+    "ssge": "ზუგდიდის ქ.",
+    "district": "დიდუბე-ჩუღურეთი",
+    "confidence": "exact"
+  },
+  {
+    "myhome": "ზურაბ ანჯაფარიძის I შეს.",
+    "ssge": "ზ. ანჯაფარიძის I შეს.",
+    "district": "ვაკე-საბურთალო",
+    "confidence": "fuzzy"
+  },
+  {
+    "myhome": "ზურაბაშვილის ქ.",
+    "ssge": "ბოცვაძის ქ.",
+    "district": "ძველი თბილისი",
+    "confidence": "fuzzy"
+  },
+  {
+    "myhome": "ზურგოვანა",
+    "ssge": "სოფ. ზურგოვანა",
+    "district": "ვაკე-საბურთალო",
+    "confidence": "fuzzy"
+  },
+  {
+    "myhome": "თ. ბატონიშვილის ქ.",
+    "ssge": "დავით ბატონიშვილის ქ.",
+    "district": "გლდანი-ნაძალადევი",
+    "confidence": "fuzzy"
+  },
+  {
+    "myhome": "თ. ბუაჩიძის (ტერევენკო) ქ.",
+    "ssge": "თ.ბუაჩიძის ქ.",
+    "district": "დიდუბე-ჩუღურეთი",
+    "confidence": "exact"
+  },
+  {
+    "myhome": "თ. ნადარეიშვილის ქ.",
+    "ssge": "თ. ნადარეიშვილის ქ.",
+    "district": "ვაკე-საბურთალო",
+    "confidence": "exact"
+  },
+  {
+    "myhome": "თ. რაზიკაშვილის ქ.",
+    "ssge": "ლუკა რაზიკაშვილის ქ.",
+    "district": "ძველი თბილისი",
+    "confidence": "fuzzy"
+  },
+  {
+    "myhome": "თ. ტირონის ქ.",
+    "ssge": "თეოდორე ტირონის ქ.",
+    "district": "ვაკე-საბურთალო",
+    "confidence": "fuzzy"
+  },
+  {
+    "myhome": "თავაძის ქ.",
+    "ssge": "თავაძის ქ.",
+    "district": "ვაკე-საბურთალო",
+    "confidence": "exact"
+  },
+  {
+    "myhome": "თავისუფლების მოედანი",
+    "ssge": "თავისუფლების მოედანი,",
+    "district": "ძველი თბილისი",
+    "confidence": "exact"
+  },
+  {
+    "myhome": "თავისუფლების ქ.",
+    "ssge": "თავისუფლების ქ.",
+    "district": "გლდანი-ნაძალადევი",
+    "confidence": "exact"
+  },
+  {
+    "myhome": "თამარ მეფის გამზ.",
+    "ssge": "თამარ მეფის გამზ.",
+    "district": "დიდუბე-ჩუღურეთი",
+    "confidence": "exact"
+  },
+  {
+    "myhome": "თამარ მეფის ქ.",
+    "ssge": "თამარ მეფის ქ.",
+    "district": "თბილისის შემოგარენი",
+    "confidence": "exact"
+  },
+  {
+    "myhome": "თამარის ქ.",
+    "ssge": "ტბის ქ.",
+    "district": "ისანი-სამგორი",
+    "confidence": "fuzzy"
+  },
+  {
+    "myhome": "თაქთაქიშვილის ქ.",
+    "ssge": "თაქთაქიშვილის ქ.",
+    "district": "ვაკე-საბურთალო",
+    "confidence": "exact"
+  },
+  {
+    "myhome": "თბილისის ზღვა",
+    "ssge": "თბილისის ზღვა",
+    "district": "გლდანი-ნაძალადევი",
+    "confidence": "exact"
+  },
+  {
+    "myhome": "თბილისის ქ.",
+    "ssge": "თბილისის ქ.",
+    "district": "თბილისის შემოგარენი",
+    "confidence": "exact"
+  },
+  {
+    "myhome": "თევდორე მღვდლის ქ.",
+    "ssge": "თევდორე მღვდლის ქ.",
+    "district": "დიდუბე-ჩუღურეთი",
+    "confidence": "exact"
+  },
+  {
+    "myhome": "თეზამის ქ.",
+    "ssge": "ბროსეს ქ.",
+    "district": "ძველი თბილისი",
+    "confidence": "fuzzy"
+  },
+  {
+    "myhome": "თეთნულდის ქუჩა;",
+    "ssge": "თეთნულდის ქ.",
+    "district": "დიდუბე-ჩუღურეთი",
+    "confidence": "exact"
+  },
+  {
+    "myhome": "თეთრი გიორგის ქ.",
+    "ssge": "თეთრი გიორგის ქ.",
+    "district": "ვაკე-საბურთალო",
+    "confidence": "exact"
+  },
+  {
+    "myhome": "თეთრი ხევის ქ.",
+    "ssge": "თეთრი ხევის ქ.",
+    "district": "ისანი-სამგორი",
+    "confidence": "exact"
+  },
+  {
+    "myhome": "თეკლათის ქ.",
+    "ssge": "თეკლათის ქ.",
+    "district": "დიდუბე-ჩუღურეთი",
+    "confidence": "exact"
+  },
+  {
+    "myhome": "თელავის ქ",
+    "ssge": "თელავის ქ.",
+    "district": "ძველი თბილისი",
+    "confidence": "exact"
+  },
+  {
+    "myhome": "თელეთის ქ",
+    "ssge": "თელეთის ქ.",
+    "district": "ძველი თბილისი",
+    "confidence": "exact"
+  },
+  {
+    "myhome": "თერგის ქ.",
+    "ssge": "თერგის ქ.",
+    "district": "გლდანი-ნაძალადევი",
+    "confidence": "exact"
+  },
+  {
+    "myhome": "თერჯოლის ქ.",
+    "ssge": "მარჯანიშვილის ქ.",
+    "district": "გლდანი-ნაძალადევი",
+    "confidence": "fuzzy"
+  },
+  {
+    "myhome": "თვალჭრელიძის ქ.",
+    "ssge": "თვალჭრელიძის ქ.",
+    "district": "ისანი-სამგორი",
+    "confidence": "exact"
+  },
+  {
+    "myhome": "თინათინის ქ.",
+    "ssge": "თინათინის ქ.",
+    "district": "ვაკე-საბურთალო",
+    "confidence": "exact"
+  },
+  {
+    "myhome": "თმოგვის ქ",
+    "ssge": "თმოგვის ქ.",
+    "district": "გლდანი-ნაძალადევი",
+    "confidence": "exact"
+  },
+  {
+    "myhome": "თოდრიას ქ.",
+    "ssge": "მებაღიშვილის ქ.",
+    "district": "გლდანი-ნაძალადევი",
+    "confidence": "fuzzy"
+  },
+  {
+    "myhome": "თოიძის ქ",
+    "ssge": "თოიძის ქ.",
+    "district": "დიდუბე-ჩუღურეთი",
+    "confidence": "exact"
+  },
+  {
+    "myhome": "თოლენჯის ქ.",
+    "ssge": "ღლონტის ქ.",
+    "district": "ისანი-სამგორი",
+    "confidence": "fuzzy"
+  },
+  {
+    "myhome": "თორნიკე ერისთავის ქ.",
+    "ssge": "თ.ერისთავის ქ. (დიდუბე)",
+    "district": "დიდუბე-ჩუღურეთი",
+    "confidence": "fuzzy"
+  },
+  {
+    "myhome": "თოფურიას ქ.",
+    "ssge": "არდაზიანის ქ.",
+    "district": "ვაკე-საბურთალო",
+    "confidence": "fuzzy"
+  },
+  {
+    "myhome": "თრიალეთის ქ.",
+    "ssge": "თრიალეთის ქ.",
+    "district": "ისანი-სამგორი",
+    "confidence": "exact"
+  },
+  {
+    "myhome": "თუთის ქ.",
+    "ssge": "ართმელიძის ქ.",
+    "district": "ვაკე-საბურთალო",
+    "confidence": "fuzzy"
+  },
+  {
+    "myhome": "თუმანიანის ქუჩა;",
+    "ssge": "თუმანიანის ქ.",
+    "district": "ძველი თბილისი",
+    "confidence": "exact"
+  },
+  {
+    "myhome": "ი. ბაბუციძის ქ.",
+    "ssge": "ი. ბაბუციძის ქ.",
+    "district": "ისანი-სამგორი",
+    "confidence": "exact"
+  },
+  {
+    "myhome": "ი. კაჭარავას ქ.",
+    "ssge": "ი.კაჭარავას ქ.",
+    "district": "გლდანი-ნაძალადევი",
+    "confidence": "exact"
+  },
+  {
+    "myhome": "ი. ოდიშელიძის ქ.",
+    "ssge": "ილია ოდიშელიძის ქ.",
+    "district": "ვაკე-საბურთალო",
+    "confidence": "fuzzy"
+  },
+  {
+    "myhome": "ი. პეტრიწის ქ.",
+    "ssge": "იოანე პეტრიწის ქ.",
+    "district": "ვაკე-საბურთალო",
+    "confidence": "fuzzy"
+  },
+  {
+    "myhome": "ი. სურგულაძის ქ.",
+    "ssge": "ს.სურგულაძის ქ.",
+    "district": "ვაკე-საბურთალო",
+    "confidence": "fuzzy"
+  },
+  {
+    "myhome": "ი. ჰომერის ქ.",
+    "ssge": "იან ჰომერის ქ.",
+    "district": "ვაკე-საბურთალო",
+    "confidence": "fuzzy"
+  },
+  {
+    "myhome": "იაკობის ქ.",
+    "ssge": "იაკობის ქ.",
+    "district": "გლდანი-ნაძალადევი",
+    "confidence": "exact"
+  },
+  {
+    "myhome": "იალნოს ქ.",
+    "ssge": "იალნოს ქ.",
+    "district": "ისანი-სამგორი",
+    "confidence": "exact"
+  },
+  {
+    "myhome": "იამანიძის ქ.",
+    "ssge": "იამანიძის ქ.",
+    "district": "დიდუბე-ჩუღურეთი",
+    "confidence": "exact"
+  },
+  {
+    "myhome": "იაროსლავსკის ქ.",
+    "ssge": "ლენტეხის ქ.",
+    "district": "დიდუბე-ჩუღურეთი",
+    "confidence": "fuzzy"
+  },
+  {
+    "myhome": "იასამანის ქ.",
+    "ssge": "იასამანის ქ.",
+    "district": "ვაკე-საბურთალო",
+    "confidence": "exact"
+  },
+  {
+    "myhome": "იასამნის ქ.",
+    "ssge": "იასამნის ქ.",
+    "district": "გლდანი-ნაძალადევი",
+    "confidence": "exact"
+  },
+  {
+    "myhome": "იგოეთის ქ.",
+    "ssge": "იგოეთის ქ.",
+    "district": "ისანი-სამგორი",
+    "confidence": "exact"
+  },
+  {
+    "myhome": "იდუმალას ქ.",
+    "ssge": "იდუმალას ქ.",
+    "district": "ისანი-სამგორი",
+    "confidence": "exact"
+  },
+  {
+    "myhome": "იეთიმ-გურჯის ქ.",
+    "ssge": "იეთიმ გურჯის ქ.",
+    "district": "ძველი თბილისი",
+    "confidence": "exact"
+  },
+  {
+    "myhome": "იერუსალიმის ქ",
+    "ssge": "იერუსალიმის ქ.",
+    "district": "ძველი თბილისი",
+    "confidence": "exact"
+  },
+  {
+    "myhome": "ივერთუბნის ქ.",
+    "ssge": "ივერთუბნის ქ.",
+    "district": "დიდუბე-ჩუღურეთი",
+    "confidence": "exact"
+  },
+  {
+    "myhome": "ივერიელის ქ.",
+    "ssge": "აფხაიძის ქ.",
+    "district": "თბილისის შემოგარენი",
+    "confidence": "fuzzy"
+  },
+  {
+    "myhome": "ივერიის ქ",
+    "ssge": "ივერიის ქ.",
+    "district": "ძველი თბილისი",
+    "confidence": "exact"
+  },
+  {
+    "myhome": "ივრის ქ",
+    "ssge": "გურიის ქ.",
+    "district": "ძველი თბილისი",
+    "confidence": "fuzzy"
+  },
+  {
+    "myhome": "ილია ჭავჭავაძის გამზირი",
+    "ssge": "ი.ჭავჭავაძის გამზ.",
+    "district": "ვაკე-საბურთალო",
+    "confidence": "fuzzy"
+  },
+  {
+    "myhome": "ილია ჭავჭავაძის ქ.",
+    "ssge": "ე.ჭავჭავაძის ქ.",
+    "district": "გლდანი-ნაძალადევი",
+    "confidence": "fuzzy"
+  },
+  {
+    "myhome": "ილორის ქ.",
+    "ssge": "ილორის ქ.",
+    "district": "გლდანი-ნაძალადევი",
+    "confidence": "exact"
+  },
+  {
+    "myhome": "ილურიძის ქ",
+    "ssge": "ილურიძის ქ.",
+    "district": "გლდანი-ნაძალადევი",
+    "confidence": "exact"
+  },
+  {
+    "myhome": "იმერეთის ქ",
+    "ssge": "იმერეთის ქ.",
+    "district": "გლდანი-ნაძალადევი",
+    "confidence": "exact"
+  },
+  {
+    "myhome": "ინგოროყვას ქუჩა #1-7, 2-6.",
+    "ssge": "ინგოროყვას ქ.",
+    "district": "ძველი თბილისი",
+    "confidence": "exact"
+  },
+  {
+    "myhome": "ინგუშეთის ქ.",
+    "ssge": "ინგუშეთის ქ.",
+    "district": "გლდანი-ნაძალადევი",
+    "confidence": "exact"
+  },
+  {
+    "myhome": "ინოვაციების ქ.",
+    "ssge": "იმედაშვილის ქ.",
+    "district": "თბილისის შემოგარენი",
+    "confidence": "fuzzy"
+  },
+  {
+    "myhome": "ინოლა გურგულიას ქ.",
+    "ssge": "ი. გურგულიას ქ.",
+    "district": "ძველი თბილისი",
+    "confidence": "fuzzy"
+  },
+  {
+    "myhome": "ინტერნატის ქ",
+    "ssge": "ინტერნატის ქ.",
+    "district": "გლდანი-ნაძალადევი",
+    "confidence": "exact"
+  },
+  {
+    "myhome": "იონა ვაკელის ქ.",
+    "ssge": "იონა ვაკელის ქ.",
+    "district": "ვაკე-საბურთალო",
+    "confidence": "exact"
+  },
+  {
+    "myhome": "იოსელიანის ქ.",
+    "ssge": "იოსელიანის ქ.",
+    "district": "ვაკე-საბურთალო",
+    "confidence": "exact"
+  },
+  {
+    "myhome": "იპოლიტოვ-ივანოვის ქ",
+    "ssge": "იპოლიტოვ ივანოვის ქ.",
+    "district": "გლდანი-ნაძალადევი",
+    "confidence": "exact"
+  },
+  {
+    "myhome": "ირაკლი აბაშიძის ქუჩა #1-53; 2-50",
+    "ssge": "ჰ.აბაშიძის ქ.",
+    "district": "ვაკე-საბურთალო",
+    "confidence": "fuzzy"
+  },
+  {
+    "myhome": "ირბახის ქ.",
+    "ssge": "ირბახის ქ.",
+    "district": "ძველი თბილისი",
+    "confidence": "exact"
+  },
+  {
+    "myhome": "ირგვლივის შესახვევი",
+    "ssge": "ირგვლივის შეს.",
+    "district": "ძველი თბილისი",
+    "confidence": "exact"
+  },
+  {
+    "myhome": "ირემაშვილის ქ.",
+    "ssge": "მოსულიშვილის ქ.",
+    "district": "გლდანი-ნაძალადევი",
+    "confidence": "fuzzy"
+  },
+  {
+    "myhome": "ირინა შტენბერგის ქ.",
+    "ssge": "ირინა შტენბერგის ქ.",
+    "district": "ისანი-სამგორი",
+    "confidence": "exact"
+  },
+  {
+    "myhome": "ისააკიანის ქ.",
+    "ssge": "მიდელაურის ქ.",
+    "district": "გლდანი-ნაძალადევი",
+    "confidence": "fuzzy"
+  },
+  {
+    "myhome": "ისაკაძის ქ.",
+    "ssge": "ისაკაძის ქ.",
+    "district": "ვაკე-საბურთალო",
+    "confidence": "exact"
+  },
+  {
+    "myhome": "ისნის ქ.",
+    "ssge": "ისნის ქ.",
+    "district": "ისანი-სამგორი",
+    "confidence": "exact"
+  },
+  {
+    "myhome": "ისუნდერის ქ.",
+    "ssge": "მეგობრობის ქ.",
+    "district": "გლდანი-ნაძალადევი",
+    "confidence": "fuzzy"
+  },
+  {
+    "myhome": "იტალიის ქ.",
+    "ssge": "ვეჯინის ქ.",
+    "district": "ძველი თბილისი",
+    "confidence": "fuzzy"
+  },
+  {
+    "myhome": "იუმაშევის ქუჩა; #14 და ზემოთ #15 და ზემოთ",
+    "ssge": "იუმაშევის ქ.",
+    "district": "ისანი-სამგორი",
+    "confidence": "exact"
+  },
+  {
+    "myhome": "იუნკერთა ქ.",
+    "ssge": "იუნკერთა ქ.",
+    "district": "ისანი-სამგორი",
+    "confidence": "exact"
+  },
+  {
+    "myhome": "იყალთოს გორა",
+    "ssge": "იყალთოს გორა",
+    "district": "ვაკე-საბურთალო",
+    "confidence": "exact"
+  },
+  {
+    "myhome": "იყალთოს ქ.",
+    "ssge": "იყალთოს ქუჩა",
+    "district": "ვაკე-საბურთალო",
+    "confidence": "exact"
+  },
+  {
+    "myhome": "კ. აფხაზის ქ.",
+    "ssge": "კოტე აფხაზის ქ.",
+    "district": "ძველი თბილისი",
+    "confidence": "fuzzy"
+  },
+  {
+    "myhome": "კ. ბაქრაძის ქ.",
+    "ssge": "კ.ბაქრაძის ქ.",
+    "district": "ისანი-სამგორი",
+    "confidence": "exact"
+  },
+  {
+    "myhome": "კ. გლდანელის ქ.",
+    "ssge": "კულა გლდანელის ქ.",
+    "district": "გლდანი-ნაძალადევი",
+    "confidence": "fuzzy"
+  },
+  {
+    "myhome": "კ. მახარაძის ქ.",
+    "ssge": "კოტე მახარაძის ქ.",
+    "district": "ძველი თბილისი",
+    "confidence": "fuzzy"
+  },
+  {
+    "myhome": "კ. მესხის ქ.",
+    "ssge": "კ.მესხის ქ.",
+    "district": "ძველი თბილისი",
+    "confidence": "exact"
+  },
+  {
+    "myhome": "კ. სანაძის ქ.",
+    "ssge": "კ. სანაძის ქ.",
+    "district": "ისანი-სამგორი",
+    "confidence": "exact"
+  },
+  {
+    "myhome": "კ. სტივენის ქ.",
+    "ssge": "კრისტიან სტივენის ქ.",
+    "district": "ვაკე-საბურთალო",
+    "confidence": "fuzzy"
+  },
+  {
+    "myhome": "კავთას ქ.",
+    "ssge": "ლევანდოვსკის ქ.",
+    "district": "ვაკე-საბურთალო",
+    "confidence": "fuzzy"
+  },
+  {
+    "myhome": "კავთისხევის ქ.",
+    "ssge": "კავთისხევის ქ.",
+    "district": "გლდანი-ნაძალადევი",
+    "confidence": "exact"
+  },
+  {
+    "myhome": "კავსაძის ქ.",
+    "ssge": "კავსაძის ქ.",
+    "district": "ვაკე-საბურთალო",
+    "confidence": "exact"
+  },
+  {
+    "myhome": "კაიშაურის ქ.",
+    "ssge": "კაიშაურის ქ.",
+    "district": "ძველი თბილისი",
+    "confidence": "exact"
+  },
+  {
+    "myhome": "კაკაბეთის ქ.",
+    "ssge": "კაკაბეთის ქ.",
+    "district": "ისანი-სამგორი",
+    "confidence": "exact"
+  },
+  {
+    "myhome": "კაკლების ქ.",
+    "ssge": "კაკლების ქ.",
+    "district": "თბილისის შემოგარენი",
+    "confidence": "exact"
+  },
+  {
+    "myhome": "კაკლიანის ქ.",
+    "ssge": "კაკლიანის ქ.",
+    "district": "ისანი-სამგორი",
+    "confidence": "exact"
+  },
+  {
+    "myhome": "კალანდაძის ქ.",
+    "ssge": "კალანდაძის ქ.",
+    "district": "ვაკე-საბურთალო",
+    "confidence": "exact"
+  },
+  {
+    "myhome": "კალოუბნის ქ.",
+    "ssge": "კალოუბნის ქ.",
+    "district": "ისანი-სამგორი",
+    "confidence": "exact"
+  },
+  {
+    "myhome": "კამანის ქ.",
+    "ssge": "კამანის ქ.",
+    "district": "ვაკე-საბურთალო",
+    "confidence": "exact"
+  },
+  {
+    "myhome": "კამოს ქუჩა (ლილო)",
+    "ssge": "შანშიაშვილის ქ.",
+    "district": "ისანი-სამგორი",
+    "confidence": "fuzzy"
+  },
+  {
+    "myhome": "კანდელაკის ქ.",
+    "ssge": "კანდელაკის ქ.",
+    "district": "გლდანი-ნაძალადევი",
+    "confidence": "exact"
+  },
+  {
+    "myhome": "კანკავას ქ.",
+    "ssge": "კანკავას ქ.",
+    "district": "დიდუბე-ჩუღურეთი",
+    "confidence": "exact"
+  },
+  {
+    "myhome": "კაპანაძის ქ.",
+    "ssge": "კაპანაძის ქ.",
+    "district": "დიდუბე-ჩუღურეთი",
+    "confidence": "exact"
+  },
+  {
+    "myhome": "კარგარეთელის ქ.",
+    "ssge": "კარგარეთელის ქ.",
+    "district": "დიდუბე-ჩუღურეთი",
+    "confidence": "exact"
+  },
+  {
+    "myhome": "კასკადის ქ.",
+    "ssge": "კასკადის ქ.",
+    "district": "გლდანი-ნაძალადევი",
+    "confidence": "exact"
+  },
+  {
+    "myhome": "კასპის ქ.",
+    "ssge": "კასპის ქ.",
+    "district": "ისანი-სამგორი",
+    "confidence": "exact"
+  },
+  {
+    "myhome": "კაცხის ქ.",
+    "ssge": "მორეტის ქ.",
+    "district": "გლდანი-ნაძალადევი",
+    "confidence": "fuzzy"
+  },
+  {
+    "myhome": "კაჭრეთის ქ.",
+    "ssge": "კაჭრეთის ქ.",
+    "district": "გლდანი-ნაძალადევი",
+    "confidence": "exact"
+  },
+  {
+    "myhome": "კახეთის გზატკეცილი",
+    "ssge": "კახეთის გზატკეცილი (ლილო)",
+    "district": "ისანი-სამგორი",
+    "confidence": "exact"
+  },
+  {
+    "myhome": "კახეთის ქ.",
+    "ssge": "რაზმაძის ქ.",
+    "district": "გლდანი-ნაძალადევი",
+    "confidence": "fuzzy"
+  },
+  {
+    "myhome": "კახეთის ხევი",
+    "ssge": "დოლაბაურის ხევი,",
+    "district": "ძველი თბილისი",
+    "confidence": "fuzzy"
+  },
+  {
+    "myhome": "კახიანის ქ",
+    "ssge": "კახიანის ქ.",
+    "district": "გლდანი-ნაძალადევი",
+    "confidence": "exact"
+  },
+  {
+    "myhome": "კედიას ქ.",
+    "ssge": "კედიას ქ.",
+    "district": "დიდუბე-ჩუღურეთი",
+    "confidence": "exact"
+  },
+  {
+    "myhome": "კეკელიძის ქ.",
+    "ssge": "კეკელიძის ქ.",
+    "district": "ვაკე-საბურთალო",
+    "confidence": "exact"
+  },
+  {
+    "myhome": "კელაპტრიშვილის ქ.",
+    "ssge": "კელაპტრიშვილის ქ.",
+    "district": "გლდანი-ნაძალადევი",
+    "confidence": "exact"
+  },
+  {
+    "myhome": "კელასურის ქ.",
+    "ssge": "ლომონოსოვის ქ.",
+    "district": "ვაკე-საბურთალო",
+    "confidence": "fuzzy"
+  },
+  {
+    "myhome": "კერესელიძის ქ.",
+    "ssge": "მგალობლიშვილის ქ.",
+    "district": "ვაკე-საბურთალო",
+    "confidence": "fuzzy"
+  },
+  {
+    "myhome": "კეხვის ქ.",
+    "ssge": "სოხუმის ქ.",
+    "district": "გლდანი-ნაძალადევი",
+    "confidence": "fuzzy"
+  },
+  {
+    "myhome": "კვეესის ქ.",
+    "ssge": "საბაშვილის ქ.",
+    "district": "გლდანი-ნაძალადევი",
+    "confidence": "fuzzy"
+  },
+  {
+    "myhome": "კვესეთის ქ.",
+    "ssge": "ზალდასტანიშვილის ქ.",
+    "district": "ძველი თბილისი",
+    "confidence": "fuzzy"
+  },
+  {
+    "myhome": "კვირაცხოველის ქ.",
+    "ssge": "ლვოვის ქ.",
+    "district": "ვაკე-საბურთალო",
+    "confidence": "fuzzy"
+  },
+  {
+    "myhome": "კიევის ქ.",
+    "ssge": "კიევის ქ.",
+    "district": "დიდუბე-ჩუღურეთი",
+    "confidence": "exact"
+  },
+  {
+    "myhome": "კიკეთის ქ.",
+    "ssge": "კიკეთის ქ.",
+    "district": "ძველი თბილისი",
+    "confidence": "exact"
+  },
+  {
+    "myhome": "კიროვის ქ.",
+    "ssge": "ოდესის ქ.",
+    "district": "თბილისის შემოგარენი",
+    "confidence": "fuzzy"
+  },
+  {
+    "myhome": "კიტა აბაშიძის ქ.",
+    "ssge": "კ.აბაშიძის ქ.",
+    "district": "დიდუბე-ჩუღურეთი",
+    "confidence": "fuzzy"
+  },
+  {
+    "myhome": "კიშინიოვის ქ.",
+    "ssge": "ტიხონოვის ქ.",
+    "district": "გლდანი-ნაძალადევი",
+    "confidence": "fuzzy"
+  },
+  {
+    "myhome": "კლდეკარის ქ.",
+    "ssge": "კლდეკარის ქ.",
+    "district": "გლდანი-ნაძალადევი",
+    "confidence": "exact"
+  },
+  {
+    "myhome": "კობერიძის ქუჩა (თიანეთის გზატკეცილი.)",
+    "ssge": "კობერიძის ქ.",
+    "district": "გლდანი-ნაძალადევი",
+    "confidence": "exact"
+  },
+  {
+    "myhome": "კოდალოს ქ.",
+    "ssge": "კოდალოს ქ.",
+    "district": "გლდანი-ნაძალადევი",
+    "confidence": "exact"
+  },
+  {
+    "myhome": "კოდორის ქ.",
+    "ssge": "კოდორის ქ.",
+    "district": "ისანი-სამგორი",
+    "confidence": "exact"
+  },
+  {
+    "myhome": "კოკინაკის ქ",
+    "ssge": "კოკინაკის ქ.",
+    "district": "გლდანი-ნაძალადევი",
+    "confidence": "exact"
+  },
+  {
+    "myhome": "კონიაკის დასახლება",
+    "ssge": "კონიაკის დას.",
+    "district": "გლდანი-ნაძალადევი",
+    "confidence": "exact"
+  },
+  {
+    "myhome": "კონსტიტუციის ქ.",
+    "ssge": "კონსტიტუციის ქ.",
+    "district": "დიდუბე-ჩუღურეთი",
+    "confidence": "exact"
+  },
+  {
+    "myhome": "კოსმონავტების სანაპ.",
+    "ssge": "კოსმონავტების სანაპირო",
+    "district": "დიდუბე-ჩუღურეთი",
+    "confidence": "exact"
+  },
+  {
+    "myhome": "კოსტავას ქ.",
+    "ssge": "კოსტავას ქ.",
+    "district": "ვაკე-საბურთალო",
+    "confidence": "exact"
+  },
+  {
+    "myhome": "კოტე აფხაზის ქ.",
+    "ssge": "კოტე აფხაზის ქ.",
+    "district": "ძველი თბილისი",
+    "confidence": "exact"
+  },
+  {
+    "myhome": "კოტეტიშვილის ქ",
+    "ssge": "კოტეტიშვილის ქ.",
+    "district": "ძველი თბილისი",
+    "confidence": "exact"
+  },
+  {
+    "myhome": "კოშკოვანის ქ.",
+    "ssge": "კოშკოვანის ქ.",
+    "district": "ისანი-სამგორი",
+    "confidence": "exact"
+  },
+  {
+    "myhome": "კოხრეიძის ქ.",
+    "ssge": "კოხრეიძის ქ.",
+    "district": "გლდანი-ნაძალადევი",
+    "confidence": "exact"
+  },
+  {
+    "myhome": "კოჯრის გზატკეცილი",
+    "ssge": "კოჯრის გზატკეცილი",
+    "district": "ძველი თბილისი",
+    "confidence": "exact"
+  },
+  {
+    "myhome": "კოჯრის ქ",
+    "ssge": "კოჯრის ქ.",
+    "district": "ძველი თბილისი",
+    "confidence": "exact"
+  },
+  {
+    "myhome": "კოჯრის ხევი",
+    "ssge": "მამრაძის ხევი,",
+    "district": "თბილისის შემოგარენი",
+    "confidence": "fuzzy"
+  },
+  {
+    "myhome": "კრწანისის ქ.",
+    "ssge": "კრწანისის ქ.",
+    "district": "ძველი თბილისი",
+    "confidence": "exact"
+  },
+  {
+    "myhome": "კუმისის ქ",
+    "ssge": "კუმისის ქ.",
+    "district": "დიდუბე-ჩუღურეთი",
+    "confidence": "exact"
+  },
+  {
+    "myhome": "კურსების ქ.",
+    "ssge": "კურსების ქ.",
+    "district": "გლდანი-ნაძალადევი",
+    "confidence": "exact"
+  },
+  {
+    "myhome": "კუს ტბა",
+    "ssge": "კუს ტბა",
+    "district": "ვაკე-საბურთალო",
+    "confidence": "exact"
+  },
+  {
+    "myhome": "ლ. კერესელიძის ქ.",
+    "ssge": "ლ. კერესელიძის ქ.",
+    "district": "გლდანი-ნაძალადევი",
+    "confidence": "exact"
+  },
+  {
+    "myhome": "ლ. ლაშხიას ქ.",
+    "ssge": "ლაშა ლაშხიას ქ.",
+    "district": "ვაკე-საბურთალო",
+    "confidence": "fuzzy"
+  },
+  {
+    "myhome": "ლ. რჩეულიშვილის ქ.",
+    "ssge": "ლევან რჩეულიშვილის ქ.",
+    "district": "ვაკე-საბურთალო",
+    "confidence": "fuzzy"
+  },
+  {
+    "myhome": "ლაგოდეხის ქ",
+    "ssge": "ლაგოდეხის ქ.",
+    "district": "ძველი თბილისი",
+    "confidence": "exact"
+  },
+  {
+    "myhome": "ლადო ასათიანის ქ.",
+    "ssge": "ლ. ასათიანის ქ.",
+    "district": "ძველი თბილისი",
+    "confidence": "fuzzy"
+  },
+  {
+    "myhome": "ლაითურის ქ.",
+    "ssge": "ლაითურის ქ.",
+    "district": "გლდანი-ნაძალადევი",
+    "confidence": "exact"
+  },
+  {
+    "myhome": "ლაილაშის ქ.",
+    "ssge": "ლაილაშის ქ.",
+    "district": "დიდუბე-ჩუღურეთი",
+    "confidence": "exact"
+  },
+  {
+    "myhome": "ლალიონის ქ",
+    "ssge": "მამარდაშვილის ქ.",
+    "district": "დიდუბე-ჩუღურეთი",
+    "confidence": "fuzzy"
+  },
+  {
+    "myhome": "ლალიონის შესახვევი",
+    "ssge": "ლალიონის შესახვევი",
+    "district": "დიდუბე-ჩუღურეთი",
+    "confidence": "exact"
+  },
+  {
+    "myhome": "ლამის ქ",
+    "ssge": "ლამის ქ.",
+    "district": "დიდუბე-ჩუღურეთი",
+    "confidence": "exact"
+  },
+  {
+    "myhome": "ლამისყანის ქ.",
+    "ssge": "ლამისყანის ქ.",
+    "district": "გლდანი-ნაძალადევი",
+    "confidence": "exact"
+  },
+  {
+    "myhome": "ლანდიას ქ.",
+    "ssge": "ლანდიას ქ.",
+    "district": "ისანი-სამგორი",
+    "confidence": "exact"
+  },
+  {
+    "myhome": "ლანჩხუთის ქ.",
+    "ssge": "ლანჩხუთის ქ.",
+    "district": "დიდუბე-ჩუღურეთი",
+    "confidence": "exact"
+  },
+  {
+    "myhome": "ლარეხის ქ",
+    "ssge": "ლარეხის ქ.",
+    "district": "დიდუბე-ჩუღურეთი",
+    "confidence": "exact"
+  },
+  {
+    "myhome": "ლარსის ქ",
+    "ssge": "ლარსის ქ.",
+    "district": "ძველი თბილისი",
+    "confidence": "exact"
+  },
+  {
+    "myhome": "ლაშა-გიორგის ქ.",
+    "ssge": "თეთრი გიორგის ქ.",
+    "district": "თბილისის შემოგარენი",
+    "confidence": "fuzzy"
+  },
+  {
+    "myhome": "ლებარდეს ქ.",
+    "ssge": "ლებარდეს ქ.",
+    "district": "დიდუბე-ჩუღურეთი",
+    "confidence": "exact"
+  },
+  {
+    "myhome": "ლევან მიქელაძის ქ.",
+    "ssge": "კატო მიქელაძის ქ.",
+    "district": "ვაკე-საბურთალო",
+    "confidence": "fuzzy"
+  },
+  {
+    "myhome": "ლეკიშვილის ქ.",
+    "ssge": "ლეკიშვილის ქ.",
+    "district": "გლდანი-ნაძალადევი",
+    "confidence": "exact"
+  },
+  {
+    "myhome": "ლელიანის ქ.",
+    "ssge": "ჩიკვაიძის ქ.",
+    "district": "ისანი-სამგორი",
+    "confidence": "fuzzy"
+  },
+  {
+    "myhome": "ლენტეხის ქ",
+    "ssge": "ლენტეხის ქ.",
+    "district": "დიდუბე-ჩუღურეთი",
+    "confidence": "exact"
+  },
+  {
+    "myhome": "ლერწმის ქ.",
+    "ssge": "ლერწმის ქ.",
+    "district": "ისანი-სამგორი",
+    "confidence": "exact"
+  },
+  {
+    "myhome": "ლესელიძის ქუჩა (წყნეთი)",
+    "ssge": "ლესელიძის ქ.",
+    "district": "თბილისის შემოგარენი",
+    "confidence": "exact"
+  },
+  {
+    "myhome": "ლესია უკრაინკას ქ.",
+    "ssge": "ლესია უკრაინკას ქ.",
+    "district": "ძველი თბილისი",
+    "confidence": "exact"
+  },
+  {
+    "myhome": "ლეჩხუმის ქ.",
+    "ssge": "ლეჩხუმის ქ.",
+    "district": "გლდანი-ნაძალადევი",
+    "confidence": "exact"
+  },
+  {
+    "myhome": "ლეხ კაჩინსკის ქ.",
+    "ssge": "ლეხ კაჩინსკის ქ.",
+    "district": "ისანი-სამგორი",
+    "confidence": "exact"
+  },
+  {
+    "myhome": "ლვოვის ქ.",
+    "ssge": "ლვოვის ქ.",
+    "district": "ვაკე-საბურთალო",
+    "confidence": "exact"
+  },
+  {
+    "myhome": "ლიახვის ქ",
+    "ssge": "ლიახვის ქ.",
+    "district": "გლდანი-ნაძალადევი",
+    "confidence": "exact"
+  },
+  {
+    "myhome": "ლიბანის ქ.",
+    "ssge": "ლიბანის ქ.",
+    "district": "გლდანი-ნაძალადევი",
+    "confidence": "exact"
+  },
+  {
+    "myhome": "ლიკანის ქ.",
+    "ssge": "ლიკანის ქ.",
+    "district": "გლდანი-ნაძალადევი",
+    "confidence": "exact"
+  },
+  {
+    "myhome": "ლილოს ქ.",
+    "ssge": "ჭელიძის ქ.",
+    "district": "ისანი-სამგორი",
+    "confidence": "fuzzy"
+  },
+  {
+    "myhome": "ლიპტოვის ქ.",
+    "ssge": "ლიპტოვის ქ.",
+    "district": "გლდანი-ნაძალადევი",
+    "confidence": "exact"
+  },
+  {
+    "myhome": "ლისაშვილის ქ",
+    "ssge": "ლისაშვილის ქ.",
+    "district": "გლდანი-ნაძალადევი",
+    "confidence": "exact"
+  },
+  {
+    "myhome": "ლისის ტბა",
+    "ssge": "ლისის ტბა",
+    "district": "ვაკე-საბურთალო",
+    "confidence": "exact"
+  },
+  {
+    "myhome": "ლიხაურის ქ",
+    "ssge": "ლიხაურის ქ.",
+    "district": "ვაკე-საბურთალო",
+    "confidence": "exact"
+  },
+  {
+    "myhome": "ლიხაურის შესახვევი",
+    "ssge": "ლიხაურის შეს.",
+    "district": "ვაკე-საბურთალო",
+    "confidence": "exact"
+  },
+  {
+    "myhome": "ლიხაურის ჩიხი",
+    "ssge": "ლიხაურის ჩიხი,",
+    "district": "ვაკე-საბურთალო",
+    "confidence": "exact"
+  },
+  {
+    "myhome": "ლომთათიძის ქ",
+    "ssge": "ლომთათიძის ქ.",
+    "district": "გლდანი-ნაძალადევი",
+    "confidence": "exact"
+  },
+  {
+    "myhome": "ლომინაძის ქ.",
+    "ssge": "წერეთლის ქ.",
+    "district": "ისანი-სამგორი",
+    "confidence": "fuzzy"
+  },
+  {
+    "myhome": "ლომონოსოვის ქ.",
+    "ssge": "ლომონოსოვის ქ.",
+    "district": "ვაკე-საბურთალო",
+    "confidence": "exact"
+  },
+  {
+    "myhome": "ლოტკინის ხევი",
+    "ssge": "ლოტკინის ხევი,",
+    "district": "გლდანი-ნაძალადევი",
+    "confidence": "exact"
+  },
+  {
+    "myhome": "ლოჭინის დასახლება",
+    "ssge": "ქებურიას დასახლება",
+    "district": "ისანი-სამგორი",
+    "confidence": "fuzzy"
+  },
+  {
+    "myhome": "ლუბლიანას ქ.",
+    "ssge": "მნათობის ქ.",
+    "district": "დიდუბე-ჩუღურეთი",
+    "confidence": "fuzzy"
+  },
+  {
+    "myhome": "ლუბოვსკის ქ.",
+    "ssge": "ლუბოვსკის ქ.",
+    "district": "გლდანი-ნაძალადევი",
+    "confidence": "exact"
+  },
+  {
+    "myhome": "ლურჯქედის ქ.",
+    "ssge": "შენგელიას ქ.",
+    "district": "გლდანი-ნაძალადევი",
+    "confidence": "fuzzy"
+  },
+  {
+    "myhome": "ლუსინიანის ქ.",
+    "ssge": "ლუსინიანის ქ.",
+    "district": "ძველი თბილისი",
+    "confidence": "exact"
+  },
+  {
+    "myhome": "მ. დადიანი-ანჩაბაძის ქ.",
+    "ssge": "მ. დადიანი-ანჩაბაძის ქ.",
+    "district": "გლდანი-ნაძალადევი",
+    "confidence": "exact"
+  },
+  {
+    "myhome": "მ. ერისთავის ქ.",
+    "ssge": "რ. ერისთავის ქ.",
+    "district": "ვაკე-საბურთალო",
+    "confidence": "fuzzy"
+  },
+  {
+    "myhome": "მ. თარხნიშვილის ქ.",
+    "ssge": "მარო თარხნიშვილის ქ.",
+    "district": "ვაკე-საბურთალო",
+    "confidence": "fuzzy"
+  },
+  {
+    "myhome": "მ. ლებანიძის ქ.",
+    "ssge": "მ.ლებანიძის ქ.",
+    "district": "დიდუბე-ჩუღურეთი",
+    "confidence": "exact"
+  },
+  {
+    "myhome": "მ. მაჭავარიანის ქ.",
+    "ssge": "მუხრან მაჭავარიანის ქ.",
+    "district": "ვაკე-საბურთალო",
+    "confidence": "fuzzy"
+  },
+  {
+    "myhome": "მ. მესხის ქ.",
+    "ssge": "მ.მესხის ქ.",
+    "district": "ვაკე-საბურთალო",
+    "confidence": "exact"
+  },
+  {
+    "myhome": "მ. ჯავახიშვილის ქ.",
+    "ssge": "მ.ჯავახიშვილის ქ.",
+    "district": "ვაკე-საბურთალო",
+    "confidence": "exact"
+  },
+  {
+    "myhome": "მაზნიაშვილის ქ.",
+    "ssge": "მაზნიაშვილის ქ.",
+    "district": "დიდუბე-ჩუღურეთი",
+    "confidence": "exact"
+  },
+  {
+    "myhome": "მაიაკოვსკის ქ",
+    "ssge": "მაიაკოვსკის ქ.",
+    "district": "დიდუბე-ჩუღურეთი",
+    "confidence": "exact"
+  },
+  {
+    "myhome": "მამა დავითის აღმ.",
+    "ssge": "მამა დავითის აღმართი,",
+    "district": "ძველი თბილისი",
+    "confidence": "exact"
+  },
+  {
+    "myhome": "მამარდაშვილის ქუჩა # 1-17; 2-26",
+    "ssge": "მამარდაშვილის ქ.",
+    "district": "დიდუბე-ჩუღურეთი",
+    "confidence": "exact"
+  },
+  {
+    "myhome": "მამასახლისოვის ქ.",
+    "ssge": "მამასახლისოვის ქ.",
+    "district": "ვაკე-საბურთალო",
+    "confidence": "exact"
+  },
+  {
+    "myhome": "მამისაანთუბნის ქ.",
+    "ssge": "სადგერის ქ.",
+    "district": "ისანი-სამგორი",
+    "confidence": "fuzzy"
+  },
+  {
+    "myhome": "მამკოდის ქ.",
+    "ssge": "წყალსადენის ქ.",
+    "district": "გლდანი-ნაძალადევი",
+    "confidence": "fuzzy"
+  },
+  {
+    "myhome": "მამრაძის ქ",
+    "ssge": "მამრაძის ქ.",
+    "district": "დიდუბე-ჩუღურეთი",
+    "confidence": "exact"
+  },
+  {
+    "myhome": "მამრაძის ხევი",
+    "ssge": "მამრაძის ხევი,",
+    "district": "დიდუბე-ჩუღურეთი",
+    "confidence": "exact"
+  },
+  {
+    "myhome": "მანაგაძის ქ.",
+    "ssge": "ხევისპირის ქ.",
+    "district": "გლდანი-ნაძალადევი",
+    "confidence": "fuzzy"
+  },
+  {
+    "myhome": "მანგლისის ქ.",
+    "ssge": "მანგლისის ქ.",
+    "district": "ისანი-სამგორი",
+    "confidence": "exact"
+  },
+  {
+    "myhome": "მანიჟაშვილის ქ.",
+    "ssge": "ჩეჩელაშვილის ქ.",
+    "district": "დიდუბე-ჩუღურეთი",
+    "confidence": "fuzzy"
+  },
+  {
+    "myhome": "მანჯგალაძის ქ",
+    "ssge": "მანჯგალაძის ქ.",
+    "district": "გლდანი-ნაძალადევი",
+    "confidence": "exact"
+  },
+  {
+    "myhome": "მარაბდის ქ.",
+    "ssge": "მარაბდის ქ.",
+    "district": "ვაკე-საბურთალო",
+    "confidence": "exact"
+  },
+  {
+    "myhome": "მარატ ნოზაძის ქ.",
+    "ssge": "მარატ ნოზაძის ქ.",
+    "district": "გლდანი-ნაძალადევი",
+    "confidence": "exact"
+  },
+  {
+    "myhome": "მარელისის ქ.",
+    "ssge": "მარელისის ქ.",
+    "district": "ისანი-სამგორი",
+    "confidence": "exact"
+  },
+  {
+    "myhome": "მარიჯანის ქ.",
+    "ssge": "მარიჯანის ქ.",
+    "district": "ვაკე-საბურთალო",
+    "confidence": "exact"
+  },
+  {
+    "myhome": "მარკო პოლოს ქ.",
+    "ssge": "მარკო პოლოს ქ.",
+    "district": "ვაკე-საბურთალო",
+    "confidence": "exact"
+  },
+  {
+    "myhome": "მარნეულის ქ",
+    "ssge": "მარნეულის ქ.",
+    "district": "ისანი-სამგორი",
+    "confidence": "exact"
+  },
+  {
+    "myhome": "მარო თარხნიშვილის ქ.",
+    "ssge": "მარო თარხნიშვილის ქ.",
+    "district": "ვაკე-საბურთალო",
+    "confidence": "exact"
+  },
+  {
+    "myhome": "მარსელის ქ.",
+    "ssge": "მარსელის ქ.",
+    "district": "გლდანი-ნაძალადევი",
+    "confidence": "exact"
+  },
+  {
+    "myhome": "მარტვილის ქ.",
+    "ssge": "მარტვილის ქ.",
+    "district": "ძველი თბილისი",
+    "confidence": "exact"
+  },
+  {
+    "myhome": "მარტყოფის ქ",
+    "ssge": "მარტყოფის ქ.",
+    "district": "ძველი თბილისი",
+    "confidence": "exact"
+  },
+  {
+    "myhome": "მარუაშვილის ქ.",
+    "ssge": "მარუაშვილის ქ.",
+    "district": "დიდუბე-ჩუღურეთი",
+    "confidence": "exact"
+  },
+  {
+    "myhome": "მარუხის გმირების ქ.",
+    "ssge": "მარუხის გმირების ქ.",
+    "district": "ვაკე-საბურთალო",
+    "confidence": "exact"
+  },
+  {
+    "myhome": "მაღალაშვილის ქ. (შანხაის დასახლება)",
+    "ssge": "მაღალაშვილის ქ.",
+    "district": "ვაკე-საბურთალო",
+    "confidence": "exact"
+  },
+  {
+    "myhome": "მაღალაძეების ქ.",
+    "ssge": "ონიაშვილის ქ.",
+    "district": "ვაკე-საბურთალო",
+    "confidence": "fuzzy"
+  },
+  {
+    "myhome": "მაღაროს ქ",
+    "ssge": "მაღაროს ქ.",
+    "district": "გლდანი-ნაძალადევი",
+    "confidence": "exact"
+  },
+  {
+    "myhome": "მაყაშვილის ქ.",
+    "ssge": "მაყაშვილის ქ.",
+    "district": "გლდანი-ნაძალადევი",
+    "confidence": "exact"
+  },
+  {
+    "myhome": "მაჩაბლის ქ.",
+    "ssge": "მაჩაბლის ქ.",
+    "district": "ძველი თბილისი",
+    "confidence": "exact"
+  },
+  {
+    "myhome": "მაჩხაანის ქ.",
+    "ssge": "მაჩხაანის ქ.",
+    "district": "გლდანი-ნაძალადევი",
+    "confidence": "exact"
+  },
+  {
+    "myhome": "მახათას აღმ.",
+    "ssge": "მახათას აღმართი",
+    "district": "გლდანი-ნაძალადევი",
+    "confidence": "exact"
+  },
+  {
+    "myhome": "მახათას ქ",
+    "ssge": "მახათას ქ.",
+    "district": "ძველი თბილისი",
+    "confidence": "exact"
+  },
+  {
+    "myhome": "მახარობლის ქ.",
+    "ssge": "ხერგიანის ქ.",
+    "district": "გლდანი-ნაძალადევი",
+    "confidence": "fuzzy"
+  },
+  {
+    "myhome": "მახინჯაურის ქ.",
+    "ssge": "მახინჯაურის ქ.",
+    "district": "გლდანი-ნაძალადევი",
+    "confidence": "exact"
+  },
+  {
+    "myhome": "მეგობრობის ქ.",
+    "ssge": "მეგობრობის ქ.",
+    "district": "ისანი-სამგორი",
+    "confidence": "exact"
+  },
+  {
+    "myhome": "მეგრელაძის ქ",
+    "ssge": "მეგრელაძის ქ.",
+    "district": "ვაკე-საბურთალო",
+    "confidence": "exact"
+  },
+  {
+    "myhome": "მეგრელაძის შესახვევი",
+    "ssge": "მეგრელაძის შეს.",
+    "district": "ვაკე-საბურთალო",
+    "confidence": "exact"
+  },
+  {
+    "myhome": "მელიქ-სურხავის ქ.",
+    "ssge": "მელიქ-სურხავის ქ.",
+    "district": "ვაკე-საბურთალო",
+    "confidence": "exact"
+  },
+  {
+    "myhome": "მერანის ქ.",
+    "ssge": "ოსეთის ქ.",
+    "district": "თბილისის შემოგარენი",
+    "confidence": "fuzzy"
+  },
+  {
+    "myhome": "მერი შერვაშიძის ქ.",
+    "ssge": "მერი შერვაშიძის ქ.",
+    "district": "დიდუბე-ჩუღურეთი",
+    "confidence": "exact"
+  },
+  {
+    "myhome": "მერჩულის ქ.",
+    "ssge": "თაბუკაშვილის ქ.",
+    "district": "ძველი თბილისი",
+    "confidence": "fuzzy"
+  },
+  {
+    "myhome": "მესხეთის ქ",
+    "ssge": "მესხეთის ქ.",
+    "district": "ისანი-სამგორი",
+    "confidence": "exact"
+  },
+  {
+    "myhome": "მეტეხის აღმ",
+    "ssge": "მეტეხის აღმ.",
+    "district": "ძველი თბილისი",
+    "confidence": "exact"
+  },
+  {
+    "myhome": "მეუნარგიას ქ",
+    "ssge": "მეუნარგიას ქ.",
+    "district": "დიდუბე-ჩუღურეთი",
+    "confidence": "exact"
+  },
+  {
+    "myhome": "მეფრინველეთა ქ.",
+    "ssge": "გიორგაძის ქ.",
+    "district": "ისანი-სამგორი",
+    "confidence": "fuzzy"
+  },
+  {
+    "myhome": "მეფუტკრეობის ქ.",
+    "ssge": "სახოკიას ქ.",
+    "district": "თბილისის შემოგარენი",
+    "confidence": "fuzzy"
+  },
+  {
+    "myhome": "მეჯვრისხევის ქ.",
+    "ssge": "ხიზანიშვილის ქ.",
+    "district": "გლდანი-ნაძალადევი",
+    "confidence": "fuzzy"
+  },
+  {
+    "myhome": "მთავარანგელოზის ქ.",
+    "ssge": "მთავარანგელოზის ქ.",
+    "district": "ძველი თბილისი",
+    "confidence": "exact"
+  },
+  {
+    "myhome": "მთაწმინდის ქ",
+    "ssge": "მთაწმინდის ქ.",
+    "district": "ძველი თბილისი",
+    "confidence": "exact"
+  },
+  {
+    "myhome": "მთისძირის ქ",
+    "ssge": "მთისძირის ქ.",
+    "district": "ისანი-სამგორი",
+    "confidence": "exact"
+  },
+  {
+    "myhome": "მიზანდარის ქ.",
+    "ssge": "მიზანდარის ქ.",
+    "district": "დიდუბე-ჩუღურეთი",
+    "confidence": "exact"
+  },
+  {
+    "myhome": "მინდელის ქ.",
+    "ssge": "მინდელის ქ.",
+    "district": "ვაკე-საბურთალო",
+    "confidence": "exact"
+  },
+  {
+    "myhome": "მირზაანის ქ",
+    "ssge": "მირზაანის ქ.",
+    "district": "გლდანი-ნაძალადევი",
+    "confidence": "exact"
+  },
+  {
+    "myhome": "მირიან მეფის ქ.",
+    "ssge": "მირიან მეფის ქ.",
+    "district": "ვაკე-საბურთალო",
+    "confidence": "exact"
+  },
+  {
+    "myhome": "მიროტაძის ქ.",
+    "ssge": "მიროტაძის ქ.",
+    "district": "ვაკე-საბურთალო",
+    "confidence": "exact"
+  },
+  {
+    "myhome": "მირცხულავას ქ.",
+    "ssge": "მირცხულავას ქ.",
+    "district": "დიდუბე-ჩუღურეთი",
+    "confidence": "exact"
+  },
+  {
+    "myhome": "მიტინგის ქ.",
+    "ssge": "მიტინგის ქ.",
+    "district": "გლდანი-ნაძალადევი",
+    "confidence": "exact"
+  },
+  {
+    "myhome": "მიქატაძის ქუჩა (თიანეთის გზატკეცილი.)",
+    "ssge": "მიქატაძის ქ.",
+    "district": "გლდანი-ნაძალადევი",
+    "confidence": "exact"
+  },
+  {
+    "myhome": "მიშველაძის ქ.",
+    "ssge": "მიშველაძის ქ.",
+    "district": "ვაკე-საბურთალო",
+    "confidence": "exact"
+  },
+  {
+    "myhome": "მიჩურინის ქ",
+    "ssge": "მიჩურინის ქ.",
+    "district": "დიდუბე-ჩუღურეთი",
+    "confidence": "exact"
+  },
+  {
+    "myhome": "მიცკევიჩის ქ.",
+    "ssge": "მიცკევიჩის ქ.",
+    "district": "ვაკე-საბურთალო",
+    "confidence": "exact"
+  },
+  {
+    "myhome": "მიხეილ ასათიანის ქ.",
+    "ssge": "ლევან ასათიანის ქ.",
+    "district": "ვაკე-საბურთალო",
+    "confidence": "fuzzy"
+  },
+  {
+    "myhome": "მიხეილ ჯავახიშვილის ქ.",
+    "ssge": "ი.ჯავახიშვილის ქ.",
+    "district": "თბილისის შემოგარენი",
+    "confidence": "fuzzy"
+  },
+  {
+    "myhome": "მნათობის ქ",
+    "ssge": "მნათობის ქ.",
+    "district": "დიდუბე-ჩუღურეთი",
+    "confidence": "exact"
+  },
+  {
+    "myhome": "მოლითის ქ",
+    "ssge": "მოლითის ქ.",
+    "district": "გლდანი-ნაძალადევი",
+    "confidence": "exact"
+  },
+  {
+    "myhome": "მოლოკოვის ქ.",
+    "ssge": "მოლოკოვის ქ.",
+    "district": "გლდანი-ნაძალადევი",
+    "confidence": "exact"
+  },
+  {
+    "myhome": "მონადირის ქ.",
+    "ssge": "მონადირის ქ.",
+    "district": "გლდანი-ნაძალადევი",
+    "confidence": "exact"
+  },
+  {
+    "myhome": "მორეტის ქ.",
+    "ssge": "მორეტის ქ.",
+    "district": "გლდანი-ნაძალადევი",
+    "confidence": "exact"
+  },
+  {
+    "myhome": "მოსაშვილის ქუჩა # 2",
+    "ssge": "მოსაშვილის ქ.",
+    "district": "ვაკე-საბურთალო",
+    "confidence": "exact"
+  },
+  {
+    "myhome": "მოსკოვის გამზირი",
+    "ssge": "მოსკოვის გამზ.",
+    "district": "ისანი-სამგორი",
+    "confidence": "exact"
+  },
+  {
+    "myhome": "მოსულიშვილის ქ.",
+    "ssge": "მოსულიშვილის ქ.",
+    "district": "გლდანი-ნაძალადევი",
+    "confidence": "exact"
+  },
+  {
+    "myhome": "მრევლიშვილის ქ.",
+    "ssge": "მრევლიშვილის ქ.",
+    "district": "ძველი თბილისი",
+    "confidence": "exact"
+  },
+  {
+    "myhome": "მტკვარის ქ.",
+    "ssge": "ხომლელის ქ.",
+    "district": "ისანი-სამგორი",
+    "confidence": "fuzzy"
+  },
+  {
+    "myhome": "მტკვრის ქ.",
+    "ssge": "მტკვრის ქ.",
+    "district": "ძველი თბილისი",
+    "confidence": "exact"
+  },
+  {
+    "myhome": "მულღაზანზარის ქ.",
+    "ssge": "ჭილაიას ქ.",
+    "district": "ვაკე-საბურთალო",
+    "confidence": "fuzzy"
+  },
+  {
+    "myhome": "მურადინ-ფრიდონის ქ.",
+    "ssge": "მურადინ-ფრიდონის ქუჩა",
+    "district": "ვაკე-საბურთალო",
+    "confidence": "exact"
+  },
+  {
+    "myhome": "მუშათა ქ.",
+    "ssge": "მუშათა ქ.",
+    "district": "გლდანი-ნაძალადევი",
+    "confidence": "exact"
+  },
+  {
+    "myhome": "მუხაძის ქუჩა (ორხევი)",
+    "ssge": "მუხაძის ქ.",
+    "district": "ისანი-სამგორი",
+    "confidence": "exact"
+  },
+  {
+    "myhome": "მუხიანის აგარაკები",
+    "ssge": "მუხიანის აგარაკები",
+    "district": "გლდანი-ნაძალადევი",
+    "confidence": "exact"
+  },
+  {
+    "myhome": "მუხიანის ქ.",
+    "ssge": "ჩარგლის ქ. (სანზონა)",
+    "district": "გლდანი-ნაძალადევი",
+    "confidence": "fuzzy"
+  },
+  {
+    "myhome": "მუხის ქ.",
+    "ssge": "ფირცხალავას ქ.",
+    "district": "გლდანი-ნაძალადევი",
+    "confidence": "fuzzy"
+  },
+  {
+    "myhome": "მუხრან მაჭავარიანის ქ.",
+    "ssge": "მუხრან მაჭავარიანის ქ.",
+    "district": "ვაკე-საბურთალო",
+    "confidence": "exact"
+  },
+  {
+    "myhome": "მუხრანის ქ",
+    "ssge": "მუხრანის ქ.",
+    "district": "გლდანი-ნაძალადევი",
+    "confidence": "exact"
+  },
+  {
+    "myhome": "მუხურას ქ.",
+    "ssge": "ღვალაძის ქ.",
+    "district": "გლდანი-ნაძალადევი",
+    "confidence": "fuzzy"
+  },
+  {
+    "myhome": "მუჯირიშვილის ქ.",
+    "ssge": "მუჯირიშვილის ქ.",
+    "district": "ძველი თბილისი",
+    "confidence": "exact"
+  },
+  {
+    "myhome": "მშველიძის ქ.",
+    "ssge": "მშველიძის ქ.",
+    "district": "ისანი-სამგორი",
+    "confidence": "exact"
+  },
+  {
+    "myhome": "მშვიდობის ქ.",
+    "ssge": "მშვიდობის ქ.",
+    "district": "თბილისის შემოგარენი",
+    "confidence": "exact"
+  },
+  {
+    "myhome": "მცხეთის ქ.",
+    "ssge": "მცხეთის ქ.",
+    "district": "ვაკე-საბურთალო",
+    "confidence": "exact"
+  },
+  {
+    "myhome": "მწვანე ქ.",
+    "ssge": "გეხტმანის ქ.",
+    "district": "თბილისის შემოგარენი",
+    "confidence": "fuzzy"
+  },
+  {
+    "myhome": "მხატვართა ქ.",
+    "ssge": "დიდგორის ქ.",
+    "district": "ვაკე-საბურთალო",
+    "confidence": "fuzzy"
+  },
+  {
+    "myhome": "ნ. ბერაძის ქ.",
+    "ssge": "ნ.ბერაძის ქ.",
+    "district": "ვაკე-საბურთალო",
+    "confidence": "exact"
+  },
+  {
+    "myhome": "ნ. დგებუაძის ქ.",
+    "ssge": "ნ. დგებუაძის ქ.",
+    "district": "ვაკე-საბურთალო",
+    "confidence": "exact"
+  },
+  {
+    "myhome": "ნ. ჩხიკვაძის ქ.",
+    "ssge": "რ.ჩხიკვაძის ქ.",
+    "district": "გლდანი-ნაძალადევი",
+    "confidence": "fuzzy"
+  },
+  {
+    "myhome": "ნაგომარის ქ.",
+    "ssge": "ნაგომარის ქ.",
+    "district": "გლდანი-ნაძალადევი",
+    "confidence": "exact"
+  },
+  {
+    "myhome": "ნადირაძის ქ.",
+    "ssge": "ნადირაძის ქ.",
+    "district": "ვაკე-საბურთალო",
+    "confidence": "exact"
+  },
+  {
+    "myhome": "ნავთლუღის ქ.",
+    "ssge": "ნავთლუღის ქ.",
+    "district": "ისანი-სამგორი",
+    "confidence": "exact"
+  },
+  {
+    "myhome": "ნათაძის ქ.",
+    "ssge": "ნათაძის ქ.",
+    "district": "გლდანი-ნაძალადევი",
+    "confidence": "exact"
+  },
+  {
+    "myhome": "ნათიშვილის ქ.",
+    "ssge": "ნათიშვილის ქ.",
+    "district": "დიდუბე-ჩუღურეთი",
+    "confidence": "exact"
+  },
+  {
+    "myhome": "ნაკადულის ქ",
+    "ssge": "ნაკადულის ქ.",
+    "district": "ისანი-სამგორი",
+    "confidence": "exact"
+  },
+  {
+    "myhome": "ნაკადულის I გას",
+    "ssge": "ნაკადულის I გას.",
+    "district": "ისანი-სამგორი",
+    "confidence": "exact"
+  },
+  {
+    "myhome": "ნასაკირალის ქ.",
+    "ssge": "ნასაკირალის ქ.",
+    "district": "ძველი თბილისი",
+    "confidence": "exact"
+  },
+  {
+    "myhome": "ნასიძის ქ.",
+    "ssge": "ნასიძის ქ.",
+    "district": "ვაკე-საბურთალო",
+    "confidence": "exact"
+  },
+  {
+    "myhome": "ნატახტარის ქ.",
+    "ssge": "ნატახტარის ქ.",
+    "district": "ვაკე-საბურთალო",
+    "confidence": "exact"
+  },
+  {
+    "myhome": "ნაფარეულის ქ.",
+    "ssge": "ნაფარეულის ქ.",
+    "district": "ვაკე-საბურთალო",
+    "confidence": "exact"
+  },
+  {
+    "myhome": "ნაქალაქევის ქ.",
+    "ssge": "ნაქალაქევის ქ.",
+    "district": "გლდანი-ნაძალადევი",
+    "confidence": "exact"
+  },
+  {
+    "myhome": "ნაქერალას ქ.",
+    "ssge": "ნაქერალას ქ.",
+    "district": "ძველი თბილისი",
+    "confidence": "exact"
+  },
+  {
+    "myhome": "ნაძვნარის ქ.",
+    "ssge": "ნენავის ქ.",
+    "district": "თბილისის შემოგარენი",
+    "confidence": "fuzzy"
+  },
+  {
+    "myhome": "ნეკერჩხლის ქ.",
+    "ssge": "ნეკერჩხლის ქ.",
+    "district": "ვაკე-საბურთალო",
+    "confidence": "exact"
+  },
+  {
+    "myhome": "ნეკრისის ქ.",
+    "ssge": "ედისის ქ.",
+    "district": "გლდანი-ნაძალადევი",
+    "confidence": "fuzzy"
+  },
+  {
+    "myhome": "ნენავის ქ.",
+    "ssge": "ნენავის ქ.",
+    "district": "ვაკე-საბურთალო",
+    "confidence": "exact"
+  },
+  {
+    "myhome": "ნესტან-დარეჯანის ქ.",
+    "ssge": "ნესტან-დარეჯანის ქ.",
+    "district": "ვაკე-საბურთალო",
+    "confidence": "exact"
+  },
+  {
+    "myhome": "ნიაბის ქ",
+    "ssge": "ნიაბის ქ.",
+    "district": "ძველი თბილისი",
+    "confidence": "exact"
+  },
+  {
+    "myhome": "ნიაბის I შესახვევი",
+    "ssge": "ნიაბის I შეს.",
+    "district": "ძველი თბილისი",
+    "confidence": "exact"
+  },
+  {
+    "myhome": "ნიაბის III შესახვევი",
+    "ssge": "ნიაბის III შეს.",
+    "district": "ძველი თბილისი",
+    "confidence": "exact"
+  },
+  {
+    "myhome": "ნიაბის IV შესახვევი",
+    "ssge": "ნიაბის IV შეს.",
+    "district": "ძველი თბილისი",
+    "confidence": "exact"
+  },
+  {
+    "myhome": "ნიაბის V შესახვევი",
+    "ssge": "ნიაბის V შეს.",
+    "district": "ძველი თბილისი",
+    "confidence": "exact"
+  },
+  {
+    "myhome": "ნიაღვრის ქ.",
+    "ssge": "ნიაღვრის ქ.",
+    "district": "ძველი თბილისი",
+    "confidence": "exact"
+  },
+  {
+    "myhome": "ნიკო ბურის ქ.",
+    "ssge": "ნიკო ბურის ქ.",
+    "district": "ვაკე-საბურთალო",
+    "confidence": "exact"
+  },
+  {
+    "myhome": "ნიკო მარის ქუჩა #1-21, 2-16",
+    "ssge": "ნიკო მარის ქ.",
+    "district": "გლდანი-ნაძალადევი",
+    "confidence": "exact"
+  },
+  {
+    "myhome": "ნიკორწმინდის ქ.",
+    "ssge": "აბრამიშვილის ქ.",
+    "district": "ისანი-სამგორი",
+    "confidence": "fuzzy"
+  },
+  {
+    "myhome": "ნინიძის ქ.",
+    "ssge": "ნინიძის ქ.",
+    "district": "ისანი-სამგორი",
+    "confidence": "exact"
+  },
+  {
+    "myhome": "ნინოშვილის ქუჩა #1-15, 2-20",
+    "ssge": "ნინოშვილის ქ.",
+    "district": "დიდუბე-ჩუღურეთი",
+    "confidence": "exact"
+  },
+  {
+    "myhome": "ნიორაძის ქ",
+    "ssge": "ნიორაძის ქ.",
+    "district": "ძველი თბილისი",
+    "confidence": "exact"
+  },
+  {
+    "myhome": "ნიშნიანიძის ქ.",
+    "ssge": "ნიშნიანიძის ქ.",
+    "district": "ძველი თბილისი",
+    "confidence": "exact"
+  },
+  {
+    "myhome": "ნოდარ ტაბიძის ქ.",
+    "ssge": "ტ.ტაბიძის ქ.",
+    "district": "ძველი თბილისი",
+    "confidence": "fuzzy"
+  },
+  {
+    "myhome": "ნოვოროსიისკის ქ.",
+    "ssge": "ვარდისუბნის ქ.",
+    "district": "გლდანი-ნაძალადევი",
+    "confidence": "fuzzy"
+  },
+  {
+    "myhome": "ნორიოს აღმ",
+    "ssge": "ნორიოს აღმ.",
+    "district": "დიდუბე-ჩუღურეთი",
+    "confidence": "exact"
+  },
+  {
+    "myhome": "ნოსირის ქ.",
+    "ssge": "ნოსირის ქ.",
+    "district": "ისანი-სამგორი",
+    "confidence": "exact"
+  },
+  {
+    "myhome": "ნუგზარ კალანდაძის ქუჩა",
+    "ssge": "ა. კალანდაძის ქ",
+    "district": "გლდანი-ნაძალადევი",
+    "confidence": "fuzzy"
+  },
+  {
+    "myhome": "ნუშის ბაღების ქ.",
+    "ssge": "ნუშის ბაღების ქ.",
+    "district": "თბილისის შემოგარენი",
+    "confidence": "exact"
+  },
+  {
+    "myhome": "ნუშის ქ.",
+    "ssge": "ნუშის ქ.",
+    "district": "გლდანი-ნაძალადევი",
+    "confidence": "exact"
+  },
+  {
+    "myhome": "ნუცუბიძის ქუჩა #1-77, 2-60",
+    "ssge": "ნუცუბიძის ქ.",
+    "district": "ვაკე-საბურთალო",
+    "confidence": "exact"
+  },
+  {
+    "myhome": "ო. ჭილაძის ქ.",
+    "ssge": "ვ.ჭილაძის ქ.",
+    "district": "ვაკე-საბურთალო",
+    "confidence": "fuzzy"
+  },
+  {
+    "myhome": "ოდესის ქ",
+    "ssge": "ოდესის ქ.",
+    "district": "ვაკე-საბურთალო",
+    "confidence": "exact"
+  },
+  {
+    "myhome": "ომის გმირების ქ.",
+    "ssge": "მარუხის გმირების ქ.",
+    "district": "გლდანი-ნაძალადევი",
+    "confidence": "fuzzy"
+  },
+  {
+    "myhome": "ონაშვილის ქ",
+    "ssge": "ონაშვილის ქ.",
+    "district": "ისანი-სამგორი",
+    "confidence": "exact"
+  },
+  {
+    "myhome": "ონიაშვილის ქ",
+    "ssge": "ონიაშვილის ქ.",
+    "district": "ვაკე-საბურთალო",
+    "confidence": "exact"
+  },
+  {
+    "myhome": "ორახელაშვილის ქუჩა (ლილო)",
+    "ssge": "ჭირნახულის ქ.",
+    "district": "ისანი-სამგორი",
+    "confidence": "fuzzy"
+  },
+  {
+    "myhome": "ორბეთის ქ.",
+    "ssge": "ორბეთის ქ.",
+    "district": "გლდანი-ნაძალადევი",
+    "confidence": "exact"
+  },
+  {
+    "myhome": "ორთაჭალის ქ",
+    "ssge": "ორთაჭალის ქ.",
+    "district": "ძველი თბილისი",
+    "confidence": "exact"
+  },
+  {
+    "myhome": "ოსიაურის ქ.",
+    "ssge": "ოსიაურის ქ.",
+    "district": "დიდუბე-ჩუღურეთი",
+    "confidence": "exact"
+  },
+  {
+    "myhome": "ოქროყანის ქ.",
+    "ssge": "ოქროყანის ქ.",
+    "district": "ძველი თბილისი",
+    "confidence": "exact"
+  },
+  {
+    "myhome": "ოშკის ქ.",
+    "ssge": "დვირის ქ.",
+    "district": "გლდანი-ნაძალადევი",
+    "confidence": "fuzzy"
+  },
+  {
+    "myhome": "ოჩამჩირის ქ.",
+    "ssge": "ოჩამჩირის ქ.",
+    "district": "ვაკე-საბურთალო",
+    "confidence": "exact"
+  },
+  {
+    "myhome": "ოძისის ქ.",
+    "ssge": "ოძისის ქ.",
+    "district": "ძველი თბილისი",
+    "confidence": "exact"
+  },
+  {
+    "myhome": "ოჯალეშის ქ.",
+    "ssge": "ოჯალეშის ქ.",
+    "district": "ისანი-სამგორი",
+    "confidence": "exact"
+  },
+  {
+    "myhome": "პ. დათუაშვილის ქ.",
+    "ssge": "პ. დათუაშვილის ქ.",
+    "district": "ვაკე-საბურთალო",
+    "confidence": "exact"
+  },
+  {
+    "myhome": "პ. იბერის ქ.",
+    "ssge": "პეტრე იბერის ქ.",
+    "district": "ვაკე-საბურთალო",
+    "confidence": "fuzzy"
+  },
+  {
+    "myhome": "პაიჭაძის ქ.",
+    "ssge": "აკეთის ქ.",
+    "district": "გლდანი-ნაძალადევი",
+    "confidence": "fuzzy"
+  },
+  {
+    "myhome": "პალიასტომის ქ",
+    "ssge": "პალიასტომის ქ.",
+    "district": "დიდუბე-ჩუღურეთი",
+    "confidence": "exact"
+  },
+  {
+    "myhome": "პანკისის ქ.",
+    "ssge": "პანკისის ქ.",
+    "district": "ვაკე-საბურთალო",
+    "confidence": "exact"
+  },
+  {
+    "myhome": "პაპავების ქ.",
+    "ssge": "გოგაშენის ქ.",
+    "district": "გლდანი-ნაძალადევი",
+    "confidence": "fuzzy"
+  },
+  {
+    "myhome": "პასტერის ქ.",
+    "ssge": "პასტერის ქ.",
+    "district": "დიდუბე-ჩუღურეთი",
+    "confidence": "exact"
+  },
+  {
+    "myhome": "პატარიძის ქ.",
+    "ssge": "პატარიძის ქ.",
+    "district": "ისანი-სამგორი",
+    "confidence": "exact"
+  },
+  {
+    "myhome": "პატარძეულის ქ.",
+    "ssge": "პატარძეულის ქ.",
+    "district": "ისანი-სამგორი",
+    "confidence": "exact"
+  },
+  {
+    "myhome": "პეკინის გამზ.",
+    "ssge": "გელოვანის გამზ.",
+    "district": "ვაკე-საბურთალო",
+    "confidence": "fuzzy"
+  },
+  {
+    "myhome": "პეტრე ამირანაშვილის ქ.",
+    "ssge": "პ.ამირანაშვილის ქ.",
+    "district": "გლდანი-ნაძალადევი",
+    "confidence": "fuzzy"
+  },
+  {
+    "myhome": "პეტრე ბაგრატიონის ქ.",
+    "ssge": "პ. ბაგრატიონის ქ.",
+    "district": "დიდუბე-ჩუღურეთი",
+    "confidence": "fuzzy"
+  },
+  {
+    "myhome": "პიკასოს ქ.",
+    "ssge": "ბიწაძის ქ.",
+    "district": "ვაკე-საბურთალო",
+    "confidence": "fuzzy"
+  },
+  {
+    "myhome": "პლატინის ქ.",
+    "ssge": "პლატინის ქ.",
+    "district": "გლდანი-ნაძალადევი",
+    "confidence": "exact"
+  },
+  {
+    "myhome": "პოლიციის ქ.",
+    "ssge": "ჯავახეთის ქ.",
+    "district": "ისანი-სამგორი",
+    "confidence": "fuzzy"
+  },
+  {
+    "myhome": "პუშკინის ქ.",
+    "ssge": "პუშკინის ქ.",
+    "district": "ძველი თბილისი",
+    "confidence": "exact"
+  },
+  {
+    "myhome": "ჟ. ტურნეფორის ქ.",
+    "ssge": "ჟოზეფ ტურნეფორის ქ.",
+    "district": "ვაკე-საბურთალო",
+    "confidence": "fuzzy"
+  },
+  {
+    "myhome": "ჟველაურის ქ.",
+    "ssge": "ჟველაურის ქ.",
+    "district": "გლდანი-ნაძალადევი",
+    "confidence": "exact"
+  },
+  {
+    "myhome": "ჟინვალის ქ.",
+    "ssge": "ჟინვალის ქ.",
+    "district": "გლდანი-ნაძალადევი",
+    "confidence": "exact"
+  },
+  {
+    "myhome": "ჟონეთის ქ.",
+    "ssge": "ჟონეთის ქ.",
+    "district": "ძველი თბილისი",
+    "confidence": "exact"
+  },
+  {
+    "myhome": "რ. შმერლინგის ქ.",
+    "ssge": "ოსკარ შმერლინგის ქ.",
+    "district": "ვაკე-საბურთალო",
+    "confidence": "fuzzy"
+  },
+  {
+    "myhome": "რ. ჯაფარიძის ქ.",
+    "ssge": "რ. ჯაფარიძის ქ.",
+    "district": "ძველი თბილისი",
+    "confidence": "exact"
+  },
+  {
+    "myhome": "რაზმაძის ქ.",
+    "ssge": "რაზმაძის ქ.",
+    "district": "ვაკე-საბურთალო",
+    "confidence": "exact"
+  },
+  {
+    "myhome": "რამაზ ჩხიკვაძის ქ.",
+    "ssge": "რ.ჩხიკვაძის ქ.",
+    "district": "ვაკე-საბურთალო",
+    "confidence": "fuzzy"
+  },
+  {
+    "myhome": "რამაზის ქ.",
+    "ssge": "რამაზის ქ.",
+    "district": "ვაკე-საბურთალო",
+    "confidence": "exact"
+  },
+  {
+    "myhome": "რამიშვილი ნინოს ქ.",
+    "ssge": "წმინდა ნინოს ქ.",
+    "district": "ვაკე-საბურთალო",
+    "confidence": "fuzzy"
+  },
+  {
+    "myhome": "რატევანის ქ",
+    "ssge": "რატევანის ქ.",
+    "district": "გლდანი-ნაძალადევი",
+    "confidence": "exact"
+  },
+  {
+    "myhome": "რატილის ქ.",
+    "ssge": "რატილის ქ.",
+    "district": "ისანი-სამგორი",
+    "confidence": "exact"
+  },
+  {
+    "myhome": "რაფიელ ერისთავის ქ.",
+    "ssge": "მზია ერისთავის ქ",
+    "district": "ვაკე-საბურთალო",
+    "confidence": "fuzzy"
+  },
+  {
+    "myhome": "რაჭის ქ.",
+    "ssge": "რაჭის ქ.",
+    "district": "გლდანი-ნაძალადევი",
+    "confidence": "exact"
+  },
+  {
+    "myhome": "რევაზ ლაღიძის ქ.",
+    "ssge": "მ. ლაღიძის ქ.",
+    "district": "თბილისის შემოგარენი",
+    "confidence": "fuzzy"
+  },
+  {
+    "myhome": "რიკოთის ქ.",
+    "ssge": "რიკოთის ქ.",
+    "district": "გლდანი-ნაძალადევი",
+    "confidence": "exact"
+  },
+  {
+    "myhome": "რიონის ქ.",
+    "ssge": "რიონის ქ.",
+    "district": "გლდანი-ნაძალადევი",
+    "confidence": "exact"
+  },
+  {
+    "myhome": "რიონჰესის ქ.",
+    "ssge": "რიონჰესის ქ.",
+    "district": "გლდანი-ნაძალადევი",
+    "confidence": "exact"
+  },
+  {
+    "myhome": "რიცეულას ქ.",
+    "ssge": "თავგორაშვილის ქ.",
+    "district": "გლდანი-ნაძალადევი",
+    "confidence": "fuzzy"
+  },
+  {
+    "myhome": "რკინიგზის ქ.",
+    "ssge": "რკინიგზის ქ.",
+    "district": "გლდანი-ნაძალადევი",
+    "confidence": "exact"
+  },
+  {
+    "myhome": "როდენის ქ.",
+    "ssge": "როდენის ქ.",
+    "district": "ძველი თბილისი",
+    "confidence": "exact"
+  },
+  {
+    "myhome": "რომის ქ.",
+    "ssge": "რომის ქ.",
+    "district": "დიდუბე-ჩუღურეთი",
+    "confidence": "exact"
+  },
+  {
+    "myhome": "როსტევანის ქ.",
+    "ssge": "როსტევანის ქ.",
+    "district": "ვაკე-საბურთალო",
+    "confidence": "exact"
+  },
+  {
+    "myhome": "როსტომაშვილის ქ.",
+    "ssge": "ნაირაშვილის ქ.",
+    "district": "ისანი-სამგორი",
+    "confidence": "fuzzy"
+  },
+  {
+    "myhome": "რუისპირის ქუჩა (ელია)",
+    "ssge": "რუისპირის ქ.",
+    "district": "ძველი თბილისი",
+    "confidence": "exact"
+  },
+  {
+    "myhome": "რუსთაველის გამზ.",
+    "ssge": "რუსთაველის გამზ.",
+    "district": "ძველი თბილისი",
+    "confidence": "exact"
+  },
+  {
+    "myhome": "რუსთაველის ქ.",
+    "ssge": "რუსთაველის ქ.",
+    "district": "თბილისის შემოგარენი",
+    "confidence": "exact"
+  },
+  {
+    "myhome": "რუსთავის გზატკეცილი",
+    "ssge": "რუსთავის გზატკეცილი",
+    "district": "ისანი-სამგორი",
+    "confidence": "exact"
+  },
+  {
+    "myhome": "რწმენის ქ.",
+    "ssge": "თეთრიწყაროს ქ.",
+    "district": "ისანი-სამგორი",
+    "confidence": "fuzzy"
+  },
+  {
+    "myhome": "ს. ეულის ქ.",
+    "ssge": "სანდრო ეულის ქ.",
+    "district": "ვაკე-საბურთალო",
+    "confidence": "fuzzy"
+  },
+  {
+    "myhome": "ს. ვირსალაძის ქ.",
+    "ssge": "თინათინ ვირსალაძის ქ,",
+    "district": "ძველი თბილისი",
+    "confidence": "fuzzy"
+  },
+  {
+    "myhome": "ს. კაკაბაძის ქ.",
+    "ssge": "დ. კაკაბაძის ქ.",
+    "district": "ვაკე-საბურთალო",
+    "confidence": "fuzzy"
+  },
+  {
+    "myhome": "ს. ჭიაურელის ქ.",
+    "ssge": "ს. ჭიაურელის ქ.",
+    "district": "ძველი თბილისი",
+    "confidence": "exact"
+  },
+  {
+    "myhome": "სააკაძის დაღმ.",
+    "ssge": "სააკაძის დაღმართი",
+    "district": "ვაკე-საბურთალო",
+    "confidence": "exact"
+  },
+  {
+    "myhome": "საბანისძის ქ.",
+    "ssge": "ნიაღვრის ქ.",
+    "district": "ძველი თბილისი",
+    "confidence": "fuzzy"
+  },
+  {
+    "myhome": "საბარგოს დასახლება",
+    "ssge": "საბარგო დას.",
+    "district": "ისანი-სამგორი",
+    "confidence": "fuzzy"
+  },
+  {
+    "myhome": "საბატონოს ქ.",
+    "ssge": "მოსიძის ქ.",
+    "district": "ძველი თბილისი",
+    "confidence": "fuzzy"
+  },
+  {
+    "myhome": "საბაშვილის ქ.",
+    "ssge": "საბაშვილის ქ.",
+    "district": "გლდანი-ნაძალადევი",
+    "confidence": "exact"
+  },
+  {
+    "myhome": "საგუბარის ქ.",
+    "ssge": "საგუბარის ქ.",
+    "district": "გლდანი-ნაძალადევი",
+    "confidence": "exact"
+  },
+  {
+    "myhome": "სადგერის ქ.",
+    "ssge": "სადგერის ქ.",
+    "district": "ისანი-სამგორი",
+    "confidence": "exact"
+  },
+  {
+    "myhome": "სადმელის ქ.",
+    "ssge": "სადმელის ქ.",
+    "district": "გლდანი-ნაძალადევი",
+    "confidence": "exact"
+  },
+  {
+    "myhome": "სათემოს ქ.",
+    "ssge": "კვალის ქ.",
+    "district": "ძველი თბილისი",
+    "confidence": "fuzzy"
+  },
+  {
+    "myhome": "საიათნოვას ქ",
+    "ssge": "საიათნოვას ქ.",
+    "district": "ძველი თბილისი",
+    "confidence": "exact"
+  },
+  {
+    "myhome": "საინგილოს ქ.",
+    "ssge": "საინგილოს ქ.",
+    "district": "ძველი თბილისი",
+    "confidence": "exact"
+  },
+  {
+    "myhome": "საირმის გორა",
+    "ssge": "საირმის გორა,",
+    "district": "ვაკე-საბურთალო",
+    "confidence": "exact"
+  },
+  {
+    "myhome": "საირმის ქ.",
+    "ssge": "საირმის ქ.",
+    "district": "გლდანი-ნაძალადევი",
+    "confidence": "exact"
+  },
+  {
+    "myhome": "სალამის ქ.",
+    "ssge": "სალამის ქ.",
+    "district": "ძველი თბილისი",
+    "confidence": "exact"
+  },
+  {
+    "myhome": "სალხინოს ქ.",
+    "ssge": "სალხინოს ქ.",
+    "district": "დიდუბე-ჩუღურეთი",
+    "confidence": "exact"
+  },
+  {
+    "myhome": "სამაჩაბლოს ქ.",
+    "ssge": "გოძიაშვილის ქ.",
+    "district": "ვაკე-საბურთალო",
+    "confidence": "fuzzy"
+  },
+  {
+    "myhome": "სამგორის ქ.",
+    "ssge": "სამგორის ქ.",
+    "district": "ისანი-სამგორი",
+    "confidence": "exact"
+  },
+  {
+    "myhome": "სამეგრელოს ქ.",
+    "ssge": "სამეგრელოს ქ.",
+    "district": "გლდანი-ნაძალადევი",
+    "confidence": "exact"
+  },
+  {
+    "myhome": "სამთავროს ქ.",
+    "ssge": "ნუშის ქ.",
+    "district": "გლდანი-ნაძალადევი",
+    "confidence": "fuzzy"
+  },
+  {
+    "myhome": "სამპანტების ქ.",
+    "ssge": "კვანტალიანის ქ.",
+    "district": "თბილისის შემოგარენი",
+    "confidence": "fuzzy"
+  },
+  {
+    "myhome": "სამრეკლოს ქუჩა (ყოფ. ურიცკის ქუჩა)",
+    "ssge": "სამრეკლოს ქ.",
+    "district": "ძველი თბილისი",
+    "confidence": "exact"
+  },
+  {
+    "myhome": "სამტრედიის ქ.",
+    "ssge": "სამტრედიის ქ.",
+    "district": "დიდუბე-ჩუღურეთი",
+    "confidence": "exact"
+  },
+  {
+    "myhome": "სამურზაყანოს ქ.",
+    "ssge": "სამურზაყანოს ქ.",
+    "district": "დიდუბე-ჩუღურეთი",
+    "confidence": "exact"
+  },
+  {
+    "myhome": "სამურის ქ.",
+    "ssge": "კურსკის ქ.",
+    "district": "ძველი თბილისი",
+    "confidence": "fuzzy"
+  },
+  {
+    "myhome": "სამღებროს ქ.",
+    "ssge": "სამღებროს ქ,",
+    "district": "ძველი თბილისი",
+    "confidence": "exact"
+  },
+  {
+    "myhome": "სამღერეთის ქ.",
+    "ssge": "სამღერეთის ქ.",
+    "district": "გლდანი-ნაძალადევი",
+    "confidence": "exact"
+  },
+  {
+    "myhome": "სანავარდოს ქ.",
+    "ssge": "სანავარდოს ქ.",
+    "district": "გლდანი-ნაძალადევი",
+    "confidence": "exact"
+  },
+  {
+    "myhome": "სანდრო ახმეტელის ქ.",
+    "ssge": "თენგიზ ახმეტელის ქ.",
+    "district": "დიდუბე-ჩუღურეთი",
+    "confidence": "fuzzy"
+  },
+  {
+    "myhome": "სანერგეს ქ.",
+    "ssge": "ნიჟარაძის ქ.",
+    "district": "გლდანი-ნაძალადევი",
+    "confidence": "fuzzy"
+  },
+  {
+    "myhome": "სანქტ-პეტერბურგის ქ.",
+    "ssge": "სანკტ-პეტერბურგის ქ.",
+    "district": "დიდუბე-ჩუღურეთი",
+    "confidence": "fuzzy"
+  },
+  {
+    "myhome": "სართანიას ქ.",
+    "ssge": "სართანიას ქ.",
+    "district": "გლდანი-ნაძალადევი",
+    "confidence": "exact"
+  },
+  {
+    "myhome": "სართიჭალის ქ",
+    "ssge": "სართიჭალის ქ.",
+    "district": "ძველი თბილისი",
+    "confidence": "exact"
+  },
+  {
+    "myhome": "საქანელას დაღმ",
+    "ssge": "სააკაძის დაღმართი",
+    "district": "ძველი თბილისი",
+    "confidence": "fuzzy"
+  },
+  {
+    "myhome": "საქანელას ქ",
+    "ssge": "მესხიას ქ.",
+    "district": "ძველი თბილისი",
+    "confidence": "fuzzy"
+  },
+  {
+    "myhome": "საქართველოს ერთიანობისათვის მებრძოლთა ქ.",
+    "ssge": "საქართველოს ერთიანობისათვის მებრძოლთა ქ.",
+    "district": "ისანი-სამგორი",
+    "confidence": "exact"
+  },
+  {
+    "myhome": "საქნავთობის დასახლება (ლილო)",
+    "ssge": "დამპალოს დას.",
+    "district": "ისანი-სამგორი",
+    "confidence": "fuzzy"
+  },
+  {
+    "myhome": "საყვირის ქ.",
+    "ssge": "საყვირის ქ.",
+    "district": "გლდანი-ნაძალადევი",
+    "confidence": "exact"
+  },
+  {
+    "myhome": "საჩხერის ქ.",
+    "ssge": "საჩხერის ქ.",
+    "district": "გლდანი-ნაძალადევი",
+    "confidence": "exact"
+  },
+  {
+    "myhome": "საცხენისის ქ.",
+    "ssge": "ლაღიძის ქ.",
+    "district": "ისანი-სამგორი",
+    "confidence": "fuzzy"
+  },
+  {
+    "myhome": "საჭილაოს ქ.",
+    "ssge": "საჭილაოს ქ.",
+    "district": "გლდანი-ნაძალადევი",
+    "confidence": "exact"
+  },
+  {
+    "myhome": "სახალხოს ქ.",
+    "ssge": "კუპრაძის ქ.",
+    "district": "ისანი-სამგორი",
+    "confidence": "fuzzy"
+  },
+  {
+    "myhome": "სახოკიას ქ.",
+    "ssge": "სახოკიას ქ.",
+    "district": "ვაკე-საბურთალო",
+    "confidence": "exact"
+  },
+  {
+    "myhome": "საჯაიას ქ.",
+    "ssge": "საჯაიას ქ.",
+    "district": "ვაკე-საბურთალო",
+    "confidence": "exact"
+  },
+  {
+    "myhome": "სევანის ქ.",
+    "ssge": "სევანის ქ.",
+    "district": "ძველი თბილისი",
+    "confidence": "exact"
+  },
+  {
+    "myhome": "სენაკის ქ.",
+    "ssge": "სენაკის ქ.",
+    "district": "დიდუბე-ჩუღურეთი",
+    "confidence": "exact"
+  },
+  {
+    "myhome": "სვანეთის ქ.",
+    "ssge": "სვანეთის ქ.",
+    "district": "გლდანი-ნაძალადევი",
+    "confidence": "exact"
+  },
+  {
+    "myhome": "სვეტიცხოვლის ქ.",
+    "ssge": "სვეტიცხოვლის ქ.",
+    "district": "ვაკე-საბურთალო",
+    "confidence": "exact"
+  },
+  {
+    "myhome": "სვირის ქ.",
+    "ssge": "სვირის ქ.",
+    "district": "გლდანი-ნაძალადევი",
+    "confidence": "exact"
+  },
+  {
+    "myhome": "სიღნაღის ქ.",
+    "ssge": "სიღნაღის ქ.",
+    "district": "დიდუბე-ჩუღურეთი",
+    "confidence": "exact"
+  },
+  {
+    "myhome": "სიხარულიძის ქ.",
+    "ssge": "სიხარულიძის ქ.",
+    "district": "გლდანი-ნაძალადევი",
+    "confidence": "exact"
+  },
+  {
+    "myhome": "სკანდეს ქ.",
+    "ssge": "ურეკის ქ.",
+    "district": "გლდანი-ნაძალადევი",
+    "confidence": "fuzzy"
+  },
+  {
+    "myhome": "სკოლის ქ",
+    "ssge": "ტყიბულის ქ.",
+    "district": "გლდანი-ნაძალადევი",
+    "confidence": "fuzzy"
+  },
+  {
+    "myhome": "სნოს ქ.",
+    "ssge": "შატილის ქ.",
+    "district": "გლდანი-ნაძალადევი",
+    "confidence": "fuzzy"
+  },
+  {
+    "myhome": "სოლოლაკის ქ.",
+    "ssge": "ნიშნიანიძის ქ.",
+    "district": "ძველი თბილისი",
+    "confidence": "fuzzy"
+  },
+  {
+    "myhome": "სოლომონ ბრძენის ქ.",
+    "ssge": "სოლომონ ბრძენის ქ.",
+    "district": "ძველი თბილისი",
+    "confidence": "exact"
+  },
+  {
+    "myhome": "სომხეთის ქ",
+    "ssge": "სომხეთის ქ.",
+    "district": "ძველი თბილისი",
+    "confidence": "exact"
+  },
+  {
+    "myhome": "სოფ. დიღომი",
+    "ssge": "სოფ. დიღომი",
+    "district": "ვაკე-საბურთალო",
+    "confidence": "exact"
+  },
+  {
+    "myhome": "სოხუმის ქ.",
+    "ssge": "სოხუმის ქ.",
+    "district": "დიდუბე-ჩუღურეთი",
+    "confidence": "exact"
+  },
+  {
+    "myhome": "სტანისლავსკის ქ.",
+    "ssge": "სტანისლავსკის ქ.",
+    "district": "დიდუბე-ჩუღურეთი",
+    "confidence": "exact"
+  },
+  {
+    "myhome": "სტრაბონის ქ.",
+    "ssge": "სტრაბონის ქ.",
+    "district": "ვაკე-საბურთალო",
+    "confidence": "exact"
+  },
+  {
+    "myhome": "სტურუას ქუჩა (ლილო)",
+    "ssge": "სტურუას ქ.",
+    "district": "ისანი-სამგორი",
+    "confidence": "exact"
+  },
+  {
+    "myhome": "სუვოროვის ქ.",
+    "ssge": "სუვოროვის ქ.",
+    "district": "გლდანი-ნაძალადევი",
+    "confidence": "exact"
+  },
+  {
+    "myhome": "სულაკაურის ქ.",
+    "ssge": "ავალიანის ქ.",
+    "district": "ვაკე-საბურთალო",
+    "confidence": "fuzzy"
+  },
+  {
+    "myhome": "სულთნიშანის ქ.",
+    "ssge": "სულთნიშანის ქ.",
+    "district": "ძველი თბილისი",
+    "confidence": "exact"
+  },
+  {
+    "myhome": "სულიაშვილის ქ.",
+    "ssge": "სულიაშვილის ქ.",
+    "district": "დიდუბე-ჩუღურეთი",
+    "confidence": "exact"
+  },
+  {
+    "myhome": "სულიკო თორთლაძის ქ.",
+    "ssge": "სულიკო თორთლაძის ქ.",
+    "district": "ძველი თბილისი",
+    "confidence": "exact"
+  },
+  {
+    "myhome": "სულხან-საბას ქ.",
+    "ssge": "სულხან-საბას ქ.",
+    "district": "ძველი თბილისი",
+    "confidence": "exact"
+  },
+  {
+    "myhome": "სულხანიშვილის ქ.",
+    "ssge": "სულხანიშვილის ქ.",
+    "district": "ძველი თბილისი",
+    "confidence": "exact"
+  },
+  {
+    "myhome": "სუმბათაშვილ-იუჟინის ქ.",
+    "ssge": "სუმბათაშვილ-იუჟინის ქ.",
+    "district": "გლდანი-ნაძალადევი",
+    "confidence": "exact"
+  },
+  {
+    "myhome": "სურამის ქ.",
+    "ssge": "სურამის ქ.",
+    "district": "დიდუბე-ჩუღურეთი",
+    "confidence": "exact"
+  },
+  {
+    "myhome": "სუხიშვილის ქ.",
+    "ssge": "სუხიშვილის ქ.",
+    "district": "ისანი-სამგორი",
+    "confidence": "exact"
+  },
+  {
+    "myhome": "სხარტალის ქ.",
+    "ssge": "ჩარგლის ქ. (თემქა)",
+    "district": "გლდანი-ნაძალადევი",
+    "confidence": "fuzzy"
+  },
+  {
+    "myhome": "სხირტლაძის ქ.",
+    "ssge": "სხირტლაძის ქ.",
+    "district": "ვაკე-საბურთალო",
+    "confidence": "exact"
+  },
+  {
+    "myhome": "სხულუხიას ქ.",
+    "ssge": "სხულუხიას ქ.",
+    "district": "დიდუბე-ჩუღურეთი",
+    "confidence": "exact"
+  },
+  {
+    "myhome": "ტაბახმელის ქ.",
+    "ssge": "ოქროყანის ქ.",
+    "district": "ძველი თბილისი",
+    "confidence": "fuzzy"
+  },
+  {
+    "myhome": "ტაბიძის ქ.",
+    "ssge": "დანელიას ქ.",
+    "district": "თბილისის შემოგარენი",
+    "confidence": "fuzzy"
+  },
+  {
+    "myhome": "ტამიშის ქ.",
+    "ssge": "მაისურაძის ქ.",
+    "district": "ისანი-სამგორი",
+    "confidence": "fuzzy"
+  },
+  {
+    "myhome": "ტანძიის ქ.",
+    "ssge": "ტანძიის ქ.",
+    "district": "ვაკე-საბურთალო",
+    "confidence": "exact"
+  },
+  {
+    "myhome": "ტარიელ ფუტკარაძის ქ.",
+    "ssge": "ტ. ფუტკარაძის ქ.",
+    "district": "გლდანი-ნაძალადევი",
+    "confidence": "fuzzy"
+  },
+  {
+    "myhome": "ტარიელის ქ.",
+    "ssge": "ტარიელის ქ.",
+    "district": "ვაკე-საბურთალო",
+    "confidence": "exact"
+  },
+  {
+    "myhome": "ტაშირის ქ.",
+    "ssge": "ტაშირის ქ.",
+    "district": "დიდუბე-ჩუღურეთი",
+    "confidence": "exact"
+  },
+  {
+    "myhome": "ტაშკენტის ქ",
+    "ssge": "ტაშკენტის ქ.",
+    "district": "ვაკე-საბურთალო",
+    "confidence": "exact"
+  },
+  {
+    "myhome": "ტაძრის ქ.",
+    "ssge": "ტაძრის ქ.",
+    "district": "ისანი-სამგორი",
+    "confidence": "exact"
+  },
+  {
+    "myhome": "ტელეგრაფის ჩიხი",
+    "ssge": "ტელეგრაფის ჩიხი,",
+    "district": "ძველი თბილისი",
+    "confidence": "exact"
+  },
+  {
+    "myhome": "ტეტელაშვილის ქ.",
+    "ssge": "ტეტელაშვილის ქ.",
+    "district": "დიდუბე-ჩუღურეთი",
+    "confidence": "exact"
+  },
+  {
+    "myhome": "ტეხურას ქ.",
+    "ssge": "ინტენსიფიკაციის ქ.",
+    "district": "ვაკე-საბურთალო",
+    "confidence": "fuzzy"
+  },
+  {
+    "myhome": "ტვიშის ქ.",
+    "ssge": "ტვიშის ქ.",
+    "district": "ისანი-სამგორი",
+    "confidence": "exact"
+  },
+  {
+    "myhome": "ტიბაანის ქ",
+    "ssge": "ტიბაანის ქ.",
+    "district": "გლდანი-ნაძალადევი",
+    "confidence": "exact"
+  },
+  {
+    "myhome": "ტირიფების ქ.",
+    "ssge": "ტირიფების ქ.",
+    "district": "ვაკე-საბურთალო",
+    "confidence": "exact"
+  },
+  {
+    "myhome": "ტიულენევის ქ.",
+    "ssge": "ხევძმარის ქ.",
+    "district": "გლდანი-ნაძალადევი",
+    "confidence": "fuzzy"
+  },
+  {
+    "myhome": "ტიხონოვის ქ.",
+    "ssge": "ტიხონოვის ქ.",
+    "district": "გლდანი-ნაძალადევი",
+    "confidence": "exact"
+  },
+  {
+    "myhome": "ტოვსტონოგოვის ქ.",
+    "ssge": "ტოვსტონოგოვის ქ.",
+    "district": "დიდუბე-ჩუღურეთი",
+    "confidence": "exact"
+  },
+  {
+    "myhome": "ტრანსპორტის ქ.",
+    "ssge": "ტრანსპორტის ქ.",
+    "district": "დიდუბე-ჩუღურეთი",
+    "confidence": "exact"
+  },
+  {
+    "myhome": "ტურგენევის ქ.",
+    "ssge": "ტურგენევის ქ.",
+    "district": "დიდუბე-ჩუღურეთი",
+    "confidence": "exact"
+  },
+  {
+    "myhome": "ტუსკიას ქ.",
+    "ssge": "ტუსკიას ქ.",
+    "district": "ვაკე-საბურთალო",
+    "confidence": "exact"
+  },
+  {
+    "myhome": "ტყეკულტურის ქ.",
+    "ssge": "ახმეტელის ქ.",
+    "district": "დიდუბე-ჩუღურეთი",
+    "confidence": "fuzzy"
+  },
+  {
+    "myhome": "ტყვარჩელის ქ.",
+    "ssge": "ტყვარჩელის ქ.",
+    "district": "ვაკე-საბურთალო",
+    "confidence": "exact"
+  },
+  {
+    "myhome": "ტყვიავის ქ",
+    "ssge": "ტყვიავის ქ.",
+    "district": "დიდუბე-ჩუღურეთი",
+    "confidence": "exact"
+  },
+  {
+    "myhome": "ტყიბულის ქ.",
+    "ssge": "ტყიბულის ქ.",
+    "district": "გლდანი-ნაძალადევი",
+    "confidence": "exact"
+  },
+  {
+    "myhome": "უკლებას ქ.",
+    "ssge": "ოძელაშვილის ქ.",
+    "district": "ძველი თბილისი",
+    "confidence": "fuzzy"
+  },
+  {
+    "myhome": "უმიკაშვილის ქ.",
+    "ssge": "უმიკაშვილის ქ.",
+    "district": "ძველი თბილისი",
+    "confidence": "exact"
+  },
+  {
+    "myhome": "უნივერსიტეტის ქ.",
+    "ssge": "უნივერსიტეტის ქ.",
+    "district": "ვაკე-საბურთალო",
+    "confidence": "exact"
+  },
+  {
+    "myhome": "ურბნისის ქ.",
+    "ssge": "ურბნისის ქ.",
+    "district": "ძველი თბილისი",
+    "confidence": "exact"
+  },
+  {
+    "myhome": "ურიდიას ქ",
+    "ssge": "ურიდიას ქ.",
+    "district": "გლდანი-ნაძალადევი",
+    "confidence": "exact"
+  },
+  {
+    "myhome": "უფლისციხის ქ.",
+    "ssge": "უფლისციხის ქ.",
+    "district": "დიდუბე-ჩუღურეთი",
+    "confidence": "exact"
+  },
+  {
+    "myhome": "უშაკოვის ქ.",
+    "ssge": "უშაკოვის ქ.",
+    "district": "ისანი-სამგორი",
+    "confidence": "exact"
+  },
+  {
+    "myhome": "უჩანეიშვილის ქ",
+    "ssge": "უჩანეიშვილის ქ.",
+    "district": "ვაკე-საბურთალო",
+    "confidence": "exact"
+  },
+  {
+    "myhome": "უცნობ გმირთა ქ.",
+    "ssge": "უცნობ გმირთა ქ.",
+    "district": "გლდანი-ნაძალადევი",
+    "confidence": "exact"
+  },
+  {
+    "myhome": "უძოს ქ.",
+    "ssge": "უძოს ქ.",
+    "district": "ისანი-სამგორი",
+    "confidence": "exact"
+  },
+  {
+    "myhome": "უჯარმის ქ",
+    "ssge": "უჯარმის ქ.",
+    "district": "ისანი-სამგორი",
+    "confidence": "exact"
+  },
+  {
+    "myhome": "ფაბრიკის შესახვევი",
+    "ssge": "ფაბრიკის შესახვევი",
+    "district": "ძველი თბილისი",
+    "confidence": "exact"
+  },
+  {
+    "myhome": "ფალიაშვილის ქუჩა #2-82, 1-57",
+    "ssge": "ფალიაშვილის ქ.",
+    "district": "ვაკე-საბურთალო",
+    "confidence": "exact"
+  },
+  {
+    "myhome": "ფანასკერტელ-ციციშვილის ქ.",
+    "ssge": "ფანასკერტელ-ციციშვილის ქ.",
+    "district": "ისანი-სამგორი",
+    "confidence": "exact"
+  },
+  {
+    "myhome": "ფარავნის ქ",
+    "ssge": "ფარავნის ქ.",
+    "district": "დიდუბე-ჩუღურეთი",
+    "confidence": "exact"
+  },
+  {
+    "myhome": "ფარნავაზ მეფის გამზ.",
+    "ssge": "ფარნავაზ მეფის გამზ.",
+    "district": "ვაკე-საბურთალო",
+    "confidence": "exact"
+  },
+  {
+    "myhome": "ფარნავაზ მეფის ქ.",
+    "ssge": "ფარნავაზ მეფის ქ.",
+    "district": "თბილისის შემოგარენი",
+    "confidence": "exact"
+  },
+  {
+    "myhome": "ფარსადანის ქ.",
+    "ssge": "ფარსადანის ქ.",
+    "district": "ვაკე-საბურთალო",
+    "confidence": "exact"
+  },
+  {
+    "myhome": "ფასანაურის ქ.",
+    "ssge": "მშვიდობის ქ.",
+    "district": "ისანი-სამგორი",
+    "confidence": "fuzzy"
+  },
+  {
+    "myhome": "ფატმანის ქ.",
+    "ssge": "ფატმანის ქ.",
+    "district": "ვაკე-საბურთალო",
+    "confidence": "exact"
+  },
+  {
+    "myhome": "ფაღავას ქ.",
+    "ssge": "ფაღავას ქ.",
+    "district": "ძველი თბილისი",
+    "confidence": "exact"
+  },
+  {
+    "myhome": "ფეიქართა ქ.",
+    "ssge": "ფეიქართა ქ.",
+    "district": "გლდანი-ნაძალადევი",
+    "confidence": "exact"
+  },
+  {
+    "myhome": "ფერისცვალების ქ",
+    "ssge": "ფერისცვალების ქ.",
+    "district": "ძველი თბილისი",
+    "confidence": "exact"
+  },
+  {
+    "myhome": "ფერმწერთა ქ.",
+    "ssge": "ფერმწერთა ქ.",
+    "district": "ვაკე-საბურთალო",
+    "confidence": "exact"
+  },
+  {
+    "myhome": "ფილიას ქ.",
+    "ssge": "ფილიას ქ.",
+    "district": "გლდანი-ნაძალადევი",
+    "confidence": "exact"
+  },
+  {
+    "myhome": "ფირდოუსის ქ",
+    "ssge": "ფირდოუსის ქ.",
+    "district": "ძველი თბილისი",
+    "confidence": "exact"
+  },
+  {
+    "myhome": "ფიროსმანის ქ.",
+    "ssge": "ფიროსმანის ქ.",
+    "district": "ვაკე-საბურთალო",
+    "confidence": "exact"
+  },
+  {
+    "myhome": "ფიროსმანის II ჩიხ.",
+    "ssge": "ფიროსმანის II ჩიხი",
+    "district": "გლდანი-ნაძალადევი",
+    "confidence": "exact"
+  },
+  {
+    "myhome": "ფოთის ქ.",
+    "ssge": "ფოთის ქ.",
+    "district": "დიდუბე-ჩუღურეთი",
+    "confidence": "exact"
+  },
+  {
+    "myhome": "ფოსტის ქ.",
+    "ssge": "ფოსტის ქ.",
+    "district": "ძველი თბილისი",
+    "confidence": "exact"
+  },
+  {
+    "myhome": "ფოცხვერაშვილის ქ.",
+    "ssge": "ფოცხვერაშვილის ქ.",
+    "district": "დიდუბე-ჩუღურეთი",
+    "confidence": "exact"
+  },
+  {
+    "myhome": "ფოცხიშვილის ქ.",
+    "ssge": "ფოცხიშვილის ქ.",
+    "district": "გლდანი-ნაძალადევი",
+    "confidence": "exact"
+  },
+  {
+    "myhome": "ფრისის ქ.",
+    "ssge": "ოჯალეშის ქ.",
+    "district": "ისანი-სამგორი",
+    "confidence": "fuzzy"
+  },
+  {
+    "myhome": "ფუნიკულიორის ქ.",
+    "ssge": "კვაჭაძის ქ.",
+    "district": "თბილისის შემოგარენი",
+    "confidence": "fuzzy"
+  },
+  {
+    "myhome": "ფურცელაძის ქ.",
+    "ssge": "ფურცელაძის ქ.",
+    "district": "ძველი თბილისი",
+    "confidence": "exact"
+  },
+  {
+    "myhome": "ფშავის ქ.",
+    "ssge": "ფშავის ქ.",
+    "district": "ძველი თბილისი",
+    "confidence": "exact"
+  },
+  {
+    "myhome": "ფხოვის ქ.",
+    "ssge": "ფხოვის ქ.",
+    "district": "ძველი თბილისი",
+    "confidence": "exact"
+  },
+  {
+    "myhome": "ქ. მაღალაშვილის ქ.",
+    "ssge": "ე.მაღალაშვილის ქ.",
+    "district": "გლდანი-ნაძალადევი",
+    "confidence": "fuzzy"
+  },
+  {
+    "myhome": "ქავთარაძის ქ.",
+    "ssge": "ქავთარაძის ქ.",
+    "district": "ვაკე-საბურთალო",
+    "confidence": "exact"
+  },
+  {
+    "myhome": "ქართველიშვილის ქ.",
+    "ssge": "ქართველიშვილის ქ.",
+    "district": "გლდანი-ნაძალადევი",
+    "confidence": "exact"
+  },
+  {
+    "myhome": "ქართლელიშვილის ქ.",
+    "ssge": "ხვანჭკარის ქ.",
+    "district": "გლდანი-ნაძალადევი",
+    "confidence": "fuzzy"
+  },
+  {
+    "myhome": "ქართლის ქ.",
+    "ssge": "ქართლის ქ.",
+    "district": "გლდანი-ნაძალადევი",
+    "confidence": "exact"
+  },
+  {
+    "myhome": "ქართულ-ამერიკული მეგობრობის გამზ.",
+    "ssge": "ქართულ-ამერიკული მეგობრობის გამზირი",
+    "district": "ვაკე-საბურთალო",
+    "confidence": "exact"
+  },
+  {
+    "myhome": "ქებურიას ქ.",
+    "ssge": "ქებურიას ქ.",
+    "district": "გლდანი-ნაძალადევი",
+    "confidence": "exact"
+  },
+  {
+    "myhome": "ქედის ქ.",
+    "ssge": "ავალიშვილის ქ.",
+    "district": "გლდანი-ნაძალადევი",
+    "confidence": "fuzzy"
+  },
+  {
+    "myhome": "ქეთევან წამებულის გამზ.",
+    "ssge": "ქეთევან წამებულის გამზ. (ავლაბარი)",
+    "district": "ძველი თბილისი",
+    "confidence": "exact"
+  },
+  {
+    "myhome": "ქერჩის ქ.",
+    "ssge": "ქერჩის ქ.",
+    "district": "გლდანი-ნაძალადევი",
+    "confidence": "exact"
+  },
+  {
+    "myhome": "ქიაჩელის ქ.",
+    "ssge": "ქიაჩელის ქ.",
+    "district": "თბილისის შემოგარენი",
+    "confidence": "exact"
+  },
+  {
+    "myhome": "ქიზიყის ქ.",
+    "ssge": "ქიზიყის ქ.",
+    "district": "ისანი-სამგორი",
+    "confidence": "exact"
+  },
+  {
+    "myhome": "ქინქლაძის ქ.",
+    "ssge": "ქინქლაძის ქ.",
+    "district": "დიდუბე-ჩუღურეთი",
+    "confidence": "exact"
+  },
+  {
+    "myhome": "ქინძმარაულის ქ.",
+    "ssge": "ქინძმარაულის ქ.",
+    "district": "ისანი-სამგორი",
+    "confidence": "exact"
+  },
+  {
+    "myhome": "ქიქოძის ქ.",
+    "ssge": "ქიქოძის ქ.",
+    "district": "ძველი თბილისი",
+    "confidence": "exact"
+  },
+  {
+    "myhome": "ქობულაძის ქ.",
+    "ssge": "ქობულაძის ქ.",
+    "district": "ისანი-სამგორი",
+    "confidence": "exact"
+  },
+  {
+    "myhome": "ქობულეთის ქ.",
+    "ssge": "ქობულეთის ქ.",
+    "district": "ვაკე-საბურთალო",
+    "confidence": "exact"
+  },
+  {
+    "myhome": "ქოშიგორა",
+    "ssge": "ქოშიგორა",
+    "district": "ვაკე-საბურთალო",
+    "confidence": "exact"
+  },
+  {
+    "myhome": "ქოშიგორას ქ.",
+    "ssge": "ლისის ქ.",
+    "district": "ვაკე-საბურთალო",
+    "confidence": "fuzzy"
+  },
+  {
+    "myhome": "ქუთაისის ქ.",
+    "ssge": "ქუთაისის ქ.",
+    "district": "დიდუბე-ჩუღურეთი",
+    "confidence": "exact"
+  },
+  {
+    "myhome": "ქუჩიშვილის ქ.",
+    "ssge": "ქუჩიშვილის ქ.",
+    "district": "ძველი თბილისი",
+    "confidence": "exact"
+  },
+  {
+    "myhome": "ქუჯი ერისთავის ქ.",
+    "ssge": "თ.ერისთავის ქ. (სანზონა)",
+    "district": "გლდანი-ნაძალადევი",
+    "confidence": "fuzzy"
+  },
+  {
+    "myhome": "ღამბაშიძის ქ.",
+    "ssge": "ღამბაშიძის ქ.",
+    "district": "ძველი თბილისი",
+    "confidence": "exact"
+  },
+  {
+    "myhome": "ღების ქ.",
+    "ssge": "ბობოხიძის ქ.",
+    "district": "გლდანი-ნაძალადევი",
+    "confidence": "fuzzy"
+  },
+  {
+    "myhome": "ღვინის აღმ.",
+    "ssge": "ღვინის აღმართი,",
+    "district": "ძველი თბილისი",
+    "confidence": "exact"
+  },
+  {
+    "myhome": "ღრმაღელის ქ.",
+    "ssge": "ღრმაღელის ქ.",
+    "district": "გლდანი-ნაძალადევი",
+    "confidence": "exact"
+  },
+  {
+    "myhome": "ღუდუშაურის ქ.",
+    "ssge": "ღუდუშაურის ქ.",
+    "district": "გლდანი-ნაძალადევი",
+    "confidence": "exact"
+  },
+  {
+    "myhome": "ყავლაშვილის ქ.",
+    "ssge": "ყავლაშვილის ქ.",
+    "district": "ძველი თბილისი",
+    "confidence": "exact"
+  },
+  {
+    "myhome": "ყაზბეგის გამზ.",
+    "ssge": "მოსკოვის გამზ.",
+    "district": "ვაკე-საბურთალო",
+    "confidence": "fuzzy"
+  },
+  {
+    "myhome": "ყაზბეგის ქ.",
+    "ssge": "ყაზბეგის ქ.",
+    "district": "თბილისის შემოგარენი",
+    "confidence": "exact"
+  },
+  {
+    "myhome": "ყვარელის ქ.",
+    "ssge": "ძეგლევის ქ.",
+    "district": "ისანი-სამგორი",
+    "confidence": "fuzzy"
+  },
+  {
+    "myhome": "ყვარლის ქ.",
+    "ssge": "ყვარლის ქ.",
+    "district": "გლდანი-ნაძალადევი",
+    "confidence": "exact"
+  },
+  {
+    "myhome": "ყუშიტაშვილის ქ.",
+    "ssge": "ყუშიტაშვილის ქ.",
+    "district": "გლდანი-ნაძალადევი",
+    "confidence": "exact"
+  },
+  {
+    "myhome": "შ. ნადირაშვილის ქ.",
+    "ssge": "შ.ნადირაშვილის ქ.",
+    "district": "ისანი-სამგორი",
+    "confidence": "exact"
+  },
+  {
+    "myhome": "შავგულიძის ქ.",
+    "ssge": "შავგულიძის ქ.",
+    "district": "ვაკე-საბურთალო",
+    "confidence": "exact"
+  },
+  {
+    "myhome": "შავიშვილის ქ.",
+    "ssge": "შავიშვილის ქ.",
+    "district": "ვაკე-საბურთალო",
+    "confidence": "exact"
+  },
+  {
+    "myhome": "შავნაბადას ქ.",
+    "ssge": "შავნაბადას ქ.",
+    "district": "თბილისის შემოგარენი",
+    "confidence": "exact"
+  },
+  {
+    "myhome": "შალვა ამირანაშვილის ქ.",
+    "ssge": "შ.ამირანაშვილის ქ.",
+    "district": "ისანი-სამგორი",
+    "confidence": "fuzzy"
+  },
+  {
+    "myhome": "შანდორ პეტეფის ქ.",
+    "ssge": "შანდორ პეტეფის ქ.",
+    "district": "ისანი-სამგორი",
+    "confidence": "exact"
+  },
+  {
+    "myhome": "შანიძის ქ.",
+    "ssge": "შანიძის ქ.",
+    "district": "ძველი თბილისი",
+    "confidence": "exact"
+  },
+  {
+    "myhome": "შარაშიძის ქ.",
+    "ssge": "შარაშიძის ქ.",
+    "district": "ძველი თბილისი",
+    "confidence": "exact"
+  },
+  {
+    "myhome": "შარტავას ქ.",
+    "ssge": "შარტავას ქ.",
+    "district": "ვაკე-საბურთალო",
+    "confidence": "exact"
+  },
+  {
+    "myhome": "შატბერაშვილის ქ.",
+    "ssge": "შატბერაშვილის ქ.",
+    "district": "ვაკე-საბურთალო",
+    "confidence": "exact"
+  },
+  {
+    "myhome": "შატილის ქ.",
+    "ssge": "შატილის ქ.",
+    "district": "გლდანი-ნაძალადევი",
+    "confidence": "exact"
+  },
+  {
+    "myhome": "შაქრიანის ქ.",
+    "ssge": "შაქრიანის ქ.",
+    "district": "ძველი თბილისი",
+    "confidence": "exact"
+  },
+  {
+    "myhome": "შევარდენიძის ქ.",
+    "ssge": "შევარდენიძის ქ.",
+    "district": "ვაკე-საბურთალო",
+    "confidence": "exact"
+  },
+  {
+    "myhome": "შევჩენკოს ქ.",
+    "ssge": "შევჩენკოს ქ.",
+    "district": "ძველი თბილისი",
+    "confidence": "exact"
+  },
+  {
+    "myhome": "შემოდგომის ქ.",
+    "ssge": "ბრონშტეინის ქ.",
+    "district": "გლდანი-ნაძალადევი",
+    "confidence": "fuzzy"
+  },
+  {
+    "myhome": "შერვაშიძის ქ.",
+    "ssge": "შერვაშიძის ქ.",
+    "district": "გლდანი-ნაძალადევი",
+    "confidence": "exact"
+  },
+  {
+    "myhome": "შერმადინის ქ.",
+    "ssge": "შერმადინის ქ.",
+    "district": "ვაკე-საბურთალო",
+    "confidence": "exact"
+  },
+  {
+    "myhome": "შეშელიძის ქუჩა #1-109, 2-110",
+    "ssge": "შეშელიძის ქ.",
+    "district": "გლდანი-ნაძალადევი",
+    "confidence": "exact"
+  },
+  {
+    "myhome": "შილდის ქ.",
+    "ssge": "შილდის ქ.",
+    "district": "ძველი თბილისი",
+    "confidence": "exact"
+  },
+  {
+    "myhome": "შინდისის ქ.",
+    "ssge": "შინდისის ქ.",
+    "district": "ძველი თბილისი",
+    "confidence": "exact"
+  },
+  {
+    "myhome": "შიო მღვიმელის ქ.",
+    "ssge": "შიო მღვიმელის ქ.",
+    "district": "ძველი თბილისი",
+    "confidence": "exact"
+  },
+  {
+    "myhome": "შირაქის ქ.",
+    "ssge": "შირაქის ქ.",
+    "district": "ისანი-სამგორი",
+    "confidence": "exact"
+  },
+  {
+    "myhome": "შოვის ქ.",
+    "ssge": "შოვის ქ.",
+    "district": "გლდანი-ნაძალადევი",
+    "confidence": "exact"
+  },
+  {
+    "myhome": "შორაპნის ქ.",
+    "ssge": "გაბრიაძის ქ.",
+    "district": "გლდანი-ნაძალადევი",
+    "confidence": "fuzzy"
+  },
+  {
+    "myhome": "შროშის ქ.",
+    "ssge": "შროშის ქ.",
+    "district": "ვაკე-საბურთალო",
+    "confidence": "exact"
+  },
+  {
+    "myhome": "შუამთის ქ.",
+    "ssge": "შუამთის ქ.",
+    "district": "გლდანი-ნაძალადევი",
+    "confidence": "exact"
+  },
+  {
+    "myhome": "შუშის ქ.",
+    "ssge": "შუშის ქ.",
+    "district": "გლდანი-ნაძალადევი",
+    "confidence": "exact"
+  },
+  {
+    "myhome": "ჩაიკოვსკის ქ.",
+    "ssge": "ჩაიკოვსკის ქ.",
+    "district": "ძველი თბილისი",
+    "confidence": "exact"
+  },
+  {
+    "myhome": "ჩაილურის ქ.",
+    "ssge": "ჩაილურის ქ.",
+    "district": "ვაკე-საბურთალო",
+    "confidence": "exact"
+  },
+  {
+    "myhome": "ჩალიანის ქ.",
+    "ssge": "გობრონიძის ქ.",
+    "district": "გლდანი-ნაძალადევი",
+    "confidence": "fuzzy"
+  },
+  {
+    "myhome": "ჩანჩიბაძის ქ.",
+    "ssge": "ჩანჩიბაძის ქ.",
+    "district": "დიდუბე-ჩუღურეთი",
+    "confidence": "exact"
+  },
+  {
+    "myhome": "ჩარგალეთის ქ.",
+    "ssge": "იასამნების ქ.",
+    "district": "ვაკე-საბურთალო",
+    "confidence": "fuzzy"
+  },
+  {
+    "myhome": "ჩარგლის ქ.",
+    "ssge": "ჩარგლის ქ. (თემქა)",
+    "district": "გლდანი-ნაძალადევი",
+    "confidence": "exact"
+  },
+  {
+    "myhome": "ჩარხის ქ.",
+    "ssge": "ჩარხის ქ.",
+    "district": "ისანი-სამგორი",
+    "confidence": "exact"
+  },
+  {
+    "myhome": "ჩაქვის ქ.",
+    "ssge": "გაბაშვილის ქ.",
+    "district": "გლდანი-ნაძალადევი",
+    "confidence": "fuzzy"
+  },
+  {
+    "myhome": "ჩაჩავას ქ.",
+    "ssge": "ჩაჩავას ქ.",
+    "district": "დიდუბე-ჩუღურეთი",
+    "confidence": "exact"
+  },
+  {
+    "myhome": "ჩეჩელაშვილის ქ.",
+    "ssge": "ჩეჩელაშვილის ქ.",
+    "district": "დიდუბე-ჩუღურეთი",
+    "confidence": "exact"
+  },
+  {
+    "myhome": "ჩიტაიას ქუჩა #1-7",
+    "ssge": "ჩიტაიას ქ.",
+    "district": "დიდუბე-ჩუღურეთი",
+    "confidence": "exact"
+  },
+  {
+    "myhome": "ჩიტაძის ქ.",
+    "ssge": "ჩიტაძის ქ.",
+    "district": "ძველი თბილისი",
+    "confidence": "exact"
+  },
+  {
+    "myhome": "ჩიქობავას ქ.",
+    "ssge": "ჩიქობავას ქ.",
+    "district": "დიდუბე-ჩუღურეთი",
+    "confidence": "exact"
+  },
+  {
+    "myhome": "ჩიხორას ქ.",
+    "ssge": "ლაგურაშვილის ქ.",
+    "district": "გლდანი-ნაძალადევი",
+    "confidence": "fuzzy"
+  },
+  {
+    "myhome": "ჩკალოვის ქ.",
+    "ssge": "ჩკალოვის ქ.",
+    "district": "ისანი-სამგორი",
+    "confidence": "exact"
+  },
+  {
+    "myhome": "ჩოლოყაშვილის ქ.",
+    "ssge": "ჩოლოყაშვილის ქ.",
+    "district": "თბილისის შემოგარენი",
+    "confidence": "exact"
+  },
+  {
+    "myhome": "ჩოჩუას ქ.",
+    "ssge": "ჩოჩუას ქ.",
+    "district": "ისანი-სამგორი",
+    "confidence": "exact"
+  },
+  {
+    "myhome": "ჩოხატაურის ქ.",
+    "ssge": "ჩოხატაურის ქ.",
+    "district": "გლდანი-ნაძალადევი",
+    "confidence": "exact"
+  },
+  {
+    "myhome": "ჩოხელის ქ.",
+    "ssge": "წნორისწყალის ქ.",
+    "district": "ისანი-სამგორი",
+    "confidence": "fuzzy"
+  },
+  {
+    "myhome": "ჩუბინაშვილის ქუჩა #1-9, 2-16",
+    "ssge": "ჩუბინაშვილის ქ.",
+    "district": "დიდუბე-ჩუღურეთი",
+    "confidence": "exact"
+  },
+  {
+    "myhome": "ჩხარის ქ.",
+    "ssge": "ნონეშვილის ქ.",
+    "district": "გლდანი-ნაძალადევი",
+    "confidence": "fuzzy"
+  },
+  {
+    "myhome": "ც. ამირეჯიბის ქ.",
+    "ssge": "ც. ამირეჯიბის ქ.",
+    "district": "ისანი-სამგორი",
+    "confidence": "exact"
+  },
+  {
+    "myhome": "ცაბაძის ქ.",
+    "ssge": "ცაბაძის ქ.",
+    "district": "დიდუბე-ჩუღურეთი",
+    "confidence": "exact"
+  },
+  {
+    "myhome": "ცაგარელის ქ.",
+    "ssge": "ცაგარელის ქ. (კრონშტატის)",
+    "district": "ვაკე-საბურთალო",
+    "confidence": "exact"
+  },
+  {
+    "myhome": "ცაგერის ქ.",
+    "ssge": "ონის ქ.",
+    "district": "გლდანი-ნაძალადევი",
+    "confidence": "fuzzy"
+  },
+  {
+    "myhome": "ცაიშის ქ.",
+    "ssge": "ცაიშის ქ.",
+    "district": "დიდუბე-ჩუღურეთი",
+    "confidence": "exact"
+  },
+  {
+    "myhome": "ცაცხვების ქ.",
+    "ssge": "ცაცხვების ქ.",
+    "district": "ვაკე-საბურთალო",
+    "confidence": "exact"
+  },
+  {
+    "myhome": "ცემის ქ.",
+    "ssge": "ცემის ქ.",
+    "district": "დიდუბე-ჩუღურეთი",
+    "confidence": "exact"
+  },
+  {
+    "myhome": "ციმაკურიძის ქ.",
+    "ssge": "ციმაკურიძის ქ.",
+    "district": "დიდუბე-ჩუღურეთი",
+    "confidence": "exact"
+  },
+  {
+    "myhome": "ცისკარის ქ.",
+    "ssge": "რიწის ქ.",
+    "district": "ძველი თბილისი",
+    "confidence": "fuzzy"
+  },
+  {
+    "myhome": "ციურიხის ქ.",
+    "ssge": "შარვაძის ქ.",
+    "district": "თბილისის შემოგარენი",
+    "confidence": "fuzzy"
+  },
+  {
+    "myhome": "ციხისძირის ქ.",
+    "ssge": "ციხისძირის ქ.",
+    "district": "ისანი-სამგორი",
+    "confidence": "exact"
+  },
+  {
+    "myhome": "ცოდნისკარის ქ.",
+    "ssge": "რიცეულის ქ.",
+    "district": "გლდანი-ნაძალადევი",
+    "confidence": "fuzzy"
+  },
+  {
+    "myhome": "ცოლიკაურის ქ.",
+    "ssge": "ცოლიკაურის ქ.",
+    "district": "ძველი თბილისი",
+    "confidence": "exact"
+  },
+  {
+    "myhome": "ცურტაველის ქ",
+    "ssge": "ცურტაველის ქ.",
+    "district": "ძველი თბილისი",
+    "confidence": "exact"
+  },
+  {
+    "myhome": "ცუცქირიძის ქ",
+    "ssge": "ცუცქირიძის ქ.",
+    "district": "ძველი თბილისი",
+    "confidence": "exact"
+  },
+  {
+    "myhome": "ცქიტიშვილის ქ.",
+    "ssge": "ცქიტიშვილის ქ.",
+    "district": "გლდანი-ნაძალადევი",
+    "confidence": "exact"
+  },
+  {
+    "myhome": "ცხენისწყლის ქ.",
+    "ssge": "ზიგზაგის ქ.",
+    "district": "გლდანი-ნაძალადევი",
+    "confidence": "fuzzy"
+  },
+  {
+    "myhome": "ცხინვალის ქ.",
+    "ssge": "ცხინვალის ქ.",
+    "district": "ვაკე-საბურთალო",
+    "confidence": "exact"
+  },
+  {
+    "myhome": "ძეგლევის ქ.",
+    "ssge": "ძეგლევის ქ.",
+    "district": "ისანი-სამგორი",
+    "confidence": "exact"
+  },
+  {
+    "myhome": "ძევერას ქ.",
+    "ssge": "ამირეჯიბის ქ.",
+    "district": "ისანი-სამგორი",
+    "confidence": "fuzzy"
+  },
+  {
+    "myhome": "ძმები ზუბალაშვილების ქ.",
+    "ssge": "ძმ. ზუბალაშვილების ქ.",
+    "district": "ძველი თბილისი",
+    "confidence": "fuzzy"
+  },
+  {
+    "myhome": "ძმები სლოვინსკების ქ.",
+    "ssge": "ძმები სლოვინსკების ქუჩა",
+    "district": "ისანი-სამგორი",
+    "confidence": "exact"
+  },
+  {
+    "myhome": "ძოწენიძის ქ.",
+    "ssge": "ფირცხელიანის ქ.",
+    "district": "ვაკე-საბურთალო",
+    "confidence": "fuzzy"
+  },
+  {
+    "myhome": "ძოწის ქ.",
+    "ssge": "ძოწის ქ.",
+    "district": "ვაკე-საბურთალო",
+    "confidence": "exact"
+  },
+  {
+    "myhome": "წავკისის ქ.",
+    "ssge": "წავკისის ქ.",
+    "district": "ძველი თბილისი",
+    "confidence": "exact"
+  },
+  {
+    "myhome": "წალენჯიხის ქ.",
+    "ssge": "წალენჯიხის ქ.",
+    "district": "ისანი-სამგორი",
+    "confidence": "exact"
+  },
+  {
+    "myhome": "წალკის ქ.",
+    "ssge": "წალკის ქ.",
+    "district": "ძველი თბილისი",
+    "confidence": "exact"
+  },
+  {
+    "myhome": "წაღვერის ქ.",
+    "ssge": "წაღვერის ქ.",
+    "district": "გლდანი-ნაძალადევი",
+    "confidence": "exact"
+  },
+  {
+    "myhome": "წებელდის ქ.",
+    "ssge": "ბანძელაძის ქ.",
+    "district": "ვაკე-საბურთალო",
+    "confidence": "fuzzy"
+  },
+  {
+    "myhome": "წერეთლის გამზ.",
+    "ssge": "ჩოლოყაშვილის გამზ.",
+    "district": "დიდუბე-ჩუღურეთი",
+    "confidence": "fuzzy"
+  },
+  {
+    "myhome": "წერეთლის ქ.",
+    "ssge": "წერეთლის ქ.",
+    "district": "თბილისის შემოგარენი",
+    "confidence": "exact"
+  },
+  {
+    "myhome": "წიკლაურის ქ.",
+    "ssge": "წიკლაურის ქ.",
+    "district": "გლდანი-ნაძალადევი",
+    "confidence": "exact"
+  },
+  {
+    "myhome": "წინამძღვრიშვილის ქ.",
+    "ssge": "წინამძღვრიშვილის ქ.",
+    "district": "დიდუბე-ჩუღურეთი",
+    "confidence": "exact"
+  },
+  {
+    "myhome": "წინანაურის ქ.",
+    "ssge": "წინანაურის ქ.",
+    "district": "თბილისის შემოგარენი",
+    "confidence": "exact"
+  },
+  {
+    "myhome": "წინანდლის ქ",
+    "ssge": "წინანდლის ქ.",
+    "district": "ისანი-სამგორი",
+    "confidence": "exact"
+  },
+  {
+    "myhome": "წინუბანის ქ.",
+    "ssge": "ანდრონიკაშვილის ქ.",
+    "district": "ვაკე-საბურთალო",
+    "confidence": "fuzzy"
+  },
+  {
+    "myhome": "წიწამურის ქ.",
+    "ssge": "წიწამურის ქ.",
+    "district": "გლდანი-ნაძალადევი",
+    "confidence": "exact"
+  },
+  {
+    "myhome": "წმ. ბარბარეს დას.",
+    "ssge": "წმინდა ბარბარეს დასახლება",
+    "district": "ისანი-სამგორი",
+    "confidence": "fuzzy"
+  },
+  {
+    "myhome": "წმ. მოწამე ვასილისკოს ქ.",
+    "ssge": "წმინდა მოწამე ვასილისკოს ქ.",
+    "district": "ვაკე-საბურთალო",
+    "confidence": "fuzzy"
+  },
+  {
+    "myhome": "წნორისწყალის ქ.",
+    "ssge": "წნორისწყალის ქ.",
+    "district": "ისანი-სამგორი",
+    "confidence": "exact"
+  },
+  {
+    "myhome": "წულაძის ქ.",
+    "ssge": "წულაძის ქ.",
+    "district": "ისანი-სამგორი",
+    "confidence": "exact"
+  },
+  {
+    "myhome": "წულუკიძის ქ.",
+    "ssge": "წულუკიძის ქ.",
+    "district": "ისანი-სამგორი",
+    "confidence": "exact"
+  },
+  {
+    "myhome": "წურწუმიას ქ.",
+    "ssge": "წურწუმიას ქ.",
+    "district": "ძველი თბილისი",
+    "confidence": "exact"
+  },
+  {
+    "myhome": "წუწუნავას ქ.",
+    "ssge": "წუწუნავას ქ.",
+    "district": "ისანი-სამგორი",
+    "confidence": "exact"
+  },
+  {
+    "myhome": "წყალსადენის ქ.",
+    "ssge": "წყალსადენის ქ.",
+    "district": "გლდანი-ნაძალადევი",
+    "confidence": "exact"
+  },
+  {
+    "myhome": "წყალტუბოს ქ.",
+    "ssge": "წყალტუბოს ქ.",
+    "district": "დიდუბე-ჩუღურეთი",
+    "confidence": "exact"
+  },
+  {
+    "myhome": "წყაროს ქ.",
+    "ssge": "წყაროს ქ.",
+    "district": "გლდანი-ნაძალადევი",
+    "confidence": "exact"
+  },
+  {
+    "myhome": "წყნეთის გზატკეცილი",
+    "ssge": "წყნეთის გზატკეცილი",
+    "district": "ვაკე-საბურთალო",
+    "confidence": "exact"
+  },
+  {
+    "myhome": "წყნეთის ქ.",
+    "ssge": "წყნეთის ქ.",
+    "district": "ვაკე-საბურთალო",
+    "confidence": "exact"
+  },
+  {
+    "myhome": "ჭაბუკიანის ქ.",
+    "ssge": "ჭაბუკიანის ქ.",
+    "district": "ვაკე-საბურთალო",
+    "confidence": "exact"
+  },
+  {
+    "myhome": "ჭავჭავაძის ქ.",
+    "ssge": "ჭავჭავაძის ქ.",
+    "district": "თბილისის შემოგარენი",
+    "confidence": "exact"
+  },
+  {
+    "myhome": "ჭალადიდის ქ.",
+    "ssge": "ჭალადიდის ქ.",
+    "district": "დიდუბე-ჩუღურეთი",
+    "confidence": "exact"
+  },
+  {
+    "myhome": "ჭანდარის ქ.",
+    "ssge": "ახალციხელის ქ.",
+    "district": "ვაკე-საბურთალო",
+    "confidence": "fuzzy"
+  },
+  {
+    "myhome": "ჭანტურიას ქ.",
+    "ssge": "ჭანტურიას ქ.",
+    "district": "ძველი თბილისი",
+    "confidence": "exact"
+  },
+  {
+    "myhome": "ჭაშნაგირის ქ.",
+    "ssge": "მუხათგვერდის ქ.",
+    "district": "ვაკე-საბურთალო",
+    "confidence": "fuzzy"
+  },
+  {
+    "myhome": "ჭიათურის ქ.",
+    "ssge": "ჭიათურის ქ.",
+    "district": "ვაკე-საბურთალო",
+    "confidence": "exact"
+  },
+  {
+    "myhome": "ჭიაურელის ქ.",
+    "ssge": "ჭიაურელის ქ.",
+    "district": "დიდუბე-ჩუღურეთი",
+    "confidence": "exact"
+  },
+  {
+    "myhome": "ჭირნახულის ქუჩა #1-13",
+    "ssge": "ჭირნახულის ქ.",
+    "district": "ისანი-სამგორი",
+    "confidence": "exact"
+  },
+  {
+    "myhome": "ჭიჭინაძის ქ.",
+    "ssge": "ჭიჭინაძის ქ.",
+    "district": "გლდანი-ნაძალადევი",
+    "confidence": "exact"
+  },
+  {
+    "myhome": "ჭოველიძის ქ.",
+    "ssge": "ჭოველიძის ქ.",
+    "district": "ძველი თბილისი",
+    "confidence": "exact"
+  },
+  {
+    "myhome": "ჭონქაძის ქუჩა #1-23, 2-18",
+    "ssge": "ჭონქაძის ქ.",
+    "district": "ძველი თბილისი",
+    "confidence": "exact"
+  },
+  {
+    "myhome": "ჭოროხის ქ.",
+    "ssge": "ჭოროხის ქ.",
+    "district": "დიდუბე-ჩუღურეთი",
+    "confidence": "exact"
+  },
+  {
+    "myhome": "ჭრებალოს ქ.",
+    "ssge": "ჭრებალოს ქ.",
+    "district": "გლდანი-ნაძალადევი",
+    "confidence": "exact"
+  },
+  {
+    "myhome": "ჭრელაშვილის ქუჩა",
+    "ssge": "ჭრელაშვილის ქ.",
+    "district": "ისანი-სამგორი",
+    "confidence": "exact"
+  },
+  {
+    "myhome": "ჭუბურხინჯის ქ.",
+    "ssge": "ტოროშელიძის ქ.",
+    "district": "გლდანი-ნაძალადევი",
+    "confidence": "fuzzy"
+  },
+  {
+    "myhome": "ჭყონდიდელის ქ.",
+    "ssge": "ჭყონდიდელის ქ.",
+    "district": "გლდანი-ნაძალადევი",
+    "confidence": "exact"
+  },
+  {
+    "myhome": "ხაზინის ქ.",
+    "ssge": "სანაპიროს ქ.",
+    "district": "ძველი თბილისი",
+    "confidence": "fuzzy"
+  },
+  {
+    "myhome": "ხანძთელის ქ.",
+    "ssge": "ხანძთელის ქ.",
+    "district": "ძველი თბილისი",
+    "confidence": "exact"
+  },
+  {
+    "myhome": "ხანძთის ქ.",
+    "ssge": "იფნის ქ.",
+    "district": "გლდანი-ნაძალადევი",
+    "confidence": "fuzzy"
+  },
+  {
+    "myhome": "ხარაბაძის ქუჩა #1-23, 2-26",
+    "ssge": "ხარაბაძის ქ.",
+    "district": "ისანი-სამგორი",
+    "confidence": "exact"
+  },
+  {
+    "myhome": "ხარაგაულის ჩიხი",
+    "ssge": "ხარაგაულის ჩიხი,",
+    "district": "ძველი თბილისი",
+    "confidence": "exact"
+  },
+  {
+    "myhome": "ხატაეთის ქ.",
+    "ssge": "ხატაეთის ქ.",
+    "district": "ვაკე-საბურთალო",
+    "confidence": "exact"
+  },
+  {
+    "myhome": "ხაჩატურიანის ქ.",
+    "ssge": "ხაჩატურიანის ქ.",
+    "district": "ისანი-სამგორი",
+    "confidence": "exact"
+  },
+  {
+    "myhome": "ხახანაშვილის ქ.",
+    "ssge": "ხახანაშვილის ქ.",
+    "district": "ძველი თბილისი",
+    "confidence": "exact"
+  },
+  {
+    "myhome": "ხახულის ქ.",
+    "ssge": "ჭელიძის ქ.",
+    "district": "ვაკე-საბურთალო",
+    "confidence": "fuzzy"
+  },
+  {
+    "myhome": "ხევის ქ.",
+    "ssge": "ხევის ქ.",
+    "district": "ისანი-სამგორი",
+    "confidence": "exact"
+  },
+  {
+    "myhome": "ხევისპირის ქ.",
+    "ssge": "ხევისპირის ქ.",
+    "district": "გლდანი-ნაძალადევი",
+    "confidence": "exact"
+  },
+  {
+    "myhome": "ხევსურეთის ქ.",
+    "ssge": "ხევსურეთის ქ.",
+    "district": "გლდანი-ნაძალადევი",
+    "confidence": "exact"
+  },
+  {
+    "myhome": "ხევძმარის ქ.",
+    "ssge": "ხევძმარის ქ.",
+    "district": "გლდანი-ნაძალადევი",
+    "confidence": "exact"
+  },
+  {
+    "myhome": "ხერთვისის ქ.",
+    "ssge": "ხერთვისის ქ.",
+    "district": "გლდანი-ნაძალადევი",
+    "confidence": "exact"
+  },
+  {
+    "myhome": "ხვანჭკარის ქ.",
+    "ssge": "ხვანჭკარის ქ.",
+    "district": "გლდანი-ნაძალადევი",
+    "confidence": "exact"
+  },
+  {
+    "myhome": "ხიდის ქ.",
+    "ssge": "ხიდის ქ.",
+    "district": "ძველი თბილისი",
+    "confidence": "exact"
+  },
+  {
+    "myhome": "ხიდისთავის ქ.",
+    "ssge": "ხიდისთავის ქ.",
+    "district": "ძველი თბილისი",
+    "confidence": "exact"
+  },
+  {
+    "myhome": "ხიზანიშვილის ქ.",
+    "ssge": "ხიზანიშვილის ქ.",
+    "district": "გლდანი-ნაძალადევი",
+    "confidence": "exact"
+  },
+  {
+    "myhome": "ხომლის ქ.",
+    "ssge": "ხომლის ქ.",
+    "district": "ვაკე-საბურთალო",
+    "confidence": "exact"
+  },
+  {
+    "myhome": "ხონელის ქ",
+    "ssge": "ხონელის ქ.",
+    "district": "ძველი თბილისი",
+    "confidence": "exact"
+  },
+  {
+    "myhome": "ხრესილის ქ.",
+    "ssge": "ხრესილის ქ.",
+    "district": "გლდანი-ნაძალადევი",
+    "confidence": "exact"
+  },
+  {
+    "myhome": "ხუდადოვის ქ.",
+    "ssge": "ხუდადოვის ქ.",
+    "district": "გლდანი-ნაძალადევი",
+    "confidence": "exact"
+  },
+  {
+    "myhome": "ჯავახეთის ქ.",
+    "ssge": "ჯავახეთის ქ.",
+    "district": "ისანი-სამგორი",
+    "confidence": "exact"
+  },
+  {
+    "myhome": "ჯავახეთის I შესახვევი",
+    "ssge": "ჯავახეთის I შესახვევი",
+    "district": "ისანი-სამგორი",
+    "confidence": "exact"
+  },
+  {
+    "myhome": "ჯავახიშვილის ქუჩა (წყნეთი)",
+    "ssge": "ნეკერჩხლის ქ.",
+    "district": "თბილისის შემოგარენი",
+    "confidence": "fuzzy"
+  },
+  {
+    "myhome": "ჯავის ქ.",
+    "ssge": "ჯავის ქ.",
+    "district": "გლდანი-ნაძალადევი",
+    "confidence": "exact"
+  },
+  {
+    "myhome": "ჯამბულის ქ",
+    "ssge": "ჯამბულის ქ.",
+    "district": "ძველი თბილისი",
+    "confidence": "exact"
+  },
+  {
+    "myhome": "ჯანაშვილის ქ.",
+    "ssge": "ჯანაშვილის ქ.",
+    "district": "ვაკე-საბურთალო",
+    "confidence": "exact"
+  },
+  {
+    "myhome": "ჯანაშიას ქ",
+    "ssge": "ჯანაშიას ქ.",
+    "district": "ძველი თბილისი",
+    "confidence": "exact"
+  },
+  {
+    "myhome": "ჯვარისის ქ.",
+    "ssge": "თიანეთის ქ.",
+    "district": "გლდანი-ნაძალადევი",
+    "confidence": "fuzzy"
+  },
+  {
+    "myhome": "ჯვარისუბნის ქუჩა",
+    "ssge": "ჯვარისუბნის ქ.",
+    "district": "გლდანი-ნაძალადევი",
+    "confidence": "exact"
+  },
+  {
+    "myhome": "ჯონ-მალხაზ შალიკაშვილის ქ.",
+    "ssge": "ჯონ-მალხაზ შალიკაშვილის ქ.",
+    "district": "ვაკე-საბურთალო",
+    "confidence": "exact"
+  },
+  {
+    "myhome": "ჯორბენაძის ქ.",
+    "ssge": "სავანელის ქ.",
+    "district": "ძველი თბილისი",
+    "confidence": "fuzzy"
+  },
+  {
+    "myhome": "ჯორჯ ბუშის ქ.",
+    "ssge": "ჯორჯ ბუშის ქ.",
+    "district": "ისანი-სამგორი",
+    "confidence": "exact"
+  },
+  {
+    "myhome": "ჰ. პრინევსკის ქ.",
+    "ssge": "ჰენრიკ პრინევსკის ქ.",
+    "district": "ვაკე-საბურთალო",
+    "confidence": "fuzzy"
+  },
+  {
+    "myhome": "ჰ. ჰუპერტის ქ.",
+    "ssge": "ჰუგო ჰუპერტის ქ.",
+    "district": "ვაკე-საბურთალო",
+    "confidence": "fuzzy"
+  },
+  {
+    "myhome": "ჰეიდარ აბაშიძის ქ.",
+    "ssge": "გრ.აბაშიძის (ატენის) ქ.",
+    "district": "ვაკე-საბურთალო",
+    "confidence": "fuzzy"
+  },
+  {
+    "myhome": "ჰერეთის ქ.",
+    "ssge": "ჰერეთის ქ.",
+    "district": "გლდანი-ნაძალადევი",
+    "confidence": "exact"
+  },
+  {
+    "myhome": "ჰოსპიტლის ქ",
+    "ssge": "ჰოსპიტლის ქ.",
+    "district": "ისანი-სამგორი",
+    "confidence": "exact"
+  }
+]

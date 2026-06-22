@@ -10,6 +10,7 @@
 import type { MyhomeListing } from "@/lib/myhome-parser";
 import { sanitizeBuildingStatusValue } from "@/lib/building-status-sanitize";
 import { resolveListingDisplayArea } from "@/lib/listing-area";
+import { ssgeOriginalImageUrl } from "@/lib/ssge-image";
 
 const USER_AGENT =
   "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36";
@@ -224,6 +225,7 @@ export async function parseSsgeListingViaFetch(url: string): Promise<{
   const images = appImages
     .map((img) => (img.fileName ?? "").split("?")[0])
     .filter(Boolean)
+    .map((f) => ssgeOriginalImageUrl(f) ?? f)
     .slice(0, 16);
 
   // ---- Property / Deal type ------------------------------------------------
@@ -286,6 +288,8 @@ export async function parseSsgeListingViaFetch(url: string): Promise<{
   if (condition)      rawData["მდგომარეობა"] = condition;
   if (projectType)    rawData["პროექტი"] = projectType;
   if (projectType)    rawData["პროექტის ტიპი"] = projectType;
+  if (rooms)          rawData["ოთახი"] = rooms;
+  if (bedrooms)       rawData["საძინებელი"] = bedrooms;
 
   if (landPlotType && LAND_TYPE_LABELS.has(landPlotType)) {
     rawData["მიწის ნაკვეთი"] = landPlotType;

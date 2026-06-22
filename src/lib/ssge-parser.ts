@@ -1110,56 +1110,64 @@ async function ssgeClickNumberNear(
         return false;
       }
 
-      // Find the label <span> element (NOT div — div wrapper comes first
-      // in document order and causes the parent-walk to overshoot).
+      function tryClickNearLabel(labelSpan: Element): boolean {
+        const labelDiv = labelSpan.parentElement;
+        if (!labelDiv) return false;
+
+        let sibling = labelDiv.nextElementSibling;
+        for (let i = 0; i < 3 && sibling; i++) {
+          if (hasNumericChips(sibling)) {
+            return clickChipIn(sibling, number);
+          }
+          sibling = sibling.nextElementSibling;
+        }
+
+        const fieldWrapper = labelDiv.parentElement;
+        if (fieldWrapper && hasNumericChips(fieldWrapper)) {
+          const otherLabels = fieldWrapper.querySelectorAll("span");
+          let otherCount = 0;
+          for (const s of otherLabels) {
+            const t = norm(s.textContent || "");
+            if (t && t !== norm(sectionLabel) && /[\u10A0-\u10FF]/.test(t)) {
+              otherCount++;
+            }
+          }
+          if (otherCount === 0) {
+            return clickChipIn(fieldWrapper, number);
+          }
+        }
+        return false;
+      }
+
+      // Prefer stable field wrappers when ss.ge exposes them.
+      if (sectionLabel === "ოთახები") {
+        const roomInput = document.getElementById("room-input");
+        if (roomInput && hasNumericChips(roomInput)) {
+          return clickChipIn(roomInput, number);
+        }
+      }
+      if (sectionLabel === "საძინებელი") {
+        const bedroomInput = document.getElementById("bedroom-input");
+        if (bedroomInput && hasNumericChips(bedroomInput)) {
+          return clickChipIn(bedroomInput, number);
+        }
+      }
+
       const labelMatches = (el: Element) => {
         const t = norm(el.textContent || "");
         const want = norm(sectionLabel);
         return t === want || t.startsWith(want);
       };
 
-      let labelSpan: Element | null = null;
+      const labelCandidates: Element[] = [];
       for (const el of document.querySelectorAll("span, p")) {
         if (!labelMatches(el)) continue;
         if (!isVisible(el as HTMLElement)) continue;
-        labelSpan = el;
-        break;
-      }
-      if (!labelSpan) return false;
-
-      // DOM: <span>ოთახები*</span> is inside:
-      //   <div class="label-wrapper">   ← span's parent
-      //     <span>LABEL</span>
-      //   </div>
-      //   <div class="chip-container">  ← label-wrapper's next sibling
-      //     <div><div><p>1</p></div>…</div>
-      //   </div>
-      // Both are children of the field wrapper div.
-      const labelDiv = labelSpan.parentElement;
-      if (!labelDiv) return false;
-
-      // Check next siblings of the label div for chip container
-      let sibling = labelDiv.nextElementSibling;
-      for (let i = 0; i < 3 && sibling; i++) {
-        if (hasNumericChips(sibling)) {
-          return clickChipIn(sibling, number);
-        }
-        sibling = sibling.nextElementSibling;
+        labelCandidates.push(el);
       }
 
-      // Fallback: search the entire field wrapper (parent of labelDiv)
-      // but ONLY if it doesn't also contain OTHER field labels (scope guard)
-      const fieldWrapper = labelDiv.parentElement;
-      if (fieldWrapper && hasNumericChips(fieldWrapper)) {
-        const otherLabels = fieldWrapper.querySelectorAll("span");
-        let otherCount = 0;
-        for (const s of otherLabels) {
-          const t = norm(s.textContent || "");
-          if (t && t !== norm(sectionLabel) && /[\u10A0-\u10FF]/.test(t)) otherCount++;
-        }
-        if (otherCount === 0) {
-          return clickChipIn(fieldWrapper, number);
-        }
+      for (const labelSpan of labelCandidates) {
+        if (tryClickNearLabel(labelSpan)) return true;
       }
 
       return false;
@@ -1342,16 +1350,10 @@ async function ssgeFillNumericOverflowInput(
   return true;
 }
 
-/** Fill bedroom count in the text box to the right of chip "9" (no 9+ chip on ss.ge). */
-async function ssgeFillBedroomsBox(page: Page, value: string): Promise<boolean> {
+/** Type bedroom count into input[name="bedrooms"] (chips 1–9 or overflow box). */
+async function ssgeFillBedroomsInput(page: Page, value: string): Promise<boolean> {
   const digits = digitsOnly(value);
   if (!digits) return false;
-  const num = parseInt(digits, 10);
-  if (!Number.isFinite(num) || num <= 9) return false;
-
-  console.log(
-    `[ss.ge prefill] საძინებელი ${num} > 9: typing ${digits} in input[name="bedrooms"]`
-  );
 
   const bedInput = page.locator('input[name="bedrooms"]').first();
   const hasInput = await bedInput
@@ -1360,13 +1362,17 @@ async function ssgeFillBedroomsBox(page: Page, value: string): Promise<boolean> 
     .catch(() => false);
 
   if (!hasInput) {
-    const byPlaceholder = await ssgeSetInputByPlaceholder(page, "საძინებელი", digits);
+    const byPlaceholder = await ssgeSetInputByPlaceholder(
+      page,
+      "საძინებელი",
+      digits
+    );
     if (byPlaceholder) await prefillPause(page, 80);
     return byPlaceholder;
   }
 
   await bedInput.scrollIntoViewIfNeeded().catch(() => null);
-  await bedInput.click({ timeout: 5000 });
+  await bedInput.click({ timeout: 5000 }).catch(() => null);
   await prefillPause(page, 40);
 
   const filled = await page.evaluate((val) => {
@@ -1403,6 +1409,66 @@ async function ssgeFillBedroomsBox(page: Page, value: string): Promise<boolean> 
   return (await bedInput.inputValue().catch(() => "")) === digits;
 }
 
+/** Playwright chip click for საძინებელი — more reliable than evaluate .click(). */
+async function ssgePrefillBedroomChipPlaywright(
+  page: Page,
+  value: string
+): Promise<boolean> {
+  const chip = digitsOnly(value);
+  if (!chip) return false;
+  const chipRe = new RegExp(`^${escapeRegExp(chip)}\\+?$`, "u");
+  const labels = ["საძინებელი", "საძინებლები"];
+
+  for (const label of labels) {
+    const labelRe = new RegExp(`^${escapeRegExp(label)}(?:\\s*\\*)?$`, "iu");
+    const labelLocators = page.locator("span, p, label").filter({
+      hasText: labelRe,
+    });
+    const n = await labelLocators.count();
+
+    for (let i = 0; i < n; i++) {
+      const labelEl = labelLocators.nth(i);
+      if (!(await labelEl.isVisible({ timeout: 500 }).catch(() => false))) {
+        continue;
+      }
+
+      let scope = labelEl;
+      for (let depth = 0; depth < 10; depth++) {
+        const chips = scope.getByText(chipRe, { exact: true });
+        const chipCount = await chips.count();
+        for (let c = 0; c < chipCount; c++) {
+          const chipEl = chips.nth(c);
+          if (!(await chipEl.isVisible({ timeout: 300 }).catch(() => false))) {
+            continue;
+          }
+          await chipEl.click({ timeout: 5000, force: true });
+          await prefillPause(page, 80);
+          return true;
+        }
+        const parent = scope.locator("xpath=..");
+        if ((await parent.count()) === 0) break;
+        scope = parent;
+      }
+    }
+  }
+
+  return false;
+}
+
+/** Fill bedroom count in the text box to the right of chip "9" (no 9+ chip on ss.ge). */
+async function ssgeFillBedroomsBox(page: Page, value: string): Promise<boolean> {
+  const digits = digitsOnly(value);
+  if (!digits) return false;
+  const num = parseInt(digits, 10);
+  if (!Number.isFinite(num) || num <= 9) return false;
+
+  console.log(
+    `[ss.ge prefill] საძინებელი ${num} > 9: typing ${digits} in input[name="bedrooms"]`
+  );
+
+  return ssgeFillBedroomsInput(page, digits);
+}
+
 /**
  * Numeric chip row: 1…N, or N+ with a text input (ოთახები uses 8+).
  */
@@ -1418,7 +1484,16 @@ async function ssgePrefillNumericChipField(
   if (!Number.isFinite(num) || num < 1) return false;
 
   if (num <= maxChip) {
-    const ok = await ssgeClickNumberNear(page, digits, sectionLabel);
+    let ok = await ssgeClickNumberNear(page, digits, sectionLabel);
+    if (!ok && sectionLabel === "საძინებელი") {
+      ok = await ssgePrefillBedroomChipPlaywright(page, digits);
+    }
+    if (!ok && sectionLabel === "საძინებელი") {
+      ok = await ssgeFillBedroomsInput(page, digits);
+    }
+    if (!ok && sectionLabel === "საძინებელი") {
+      ok = await ssgeFillNumericOverflowInput(page, digits, sectionLabel);
+    }
     if (!ok) {
       console.warn(
         `[ss.ge prefill] ${sectionLabel} chip "${digits}" not selected`
@@ -1870,15 +1945,14 @@ async function ssgeFillLocationStep(
     await prefillPause(page, 60);
   }
 
-  const streetNumber = listing.streetNumber?.trim();
-  if (streetNumber) {
-    await ssgeSetInputByPlaceholder(page, "სახლის", streetNumber).catch(
-      () => null
-    );
-    await ssgeSetInputByPlaceholder(page, "ნომერი", streetNumber).catch(
-      () => null
-    );
-  }
+  // Always use "1" for house/street number on ss.ge create form.
+  const streetNumber = "1";
+  await ssgeSetInputByPlaceholder(page, "სახლის", streetNumber).catch(
+    () => null
+  );
+  await ssgeSetInputByPlaceholder(page, "ნომერი", streetNumber).catch(
+    () => null
+  );
 }
 
 async function ssgeHiddenSelectValue(

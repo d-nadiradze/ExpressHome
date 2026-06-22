@@ -344,7 +344,21 @@ export function normalizeListingForSsgePrefill(
   options?: { sourceUrl?: string | null }
 ): MyhomeListing {
   if (options?.sourceUrl && isSsgeSourceUrl(options.sourceUrl)) {
-    return listing;
+    const bedrooms = pickNumericField(
+      listing.bedrooms,
+      listing.rawData?.["საძინებელი"]
+    );
+    const rooms = pickNumericField(
+      listing.rooms,
+      listing.rawData?.["ოთახი"],
+      listing.rawData?.["ოთახები"]
+    );
+    if (!bedrooms && !rooms) return listing;
+    return {
+      ...listing,
+      bedrooms: bedrooms || listing.bedrooms,
+      rooms: rooms || listing.rooms,
+    };
   }
 
   const rawData = applyMyhomeAmenityAliasesToSsgeRaw(listing.rawData || {});
