@@ -4,7 +4,10 @@ import ThemeProvider from "@/components/ThemeProvider";
 import "./globals.css";
 
 export const metadata: Metadata = {
-  title: "ExpressHome",
+  title: {
+    default: "ExpressHome",
+    template: "%s · ExpressHome",
+  },
   description: "Parse and publish listings to myhome.ge and ss.ge",
 };
 
