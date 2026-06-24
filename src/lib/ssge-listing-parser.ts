@@ -239,6 +239,7 @@ export async function parseSsgeListing(url: string): Promise<{
 
       const bathrooms = detailFields["სველი წერტილი"] || "";
       const condition = detailFields["მდგომარეობა"] || "";
+      const commercialType = detailFields["კომერციული ფართის ტიპი"] || "";
       let landPlotType =
         specLabels.landPlotType ||
         detailFields["მიწის ნაკვეთი"] ||
@@ -348,6 +349,9 @@ export async function parseSsgeListing(url: string): Promise<{
 
       if (landPlotType && isLandType(landPlotType)) {
         rawData["მიწის ნაკვეთი"] = landPlotType;
+      }
+      if (commercialType) {
+        rawData["კომერციული ფართის ტიპი"] = commercialType;
       }
       if (buildingStatus) rawData["სტატუსი"] = buildingStatus;
       if (condition) rawData["მდგომარეობა"] = condition;

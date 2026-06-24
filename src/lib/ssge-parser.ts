@@ -31,6 +31,9 @@ import {
   PROJECT_TYPE_SUBSET,
   PROPERTY_TYPE_TO_SSGE,
   digitsOnly,
+  isCommercialPropertyType,
+  isMyhomeCommercialTypeValue,
+  resolveSsgeCommercialTypeChip,
   resolveSsgeConditionChip,
   resolveSsgeProjectChip,
 } from "@/lib/ssge-mappings";
@@ -2831,16 +2834,43 @@ export async function createSsgePost(
       }
     }
 
+    const isCommercial = isCommercialPropertyType(listing.propertyType || "");
+
+    // Commercial space type (კომერციული ფართის ტიპი) — myhome stores this as სტატუსი
+    if (isCommercial) {
+      const commercialRaw =
+        listing.rawData?.["კომერციული ფართის ტიპი"]?.trim() ||
+        listing.buildingStatus?.trim() ||
+        listing.rawData?.["სტატუსი"]?.trim() ||
+        "";
+      const commercialChip = resolveSsgeCommercialTypeChip(commercialRaw);
+      if (commercialChip) {
+        console.log(
+          `[ss.ge prefill] კომერციული ფართის ტიპი: "${commercialRaw}" → chip "${commercialChip}"`
+        );
+        const commercialOk = await ssgeClickChipNearLabel(
+          page,
+          commercialChip,
+          "კომერციული ფართის ტიპი"
+        );
+        if (!commercialOk) {
+          console.warn(
+            `[ss.ge prefill] კომერციული ფართის ტიპი chip "${commercialChip}" not selected (parsed: "${commercialRaw}")`
+          );
+        }
+      }
+    }
+
     // Status (სტატუსი) — building status or land plot type (მიწის ნაკვეთი)
     const statusRaw =
       listing.rawData?.["მიწის ნაკვეთი"]?.trim() ||
       listing.buildingStatus?.trim() ||
       listing.rawData?.["სტატუსი"]?.trim() ||
       "";
-    const statusChip = resolveSsgeStatusChip(
-      statusRaw,
-      listing.propertyType?.trim()
-    );
+    const statusChip =
+      isCommercial && isMyhomeCommercialTypeValue(statusRaw)
+        ? ""
+        : resolveSsgeStatusChip(statusRaw, listing.propertyType?.trim());
     if (statusChip) {
       console.log(
         `[ss.ge prefill] სტატუსი / მიწის ნაკვეთი: "${statusRaw}" → chip "${statusChip}"`
@@ -2854,7 +2884,10 @@ export async function createSsgePost(
     }
 
     // Project type (პროექტი) — default არასტანდარტული when missing / unknown
-    if (!/მიწის\s*ნაკვეთი/i.test(listing.propertyType || "")) {
+    if (
+      !/მიწის\s*ნაკვეთი/i.test(listing.propertyType || "") &&
+      !isCommercial
+    ) {
       const projectChip = resolveSsgeProjectChip(
         listing.projectType?.trim() || "",
         listing.rawData || {}

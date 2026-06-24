@@ -36,6 +36,93 @@ export const BUILDING_STATUS_TO_SSGE: Record<string, string> = {
   "ძველი აშენებული": "ძველი აშენებული",
 };
 
+/** ss.ge create-form „კომერციული ფართის ტიპი“ chip labels. */
+export const SSGE_COMMERCIAL_TYPE_CHIPS = [
+  "სასაწყობე/საწარმოო ფართი",
+  "საოფისე ფართი",
+  "კვების ობიექტი",
+  "გარაჟი",
+  "სარდაფი",
+  "სავაჭრო ობიექტი",
+  "კომერციული ფართი",
+] as const;
+
+/**
+ * myhome.ge სტატუსი for კომერციული ფართი → ss.ge „კომერციული ფართის ტიპი“ chip.
+ * On myhome this field stores commercial space type, not building status.
+ */
+export const MYHOME_COMMERCIAL_TYPE_TO_SSGE: Record<string, string> = {
+  უნივერსალური: "კომერციული ფართი",
+  კომერციული: "კომერციული ფართი",
+  "კომერციული ფართი": "კომერციული ფართი",
+  საოფისე: "საოფისე ფართი",
+  "საოფისე ფართი": "საოფისე ფართი",
+  სავაჭრო: "სავაჭრო ობიექტი",
+  "სავაჭრო ობიექტი": "სავაჭრო ობიექტი",
+  სასაწყობე: "სასაწყობე/საწარმოო ფართი",
+  საწარმოო: "სასაწყობე/საწარმოო ფართი",
+  "სასაწყობე/საწარმოო ფართი": "სასაწყობე/საწარმოო ფართი",
+  "კვების ობიექტი": "კვების ობიექტი",
+  ავტოფარეხი: "გარაჟი",
+  გარაჟი: "გარაჟი",
+  სარდაფი: "სარდაფი",
+  ნახევარსარდაფი: "სარდაფი",
+  "მთლიანი შენობა": "კომერციული ფართი",
+  ავტოსამრეცხაო: "კომერციული ფართი",
+  ავტოსერვისი: "კომერციული ფართი",
+};
+
+export function isCommercialPropertyType(propertyType?: string | null): boolean {
+  return /კომერციული/i.test((propertyType || "").trim());
+}
+
+function compactCommercialTypeKey(s: string): string {
+  return s.replace(/\s+/g, "").toLowerCase();
+}
+
+export function isMyhomeCommercialTypeValue(value: string): boolean {
+  const v = value.replace(/\s+/g, " ").trim();
+  if (!v) return false;
+  if (BUILDING_STATUS_TO_SSGE[v]) return false;
+  if (isKnownLandPlotStatus(v)) return false;
+  if (MYHOME_COMMERCIAL_TYPE_TO_SSGE[v]) return true;
+  const compact = compactCommercialTypeKey(v);
+  for (const chip of SSGE_COMMERCIAL_TYPE_CHIPS) {
+    if (compactCommercialTypeKey(chip) === compact) return true;
+  }
+  for (const key of Object.keys(MYHOME_COMMERCIAL_TYPE_TO_SSGE)) {
+    if (compactCommercialTypeKey(key) === compact) return true;
+  }
+  return false;
+}
+
+/** Resolve myhome commercial status / ss.ge label → ss.ge create-form chip text. */
+export function resolveSsgeCommercialTypeChip(value: string): string {
+  const v = value.replace(/\s+/g, " ").trim();
+  if (!v) return "";
+
+  if (MYHOME_COMMERCIAL_TYPE_TO_SSGE[v]) return MYHOME_COMMERCIAL_TYPE_TO_SSGE[v];
+
+  const compact = compactCommercialTypeKey(v);
+  for (const [key, chip] of Object.entries(MYHOME_COMMERCIAL_TYPE_TO_SSGE)) {
+    if (compactCommercialTypeKey(key) === compact) return chip;
+  }
+  for (const chip of SSGE_COMMERCIAL_TYPE_CHIPS) {
+    if (compactCommercialTypeKey(chip) === compact) return chip;
+    if (compact.includes(compactCommercialTypeKey(chip))) return chip;
+  }
+
+  if (/უნივერსალ/i.test(v)) return "კომერციული ფართი";
+  if (/საოფის/i.test(v)) return "საოფისე ფართი";
+  if (/სავაჭრ/i.test(v)) return "სავაჭრო ობიექტი";
+  if (/სასაწყობ|საწარმო/i.test(v)) return "სასაწყობე/საწარმოო ფართი";
+  if (/კვებ/i.test(v)) return "კვების ობიექტი";
+  if (/ავტოფარეხ|გარაჟ/i.test(v)) return "გარაჟი";
+  if (/სარდაფ/i.test(v)) return "სარდაფი";
+
+  return "";
+}
+
 /**
  * Land plot status (სტატუსი) — ss.ge chips end with „მიწა“; myhome uses shorter labels.
  * Cross-prefill maps equivalent values in both directions.
@@ -322,12 +409,18 @@ export function applyProjectTypeDefaults(
     rawData["პროექტი"],
   ].some((s) => s?.trim());
 
-  if (/მიწის\s*ნაკვეთი/i.test(pt) && !hasParsedProject) {
+  if (
+    (/მიწის\s*ნაკვეთი/i.test(pt) || isCommercialPropertyType(pt)) &&
+    !hasParsedProject
+  ) {
     return "";
   }
 
   const canonical = resolveProjectTypeCanonical(projectType, rawData);
-  if (/მიწის\s*ნაკვეთი/i.test(pt) && canonical === DEFAULT_PROJECT_TYPE) {
+  if (
+    (/მიწის\s*ნაკვეთი/i.test(pt) || isCommercialPropertyType(pt)) &&
+    canonical === DEFAULT_PROJECT_TYPE
+  ) {
     return "";
   }
 
@@ -511,6 +604,7 @@ export const ADDITIONAL_INFO_RAWDATA_SKIP = new Set([
   "მდგომარეობა",
   "პროექტი",
   "პროექტის ტიპი",
+  "კომერციული ფართის ტიპი",
   "ხედი",
   "სახლის ფართი",
   "ეზოს ფართი",

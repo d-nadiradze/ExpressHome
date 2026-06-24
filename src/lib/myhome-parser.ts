@@ -5617,10 +5617,13 @@ async function fillLocationFields(
     listing.streetNumber || listing.rawData?.["ქუჩის ნომერი"] || ""
   );
   const street = resolved.street;
-  const streetNumber = resolved.streetNumber;
   const cadastralCode = listing.cadastralCode?.trim() || "";
 
-  const fullStreetAddress = [street, streetNumber].filter(Boolean).join(" ").trim()
+  // myhome ქუჩა is a name-only autocomplete; appending the building number
+  // breaks suggestion matching (e.g. "ასლანიდის ქ 23" never resolves to the
+  // listed "პავლე ასლანიდის ქ"), leaving the field filled but unselected.
+  const streetForAutocomplete = street
+    || streetNameOnly(listing.address?.trim() || "")
     || listing.address?.trim()
     || "";
 
@@ -5639,8 +5642,8 @@ async function fillLocationFields(
     await prefillPause(page, 80);
   }
 
-  if (fullStreetAddress) {
-    await fillStreetAutocompleteField(page, fullStreetAddress);
+  if (streetForAutocomplete) {
+    await fillStreetAutocompleteField(page, streetForAutocomplete);
   }
 
   if (cadastralCode) {
