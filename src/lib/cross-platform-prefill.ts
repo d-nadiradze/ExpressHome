@@ -9,10 +9,13 @@
 import type { MyhomeListing } from "@/lib/myhome-parser";
 import {
   CONDITION_TO_SSGE,
+  isCommercialPropertyType,
   isKnownLandPlotStatus,
+  isMyhomeCommercialTypeValue,
   mapLandPlotStatusForMyhome,
   mapLandPlotStatusForSsge,
   PROPERTY_TYPE_TO_SSGE,
+  resolveSsgeCommercialTypeChip,
   VIEW_TO_SSGE,
   applyProjectTypeDefaults,
 } from "@/lib/ssge-mappings";
@@ -368,6 +371,7 @@ export function normalizeListingForSsgePrefill(
 
   const propertyType = mapPropertyTypeForSsge(listing.propertyType || "");
   const dealType = listing.dealType?.trim() || "";
+  const isCommercial = isCommercialPropertyType(propertyType);
 
   let buildingStatus =
     listing.buildingStatus?.trim() || rawData["სტატუსი"]?.trim() || "";
@@ -376,7 +380,25 @@ export function normalizeListingForSsgePrefill(
     ? mapLandPlotStatusForSsge(landTypeRaw)
     : "";
 
-  if (isKnownLandPlotStatus(buildingStatus)) {
+  if (isCommercial) {
+    const commercialSource =
+      rawData["კომერციული ფართის ტიპი"]?.trim() ||
+      buildingStatus ||
+      rawData["სტატუსი"]?.trim() ||
+      "";
+    const commercialChip = resolveSsgeCommercialTypeChip(commercialSource);
+    if (commercialChip) {
+      rawData["კომერციული ფართის ტიპი"] = commercialChip;
+    }
+    if (isMyhomeCommercialTypeValue(buildingStatus)) {
+      buildingStatus = "";
+    }
+    if (isMyhomeCommercialTypeValue(rawData["სტატუსი"] || "")) {
+      delete rawData["სტატუსი"];
+    }
+    delete rawData["პროექტი"];
+    delete rawData["პროექტის ტიპი"];
+  } else if (isKnownLandPlotStatus(buildingStatus)) {
     rawData["მიწის ნაკვეთი"] = mapLandPlotStatusForSsge(buildingStatus);
     buildingStatus = "";
   } else if (landTypeSsge && isKnownLandPlotStatus(landTypeRaw)) {
@@ -436,6 +458,7 @@ export function normalizeListingForSsgePrefill(
   console.log(
     `[cross-prefill] myhome → ss.ge: type="${propertyType}", city="${city}", ` +
       `area=${area || "-"}, status="${buildingStatus || landTypeSsge || "-"}", ` +
+      `commercial="${rawData["კომერციული ფართის ტიპი"] || "-"}", ` +
       `project="${projectType || "-"}", views="${rawData["ხედი"] || "-"}", ` +
       `condition="${condition || "-"}"`
   );
