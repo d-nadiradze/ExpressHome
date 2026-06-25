@@ -8,6 +8,7 @@
  *   3. Returns an error if fetch fails (no browser fallback).
  */
 import type { MyhomeListing } from "@/lib/myhome-parser";
+import { extractMyhomeListingIdFromUrl } from "@/lib/listing-url";
 
 const USER_AGENT =
   "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36";
@@ -53,14 +54,6 @@ async function getMyhomeBuildId(): Promise<string | null> {
   } catch {
     return null;
   }
-}
-
-// ---- Listing ID extraction --------------------------------------------------
-
-function extractListingId(url: string): string | null {
-  // https://www.myhome.ge/ka/pr/12345678
-  const m = url.match(/\/pr\/(\d+)/);
-  return m ? m[1] : null;
 }
 
 // ---- Helpers ----------------------------------------------------------------
@@ -211,7 +204,7 @@ function isUsableListing(l: MyhomeListing): boolean {
 export async function parseMyhomeListingWithFallback(
   url: string
 ): Promise<{ success: boolean; data?: MyhomeListing; error?: string }> {
-  const listingId = extractListingId(url);
+  const listingId = extractMyhomeListingIdFromUrl(url);
 
   // 1. Try /_next/data/ JSON endpoint (fast, no browser needed)
   if (listingId) {

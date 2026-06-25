@@ -1,14 +1,35 @@
 import { db } from "@/lib/db";
 
+/** Numeric listing id from any myhome.ge URL shape (/pr/, /udzravi-qoneba/, statement, query). */
+export function extractMyhomeListingIdFromUrl(url: string): string | null {
+  if (!/myhome\.ge/i.test(url)) return null;
+
+  const pr = url.match(/\/pr\/(\d+)/i);
+  if (pr) return pr[1];
+
+  const seo = url.match(/\/udzravi-qoneba\/(\d+)/i);
+  if (seo) return seo[1];
+
+  const statement = url.match(/\/statement[s]?\/(\d+)/i);
+  if (statement) return statement[1];
+
+  const queryId = url.match(/[?&](?:id|statement_id|application_id)=(\d+)/i);
+  if (queryId) return queryId[1];
+
+  return null;
+}
+
 /** Canonical listing URL for deduplication (myhome by /pr/{id}/, ss.ge by path). */
 export function normalizeListingUrl(url: string): string {
   const parsed = new URL(url.trim());
   parsed.hash = "";
   parsed.search = "";
 
-  const myhomeMatch = parsed.pathname.match(/\/pr\/(\d+)/i);
-  if (parsed.hostname.includes("myhome.ge") && myhomeMatch) {
-    return `https://www.myhome.ge/pr/${myhomeMatch[1]}/`;
+  if (parsed.hostname.includes("myhome.ge")) {
+    const listingId = extractMyhomeListingIdFromUrl(parsed.href);
+    if (listingId) {
+      return `https://www.myhome.ge/pr/${listingId}/`;
+    }
   }
 
   const host = parsed.hostname.toLowerCase();
@@ -18,14 +39,16 @@ export function normalizeListingUrl(url: string): string {
 
 export async function findExistingParsedListing(userId: string, url: string) {
   const normalized = normalizeListingUrl(url);
-  const myhomeMatch = normalized.match(/\/pr\/(\d+)\//);
+  const listingId = extractMyhomeListingIdFromUrl(url) ?? extractMyhomeListingIdFromUrl(normalized);
 
-  if (myhomeMatch) {
-    const listingId = myhomeMatch[1];
+  if (listingId) {
     return db.parsedListing.findFirst({
       where: {
         userId,
-        sourceUrl: { contains: `/pr/${listingId}/` },
+        OR: [
+          { sourceUrl: { contains: `/pr/${listingId}/` } },
+          { sourceUrl: { contains: `/udzravi-qoneba/${listingId}/` } },
+        ],
       },
       orderBy: { updatedAt: "desc" },
     });

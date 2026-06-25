@@ -131,7 +131,7 @@ export default function ParsePage() {
           </button>
         </form>
         <p className="text-xs text-slate-400 dark:text-slate-500 mt-2">
-          Example: https://www.myhome.ge/pr/24724106/... or https://home.ss.ge/ka/udzravi-qoneba/...
+          Example: https://www.myhome.ge/udzravi-qoneba/25128941/... or https://home.ss.ge/ka/udzravi-qoneba/...
         </p>
       </div>
 

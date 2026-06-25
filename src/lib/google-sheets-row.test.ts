@@ -33,6 +33,15 @@ test("myhome id from source url", () => {
   );
 });
 
+test("myhome id from udzravi-qoneba seo url", () => {
+  assert.equal(
+    extractMyhomeListingId(
+      "https://www.myhome.ge/udzravi-qoneba/25128941/qiravdeba-2-otaxiani-bina-did-dighomshi/"
+    ),
+    "25128941"
+  );
+});
+
 test("ss id from post url", () => {
   assert.equal(
     extractSsgeListingId(

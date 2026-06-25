@@ -7,6 +7,7 @@
  * ~400ms, no browser needed.
  */
 import type { MyhomeListing } from "@/lib/myhome-parser";
+import { extractMyhomeListingIdFromUrl } from "@/lib/listing-url";
 import {
   MYHOME_CURRENCY,
   MYHOME_DEAL_TYPE,
@@ -50,11 +51,6 @@ function stripHtml(s: string): string {
     .trim();
 }
 
-function extractId(url: string): string | null {
-  const m = url.match(/\/pr\/(\d+)/);
-  return m ? m[1] : null;
-}
-
 function fail(message: string): { success: false; error: string } {
   console.log(`[myhome-api] ${message}`);
   return { success: false, error: message };
@@ -65,7 +61,7 @@ function fail(message: string): { success: false; error: string } {
 export async function parseMyhomeViaApi(
   url: string
 ): Promise<{ success: boolean; data?: MyhomeListing; error?: string }> {
-  const listingId = extractId(url);
+  const listingId = extractMyhomeListingIdFromUrl(url);
   if (!listingId) return fail("Invalid myhome.ge URL");
 
   try {

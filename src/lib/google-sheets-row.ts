@@ -6,6 +6,7 @@ import {
   extractAreaDigits,
   resolveListingDisplayArea,
 } from "@/lib/listing-area";
+import { extractMyhomeListingIdFromUrl } from "@/lib/listing-url";
 
 export const BROKER_SHEET_HEADERS = [
   "სახელი",
@@ -86,13 +87,9 @@ export function extractMyhomeListingId(
   postUrl?: string | null
 ): string {
   for (const u of [postUrl, sourceUrl]) {
-    if (!u || !/myhome\.ge/i.test(u)) continue;
-    const pr = u.match(/\/pr\/(\d+)/i);
-    if (pr) return pr[1];
-    const statement = u.match(/\/statement[s]?\/(\d+)/i);
-    if (statement) return statement[1];
-    const queryId = u.match(/[?&](?:id|statement_id|application_id)=(\d+)/i);
-    if (queryId) return queryId[1];
+    if (!u) continue;
+    const id = extractMyhomeListingIdFromUrl(u);
+    if (id) return id;
   }
   return "";
 }
