@@ -1,8 +1,8 @@
 /**
- * ss.ge listing prefill via api-gateway HTTP APIs (minimal Playwright for auth).
+ * ss.ge listing prefill via api-gateway HTTP APIs.
  *
  * Flow:
- *   1. Playwright login → Bearer accessToken
+ *   1. Cached JWT or Playwright/HTTP OAuth login → Bearer accessToken
  *   2. DELETE delete-draft (clear stale)
  *   3. POST create-draft (bootstrap) → applicationId
  *   4. POST upload-image per photo
@@ -16,8 +16,10 @@ import type { SsgeCredentials } from "@/lib/ssge-parser";
 import { normalizeListingForSsgePrefill } from "@/lib/cross-platform-prefill";
 import {
   closeSsgeApiSession,
+  invalidateAndRefreshSsgeApiSession,
   loginSsgeApi,
   ssgeApiFetch,
+  ssgeAuthMethodMessage,
   type SsgeApiSession,
 } from "@/lib/ssge-api-auth";
 import {
@@ -49,28 +51,47 @@ export function shouldFallbackToBrowserPrefill(): boolean {
   return process.env.SSGE_API_PREFILL_FALLBACK !== "false";
 }
 
+interface SsgeApiFetchContext {
+  session: SsgeApiSession;
+  authRetried: boolean;
+  refreshOn401: () => Promise<boolean>;
+}
+
 async function fetchWithTimeout(
-  session: SsgeApiSession,
+  ctx: SsgeApiFetchContext,
   apiPath: string,
   init: RequestInit
 ): Promise<Response> {
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), FETCH_TIMEOUT_MS);
   try {
-    return await ssgeApiFetch(session, apiPath, {
+    let res = await ssgeApiFetch(ctx.session, apiPath, {
       ...init,
       signal: controller.signal,
     });
+    if (res.status === 401 && !ctx.authRetried) {
+      ctx.authRetried = true;
+      console.log(
+        "[ss.ge API prefill] 401 from api-gateway — refreshing Bearer token…"
+      );
+      if (await ctx.refreshOn401()) {
+        res = await ssgeApiFetch(ctx.session, apiPath, {
+          ...init,
+          signal: controller.signal,
+        });
+      }
+    }
+    return res;
   } finally {
     clearTimeout(timer);
   }
 }
 
 async function getCurrencyRates(
-  session: SsgeApiSession
+  ctx: SsgeApiFetchContext
 ): Promise<{ usdRate: number; gelRate: number }> {
   try {
-    const res = await fetchWithTimeout(session, "/RealEstate/currency-rate", {
+    const res = await fetchWithTimeout(ctx, "/RealEstate/currency-rate", {
       method: "GET",
     });
     if (!res.ok) throw new Error("rate fetch failed");
@@ -84,18 +105,18 @@ async function getCurrencyRates(
   }
 }
 
-async function deleteExistingDraft(session: SsgeApiSession): Promise<void> {
-  await fetchWithTimeout(session, "/RealEstate/delete-draft", {
+async function deleteExistingDraft(ctx: SsgeApiFetchContext): Promise<void> {
+  await fetchWithTimeout(ctx, "/RealEstate/delete-draft", {
     method: "DELETE",
     body: JSON.stringify({}),
   }).catch(() => null);
 }
 
 async function createBootstrapDraft(
-  session: SsgeApiSession,
+  ctx: SsgeApiFetchContext,
   payload: ReturnType<typeof buildBootstrapDraftPayload>
 ): Promise<{ applicationId: number; error?: string }> {
-  const res = await fetchWithTimeout(session, "/RealEstate/create-draft", {
+  const res = await fetchWithTimeout(ctx, "/RealEstate/create-draft", {
     method: "POST",
     body: JSON.stringify(payload),
   });
@@ -123,7 +144,7 @@ interface UploadResult {
 }
 
 async function uploadImage(
-  session: SsgeApiSession,
+  ctx: SsgeApiFetchContext,
   applicationId: number,
   filePath: string
 ): Promise<UploadResult | { error: string }> {
@@ -134,7 +155,7 @@ async function uploadImage(
   const b64 = buf.toString("base64");
   const content = `data:${mime};base64,${b64}`;
 
-  const res = await fetchWithTimeout(session, "/RealEstate/upload-image", {
+  const res = await fetchWithTimeout(ctx, "/RealEstate/upload-image", {
     method: "POST",
     body: JSON.stringify({ applicationId, content }),
   });
@@ -154,10 +175,10 @@ async function uploadImage(
 }
 
 async function saveFullDraft(
-  session: SsgeApiSession,
+  ctx: SsgeApiFetchContext,
   payload: ReturnType<typeof buildApplicationPayload>
 ): Promise<{ success: boolean; applicationId?: number; error?: string }> {
-  const res = await fetchWithTimeout(session, "/RealEstate/create-draft", {
+  const res = await fetchWithTimeout(ctx, "/RealEstate/create-draft", {
     method: "POST",
     body: JSON.stringify(payload),
   });
@@ -180,10 +201,10 @@ async function saveFullDraft(
 }
 
 async function loadDraft(
-  session: SsgeApiSession,
+  ctx: SsgeApiFetchContext,
   applicationId: number
 ): Promise<Record<string, unknown> | null> {
-  const res = await fetchWithTimeout(session, "/RealEstate/get-draft", {
+  const res = await fetchWithTimeout(ctx, "/RealEstate/get-draft", {
     method: "GET",
   });
   if (!res.ok) return null;
@@ -193,14 +214,14 @@ async function loadDraft(
 }
 
 async function publishWithBalance(
-  session: SsgeApiSession,
+  ctx: SsgeApiFetchContext,
   application: ReturnType<typeof buildApplicationPayload>
 ): Promise<{ success: boolean; error?: string; paymentUrl?: string }> {
   const draft =
-    (await loadDraft(session, application.realEstateApplicationId)) ||
+    (await loadDraft(ctx, application.realEstateApplicationId)) ||
     application;
 
-  const tariffResult = await fetchSsgePaidServiceTariff(session, {
+  const tariffResult = await fetchSsgePaidServiceTariff(ctx.session, {
     realEstateDealTypeId: application.realEstateDealTypeId,
     cityId: application.cityId,
   });
@@ -252,7 +273,7 @@ async function publishWithBalance(
   };
 
   const res = await fetchWithTimeout(
-    session,
+    ctx,
     "/PaidService/create-application",
     {
       method: "POST",
@@ -299,30 +320,49 @@ export async function createSsgePostViaApi(
 
   try {
     reporter.step("login");
-    console.log("[ss.ge API prefill] Headless OAuth login for Bearer token…");
-    const login = await loginSsgeApi(credentials);
+    const login = await loginSsgeApi(credentials, { userId: options.userId });
     if (!login.success || !login.session) {
       reporter.stepDone("login", login.error || "Login failed");
       return { success: false, error: login.error || "ss.ge API login failed" };
     }
     session = login.session;
-    reporter.stepDone("login");
+    const loginMsg = ssgeAuthMethodMessage(login.authMethod);
+    reporter.info(loginMsg);
+
+    const apiCtx: SsgeApiFetchContext = {
+      session,
+      authRetried: false,
+      refreshOn401: async () => {
+        reporter.warn("API token expired — logging in again…");
+        const refreshed = await invalidateAndRefreshSsgeApiSession(
+          credentials,
+          options.userId
+        );
+        if (!refreshed.success || !refreshed.session) return false;
+        session = refreshed.session;
+        apiCtx.session = refreshed.session;
+        reporter.info(ssgeAuthMethodMessage(refreshed.authMethod));
+        return true;
+      },
+    };
+
+    reporter.stepDone("login", loginMsg);
 
     reporter.step("location");
     const location = await resolveSsgeLocationIds(
-      session,
+      apiCtx.session,
       listing.city,
       listing.street || listing.address
     );
     reporter.stepDone("location");
 
-    const rates = await getCurrencyRates(session);
+    const rates = await getCurrencyRates(apiCtx);
 
     reporter.step("draft");
-    await deleteExistingDraft(session);
+    await deleteExistingDraft(apiCtx);
 
     const bootstrap = buildBootstrapDraftPayload(listing, location);
-    const created = await createBootstrapDraft(session, bootstrap);
+    const created = await createBootstrapDraft(apiCtx, bootstrap);
     if (!created.applicationId) {
       reporter.stepDone("draft", created.error || "Create draft failed");
       return { success: false, error: created.error || "Create draft failed" };
@@ -341,7 +381,7 @@ export async function createSsgePostViaApi(
     const uploaded: SsgeDraftImage[] = [];
     try {
       for (let i = 0; i < imagePaths.length; i++) {
-        const result = await uploadImage(session, applicationId, imagePaths[i]);
+        const result = await uploadImage(apiCtx, applicationId, imagePaths[i]);
         if ("error" in result) {
           reporter.stepDone("images", result.error);
           return { success: false, error: result.error };
@@ -368,7 +408,7 @@ export async function createSsgePostViaApi(
       uploaded,
       { usdRate: rates.usdRate, gelRate: rates.gelRate }
     );
-    const saved = await saveFullDraft(session, fullPayload);
+    const saved = await saveFullDraft(apiCtx, fullPayload);
     if (!saved.success) {
       reporter.stepDone("save", saved.error || "Save failed");
       return { success: false, error: saved.error || "Save draft failed" };
@@ -383,7 +423,7 @@ export async function createSsgePostViaApi(
     }
 
     reporter.step("publish");
-    const paid = await publishWithBalance(session, fullPayload);
+    const paid = await publishWithBalance(apiCtx, fullPayload);
     if (!paid.success) {
       reporter.stepDone("publish", paid.error || "Payment failed");
       return { success: false, error: paid.error || "Publish/payment failed" };
