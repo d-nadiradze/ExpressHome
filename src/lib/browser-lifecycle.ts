@@ -41,6 +41,11 @@ export function isSsgePrefillHeadless(): boolean {
   return process.env.SSGE_PREFILL_HEADLESS !== "false";
 }
 
+/** OAuth token grab for api-gateway — always headless unless explicitly debugging. */
+export function isSsgeApiAuthHeadless(): boolean {
+  return process.env.SSGE_API_AUTH_HEADED !== "true";
+}
+
 /** When false, each prefill launches a fresh browser and always closes it after the job. */
 export function shouldReusePrefillSession(): boolean {
   return process.env.PREFILL_REUSE_BROWSER === "true";

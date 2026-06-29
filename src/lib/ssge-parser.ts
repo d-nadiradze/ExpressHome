@@ -21,12 +21,20 @@ import {
 import { streetCrossfillQueries } from "@/lib/street-crossfill";
 import {
   closeBrowserSession,
+  isSsgeApiAuthHeadless,
   isSsgePrefillHeadless,
   prefillSessionTtlMs,
   registerBrowser,
   shouldReusePrefillSession,
 } from "@/lib/browser-lifecycle";
 import { resolveImagesForPlaywright } from "@/lib/listing-images";
+import {
+  attachSsgeApiCapture,
+  isSsgeCaptureEnabled,
+  newCaptureTimestamp,
+  ssgeHarPathFor,
+  type SsgeApiCapture,
+} from "@/lib/ssge-capture";
 import {
   resolveSsgeStatusChip,
   collectAdditionalInfoLabelsToEnable,
@@ -651,6 +659,56 @@ export async function loginToSsge(credentials: SsgeCredentials): Promise<{
     return {
       success: false,
       error: error instanceof Error ? error.message : "Login failed",
+    };
+  } finally {
+    await closeBrowserSession(browser, context);
+  }
+}
+
+/** Playwright OAuth login → Bearer accessToken for api-gateway.ss.ge. */
+export async function obtainSsgeApiAccessToken(
+  credentials: SsgeCredentials
+): Promise<{ success: boolean; accessToken?: string; error?: string }> {
+  const browser = registerBrowser(
+    await chromium.launch({
+      headless: isSsgeApiAuthHeadless(),
+      args: DOCKER_SAFE_CHROMIUM_ARGS,
+    })
+  );
+  const context = await browser.newContext({
+    userAgent: USER_AGENT,
+    locale: "ka-GE",
+    viewport: { width: 1920, height: 1080 },
+  });
+  await addBrowserEvaluateShim(context);
+  const page = await context.newPage();
+  await ensureBrowserEvaluateShim(page);
+
+  try {
+    const ok = await performSsgeLogin(page, credentials);
+    if (!ok) {
+      return {
+        success: false,
+        error: ssgeLoginFailureMessage(page),
+      };
+    }
+
+    const res = await page.request.get("https://home.ss.ge/api/auth/session");
+    if (!res.ok()) {
+      return { success: false, error: `Session fetch failed (HTTP ${res.status()})` };
+    }
+    const body = (await res.json().catch(() => null)) as {
+      accessToken?: string;
+    } | null;
+    const accessToken = body?.accessToken?.trim();
+    if (!accessToken) {
+      return { success: false, error: "accessToken missing from NextAuth session" };
+    }
+    return { success: true, accessToken };
+  } catch (error) {
+    return {
+      success: false,
+      error: error instanceof Error ? error.message : "ss.ge API auth failed",
     };
   } finally {
     await closeBrowserSession(browser, context);
@@ -2602,7 +2660,12 @@ export async function createSsgePost(
     applySsgeBalconyDefaultsForSsgePrefill(listing.rawData);
   }
 
+  const captureEnabled = isSsgeCaptureEnabled();
+  const captureStamp = captureEnabled ? newCaptureTimestamp() : "";
+  let capture: SsgeApiCapture | null = null;
+
   const reuseSession =
+    !captureEnabled &&
     shouldReusePrefillSession() &&
     postSession?.email === credentials.email &&
     postSession.browser.isConnected();
@@ -2636,7 +2699,13 @@ export async function createSsgePost(
       userAgent: USER_AGENT,
       locale: "ka-GE",
       viewport: headless ? { width: 1920, height: 1080 } : null,
+      ...(captureEnabled
+        ? { recordHar: { path: ssgeHarPathFor(captureStamp), content: "embed" as const } }
+        : {}),
     });
+    if (captureEnabled) {
+      capture = attachSsgeApiCapture(context, captureStamp);
+    }
     await addBrowserEvaluateShim(context);
     page = await context.newPage();
     await ensureBrowserEvaluateShim(page);
@@ -3050,10 +3119,17 @@ export async function createSsgePost(
     for (const cleanup of cleanups) {
       await cleanup().catch(() => null);
     }
-    if (headless || !shouldReusePrefillSession()) {
+    if (capture) {
+      capture.dispose();
+      console.log(`[ssge-capture] JSONL written -> ${capture.jsonlPath}`);
+    }
+    if (headless || captureEnabled || !shouldReusePrefillSession()) {
       await closeBrowserSession(browser, context);
       if (postSession?.browser === browser) {
         postSession = null;
+      }
+      if (captureEnabled) {
+        console.log(`[ssge-capture] HAR written -> ${ssgeHarPathFor(captureStamp)}`);
       }
     } else {
       scheduleSsgePostSessionIdleClose();
