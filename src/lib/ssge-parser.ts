@@ -14,7 +14,10 @@ import {
   applySsgeBalconyDefaultsForSsgePrefill,
   resolveSsgeBalconyCountForPrefill,
 } from "@/lib/platform-amenity-mappings";
-import type { MyhomeListing } from "@/lib/myhome-parser";
+import {
+  resolvePrefillStreetNumber,
+  type MyhomeListing,
+} from "@/lib/myhome-parser";
 import { streetCrossfillQueries } from "@/lib/street-crossfill";
 import {
   closeBrowserSession,
@@ -31,6 +34,7 @@ import {
   PROJECT_TYPE_SUBSET,
   PROPERTY_TYPE_TO_SSGE,
   digitsOnly,
+  isApartmentOrCommercialType,
   isCommercialPropertyType,
   isMyhomeCommercialTypeValue,
   resolveSsgeCommercialTypeChip,
@@ -1890,7 +1894,10 @@ async function ssgeSelectReactOption(
 /** Step 3 — city then street (street loads async after city). */
 async function ssgeFillLocationStep(
   page: Page,
-  listing: Pick<MyhomeListing, "city" | "street" | "streetNumber">
+  listing: Pick<
+    MyhomeListing,
+    "city" | "street" | "streetNumber" | "address" | "rawData" | "propertyType"
+  >
 ): Promise<void> {
   const cityRaw = listing.city?.trim() || "";
   const cityQuery = cityForPrefill(cityRaw);
@@ -1948,8 +1955,9 @@ async function ssgeFillLocationStep(
     await prefillPause(page, 60);
   }
 
-  // Always use "1" for house/street number on ss.ge create form.
-  const streetNumber = "1";
+  const streetNumber = isApartmentOrCommercialType(listing.propertyType)
+    ? resolvePrefillStreetNumber(listing)
+    : "1";
   await ssgeSetInputByPlaceholder(page, "სახლის", streetNumber).catch(
     () => null
   );

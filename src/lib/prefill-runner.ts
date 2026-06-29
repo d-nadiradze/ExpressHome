@@ -1,6 +1,11 @@
 import { db } from "@/lib/db";
 import { decrypt } from "@/lib/encryption";
 import { closeMyhomePostSession, createMyhomePost } from "@/lib/myhome-parser";
+import {
+  createMyhomePostViaApi,
+  isMyhomeApiPrefillEnabled,
+  shouldFallbackToBrowserPrefill,
+} from "@/lib/myhome-api-prefill";
 import { closeSsgePostSession, createSsgePost } from "@/lib/ssge-parser";
 import {
   completePrefillJob,
@@ -103,11 +108,29 @@ export async function runMyhomePrefillJob(jobId: string, listingId: string, user
     reporter.info("Queued — starting myhome.ge prefill");
 
     const password = decrypt(myhomeAccount.myhomePassword);
-    const result = await createMyhomePost(
-      { email: myhomeAccount.myhomeEmail, password },
-      listingPayload(listing),
-      { listingId, userId, sourceUrl: listing.sourceUrl, reporter }
-    );
+    const credentials = { email: myhomeAccount.myhomeEmail, password };
+    const payload = listingPayload(listing);
+    const runOptions = {
+      listingId,
+      userId,
+      sourceUrl: listing.sourceUrl,
+      reporter,
+    };
+
+    let result: { success: boolean; postUrl?: string; error?: string };
+
+    if (isMyhomeApiPrefillEnabled()) {
+      reporter.info("Using myhome API prefill (no browser)");
+      result = await createMyhomePostViaApi(credentials, payload, runOptions);
+      if (!result.success && shouldFallbackToBrowserPrefill()) {
+        reporter.warn(
+          `API prefill failed (${result.error}) — falling back to browser`
+        );
+        result = await createMyhomePost(credentials, payload, runOptions);
+      }
+    } else {
+      result = await createMyhomePost(credentials, payload, runOptions);
+    }
 
     if (!result.success) {
       if (isCancelled() || result.error === "Prefill cancelled by user") {

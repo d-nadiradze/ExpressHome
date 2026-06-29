@@ -32,6 +32,9 @@ scripts/
 # Uploaded listing images
 data/uploads/
 
+# Network-capture artifacts (HAR/JSONL may contain auth tokens — never commit)
+captures/
+
 # Misc
 *.log
 npm-debug.log*
