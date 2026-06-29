@@ -25,6 +25,7 @@ import {
   type PrefillReporter,
 } from "@/lib/prefill-progress";
 import {
+  isApartmentOrCommercialType,
   mapLandPlotStatusForMyhome,
   PROJECT_TYPE_TO_SSGE,
   resolveProjectTypeCanonical,
@@ -40,6 +41,13 @@ import {
 } from "@/lib/browser-lifecycle";
 import { resolveListingDistrict } from "@/lib/parser-districts";
 import { streetCrossfillQueries } from "@/lib/street-crossfill";
+import {
+  attachStatementApiCapture,
+  harPathFor,
+  isMyhomeCaptureEnabled,
+  newCaptureTimestamp,
+  type StatementApiCapture,
+} from "@/lib/myhome-capture";
 
 const PARSE_GOTO_MS = parseInt(process.env.PARSE_GOTO_TIMEOUT_MS || "20000", 10);
 
@@ -816,6 +824,17 @@ function resolveStreetForPrefill(
   return { street: name, streetNumber: num.trim() };
 }
 
+/** Parsed building number for prefill, or "0" when the street has no number. */
+export function resolvePrefillStreetNumber(
+  input: Pick<MyhomeListing, "street" | "streetNumber" | "address" | "rawData">
+): string {
+  const resolved = resolveStreetForPrefill(
+    input.street || input.rawData?.["ქუჩა"] || input.address || "",
+    input.streetNumber || input.rawData?.["ქუჩის ნომერი"] || ""
+  );
+  return resolved.streetNumber || "0";
+}
+
 /** Compare street names: ქუჩა ≈ ქ. ≈ ქ; ignore dots/spacing in abbreviations (ს.კედიას ≈ ს. კედიას). */
 function normalizeStreetKey(raw: string): string {
   return raw
@@ -1310,7 +1329,6 @@ async function prefillBalconyFields(
     return;
   }
 
-  await scrollToFormField(page, "აივანი");
   await prefillPause(page, 50);
 
   if (count) {
@@ -1324,7 +1342,6 @@ async function prefillBalconyFields(
 
 /** Reset myhome default balcony count (often „1“) when listing has no balcony data. */
 async function clearBalconyFormFields(page: Page): Promise<void> {
-  await scrollToFormField(page, "აივანი").catch(() => {});
   await page.evaluate(() => {
     const inputSetter = Object.getOwnPropertyDescriptor(
       window.HTMLInputElement.prototype,
@@ -3194,7 +3211,6 @@ async function scrollMenuAndClickOption(
 
 /** პროექტის ტიპი — open list, click exact option (e.g. თუხარელის). */
 async function prefillProjectTypeField(page: Page, rawValue: string): Promise<boolean> {
-  await expandCreateFormSections(page);
   return prefillLukSelectByLabel(page, "პროექტის ტიპი", rawValue);
 }
 
@@ -3816,25 +3832,23 @@ async function prefillBuildingStatusAndCondition(
   const condition = getConditionValue(listing);
 
   if (buildingStatus) {
-    await scrollToFormField(page, "სტატუსი");
-    await prefillPause(page, 80);
     if (
       !(await prefillSectionChipPlaywright(page, "სტატუსი", buildingStatus)) &&
       !(await prefillPreferenceField(page, "სტატუსი", buildingStatus))
     ) {
       await batchPrefillChips(page, [{ section: "სტატუსი", chip: buildingStatus }]);
     }
+    await prefillPause(page, 40);
   }
 
   if (condition) {
-    await scrollToFormField(page, "მდგომარეობა");
-    await prefillPause(page, 80);
     if (
       !(await prefillSectionChipPlaywright(page, "მდგომარეობა", condition)) &&
       !(await prefillPreferenceField(page, "მდგომარეობა", condition))
     ) {
       await batchPrefillChips(page, [{ section: "მდგომარეობა", chip: condition }]);
     }
+    await prefillPause(page, 40);
   }
 }
 
@@ -5175,6 +5189,292 @@ async function prefillMainAreaField(
   }, area);
 }
 
+/** Scroll field into view before fill — keeps top-to-bottom prefill without jumping. */
+async function scrollFieldIntoView(page: Page, locator: Locator): Promise<void> {
+  await locator.scrollIntoViewIfNeeded().catch(() => {});
+  await prefillPause(page, 30);
+}
+
+async function prefillPricePlaywright(
+  page: Page,
+  price: string | null | undefined
+): Promise<void> {
+  const digits = (price || "").replace(/[^\d.]/g, "");
+  if (!digits) return;
+
+  const candidates = [
+    page.locator('[data-test-id="add-statement-total-price"]'),
+    page.locator("#total_price"),
+  ];
+  for (const loc of candidates) {
+    if ((await loc.count()) === 0) continue;
+    const input = loc.first();
+    await scrollFieldIntoView(page, input);
+    await input.click({ timeout: CHIP_CLICK_TIMEOUT_MS }).catch(() => {});
+    await input.fill(digits);
+    await prefillPause(page, 40);
+    return;
+  }
+}
+
+async function prefillCurrencyUsdPlaywright(page: Page): Promise<void> {
+  const toggle = page.locator('[data-test-id="add-statement-currency-toggle"]');
+  if ((await toggle.count()) > 0) {
+    await scrollFieldIntoView(page, toggle);
+    const usd = toggle.getByText("$", { exact: true });
+    if (await usd.isVisible({ timeout: 800 }).catch(() => false)) {
+      await usd.click({ timeout: CHIP_CLICK_TIMEOUT_MS });
+      await prefillPause(page, 40);
+      return;
+    }
+  }
+  await switchPriceFieldToUsd(page, "#total_price");
+}
+
+async function prefillMainAreaByTestId(page: Page, area: string): Promise<void> {
+  if (!area) return;
+
+  const container = page.locator('[data-test-id="add-statement-area"]');
+  if ((await container.count()) > 0) {
+    const input = container.getByRole("textbox", { name: "ფართი" }).first();
+    if (await input.isVisible({ timeout: 1000 }).catch(() => false)) {
+      await scrollFieldIntoView(page, input);
+      await input.click({ timeout: CHIP_CLICK_TIMEOUT_MS });
+      await input.fill(area);
+      await prefillPause(page, 40);
+      return;
+    }
+  }
+
+  if (await fillMainAreaInputPlaywright(page, area)) return;
+  await fillLabeledInput(page, "ფართი", area);
+}
+
+async function prefillCountChipByTestId(
+  page: Page,
+  testId: string,
+  sectionLabels: string[],
+  rawValue: string
+): Promise<boolean> {
+  const chip = normalizeCountChipValue(rawValue);
+  if (!chip) return false;
+
+  const chipRe = new RegExp(`^${escapeRegExp(chip)}\\+?$`, "u");
+  const row = page.locator(`[data-test-id="${testId}"]`);
+  if ((await row.count()) > 0) {
+    const label = row.locator("label").filter({ hasText: chipRe });
+    if ((await label.count()) > 0) {
+      await scrollFieldIntoView(page, label.first());
+      await label.first().click({ timeout: CHIP_CLICK_TIMEOUT_MS, force: true });
+      await prefillPause(page, 40);
+      await prefillMyhomeOverflowCountInput(page, sectionLabels, rawValue);
+      return true;
+    }
+  }
+
+  let ok =
+    (await prefillCountChipPlaywright(page, sectionLabels, rawValue)) ||
+    (await prefillRowCountChip(page, sectionLabels, rawValue));
+  if (ok) await prefillMyhomeOverflowCountInput(page, sectionLabels, rawValue);
+  return ok;
+}
+
+/** Bathrooms count lives in optional-features on the main form (before expand). */
+async function prefillOptionalFeaturesCount(
+  page: Page,
+  rawValue: string
+): Promise<boolean> {
+  const sectionLabels = CHIP_SECTION_ALIASES["სველი წერტილი"];
+  const chip = normalizeCountChipValue(rawValue);
+  if (!chip) return false;
+
+  const chipRe = new RegExp(`^${escapeRegExp(chip)}\\+?$`, "u");
+  const row = page.locator('[data-test-id="add-statement-optional-features"]');
+  if ((await row.count()) > 0) {
+    const label = row.locator("label").filter({ hasText: chipRe });
+    if ((await label.count()) > 0) {
+      await scrollFieldIntoView(page, label.first());
+      await label.first().click({ timeout: CHIP_CLICK_TIMEOUT_MS, force: true });
+      await prefillPause(page, 40);
+      await prefillMyhomeOverflowCountInput(page, sectionLabels, rawValue);
+      return true;
+    }
+  }
+
+  return prefillCountChipByTestId(
+    page,
+    "add-statement-optional-features",
+    sectionLabels,
+    rawValue
+  );
+}
+
+async function prefillConstructionYearField(
+  page: Page,
+  listing: MyhomeListing
+): Promise<void> {
+  const raw = listing.rawData?.["აშენების წელი"]?.trim();
+  if (!raw) return;
+
+  const yearDigits = raw.replace(/[^\d]/g, "");
+  const chipCandidates = [
+    raw,
+    yearDigits ? `-${yearDigits}` : "",
+    yearDigits,
+  ].filter(Boolean);
+
+  for (const chip of chipCandidates) {
+    const chipLoc = page.getByText(chip, { exact: true }).first();
+    if (await chipLoc.isVisible({ timeout: 400 }).catch(() => false)) {
+      await scrollFieldIntoView(page, chipLoc);
+      await chipLoc.click({ timeout: CHIP_CLICK_TIMEOUT_MS, force: true });
+      await prefillPause(page, 40);
+      return;
+    }
+  }
+
+  const value = normalizeNumericParam(raw);
+  for (const label of ["აშენების წელი"]) {
+    await fillLabeledInput(page, label, value);
+    break;
+  }
+}
+
+async function prefillDescriptionPlaywright(
+  page: Page,
+  description: string | null | undefined
+): Promise<void> {
+  const text = description?.trim();
+  if (!text) return;
+
+  const ta = page.locator('[data-test-id="add-statement-description-ka"]');
+  if ((await ta.count()) > 0) {
+    await scrollFieldIntoView(page, ta);
+    await ta.click({ timeout: CHIP_CLICK_TIMEOUT_MS }).catch(() => {});
+    await ta.fill(text);
+    await prefillPause(page, 40);
+    return;
+  }
+
+  const fallback = page.locator('textarea[placeholder*="დამატებითი აღწერა"]').first();
+  if (await fallback.isVisible({ timeout: 800 }).catch(() => false)) {
+    await scrollFieldIntoView(page, fallback);
+    await fallback.fill(text);
+  }
+}
+
+async function prefillChipTasksSequential(
+  page: Page,
+  tasks: ChipClickTask[]
+): Promise<void> {
+  for (const task of tasks) {
+    await batchPrefillChips(page, [task]);
+    await prefillPause(page, 25);
+  }
+}
+
+async function prefillFlexChipRowsInOrder(
+  page: Page,
+  listing: MyhomeListing
+): Promise<void> {
+  for (const label of CHIP_STYLE_ROW_LABELS) {
+    const value =
+      label === "პარკირება"
+        ? getParkingPrefillValue(listing)
+        : getFlexChipPrefillValue(listing, label) ||
+          getRawPreferenceValue(listing, label);
+    if (!value || value === "კი" || value === "არა") continue;
+    await closeOpenDropdowns(page);
+    await prefillFlexChipRowField(page, label, value);
+    await prefillPause(page, 40);
+  }
+}
+
+/**
+ * Fill myhome create form top-to-bottom (matches recorded Playwright flow).
+ * Each field scrolls into view right before fill — no batch jumps up/down the page.
+ */
+async function runMyhomeSequentialFormPrefill(
+  page: Page,
+  listing: MyhomeListing,
+  options?: { sourceUrl?: string | null }
+): Promise<void> {
+  const isLandPlot = /მიწის\s*ნაკვეთი/i.test(listing.propertyType || "");
+
+  for (const task of buildEarlyPropertyChipTasks(listing)) {
+    if (!(await prefillSectionChipPlaywright(page, task.section, task.chip))) {
+      await clickChipInSection(page, task.section, task.chip);
+    }
+    await prefillPause(page, 40);
+  }
+
+  await prefillBuildingStatusAndCondition(page, listing);
+  await fillLocationFields(page, listingLocation(listing));
+
+  await prefillPricePlaywright(page, listing.price);
+  if (listing.pricePerSqm?.trim()) {
+    await fillLabeledInput(
+      page,
+      "კვ. ფასი",
+      listing.pricePerSqm.replace(/[^\d.]/g, "")
+    );
+  }
+  await prefillCurrencyUsdPlaywright(page);
+  await prefillMainAreaByTestId(page, getAreaValue(listing));
+
+  if (!isLandPlot) {
+    if (listing.rooms) {
+      await prefillCountChipByTestId(
+        page,
+        "add-statement-room-type",
+        CHIP_SECTION_ALIASES["ოთახი"],
+        listing.rooms
+      );
+    }
+
+    const bedrooms = getBedroomsValue(listing);
+    if (bedrooms) {
+      await prefillCountChipByTestId(
+        page,
+        "add-statement-bedroom-type",
+        CHIP_SECTION_ALIASES["საძინებელი"],
+        bedrooms
+      );
+    }
+
+    await prefillFloorFields(page, listing);
+
+    const projectType = getProjectTypeValue(listing, {
+      sourceUrl: options?.sourceUrl,
+    });
+    if (projectType) {
+      await closeOpenDropdowns(page);
+      await prefillProjectTypeField(page, projectType);
+    }
+
+    const bathrooms = getBathroomsValue(listing);
+    if (bathrooms) {
+      await prefillOptionalFeaturesCount(page, bathrooms);
+    }
+  }
+}
+
+async function runMyhomeExpandedParametersPrefill(
+  page: Page,
+  listing: MyhomeListing,
+  options?: { sourceUrl?: string | null }
+): Promise<void> {
+  await expandCreateFormSections(page);
+  await applyAdditionalParametersPrefill(page, listing, {
+    skipStatusAndCondition: true,
+    skipMainFormFields: true,
+    alreadyExpanded: true,
+    sourceUrl: options?.sourceUrl,
+  });
+  await prefillDescriptionPlaywright(page, listing.description);
+}
+
+/** Read visible option labels from an open autocomplete / luk menu. */
 async function readOptionTextsFromMenu(
   menu: Locator,
   rowSelector: string
@@ -5604,11 +5904,53 @@ async function fillStreetAutocompleteField(
   }
 }
 
+async function fillMyhomeStreetNumberField(
+  page: Page,
+  streetNumber: string
+): Promise<void> {
+  const num = streetNumber.trim();
+  if (!num) return;
+
+  for (const label of ["ქუჩის ნომერი", "სახლის ნომერი"]) {
+    if (await locatorForLabeledInput(page, label)) {
+      await fillLabeledInput(page, label, num);
+      return;
+    }
+  }
+
+  await page.evaluate((value) => {
+    const isVisible = (el: HTMLElement) =>
+      el.offsetParent !== null && getComputedStyle(el).visibility !== "hidden";
+    const setter = Object.getOwnPropertyDescriptor(
+      window.HTMLInputElement.prototype,
+      "value"
+    )?.set;
+
+    for (const inp of document.querySelectorAll<HTMLInputElement>("input")) {
+      if (!isVisible(inp)) continue;
+      const ph = (inp.placeholder || "").trim();
+      if (!ph.includes("ნომერი")) continue;
+      if (/ტელ|phone/i.test(ph)) continue;
+      if (setter) setter.call(inp, value);
+      else inp.value = value;
+      inp.dispatchEvent(new Event("input", { bubbles: true }));
+      inp.dispatchEvent(new Event("change", { bubbles: true }));
+      return;
+    }
+  }, num);
+}
+
 async function fillLocationFields(
   page: Page,
   listing: Pick<
     MyhomeListing,
-    "city" | "street" | "streetNumber" | "address" | "cadastralCode" | "rawData"
+    | "city"
+    | "street"
+    | "streetNumber"
+    | "address"
+    | "cadastralCode"
+    | "rawData"
+    | "propertyType"
   >
 ): Promise<void> {
   const city = listing.city?.trim() || "";
@@ -5644,6 +5986,13 @@ async function fillLocationFields(
 
   if (streetForAutocomplete) {
     await fillStreetAutocompleteField(page, streetForAutocomplete);
+  }
+
+  if (isApartmentOrCommercialType(listing.propertyType)) {
+    await fillMyhomeStreetNumberField(
+      page,
+      resolvePrefillStreetNumber(listing)
+    );
   }
 
   if (cadastralCode) {
@@ -5699,6 +6048,7 @@ function listingLocation(listing: MyhomeListing) {
     address: listing.address || "",
     cadastralCode: listing.cadastralCode || listing.rawData?.["საკადასტრო კოდი"] || "",
     rawData: listing.rawData,
+    propertyType: listing.propertyType || "",
   };
 }
 
@@ -5759,81 +6109,92 @@ function buildPostExpandChipTasks(listing: MyhomeListing): ChipClickTask[] {
 async function applyAdditionalParametersPrefill(
   page: Page,
   listing: MyhomeListing,
-  options?: { skipStatusAndCondition?: boolean; sourceUrl?: string | null }
+  options?: {
+    skipStatusAndCondition?: boolean;
+    skipMainFormFields?: boolean;
+    alreadyExpanded?: boolean;
+    sourceUrl?: string | null;
+  }
 ): Promise<void> {
-  await expandCreateFormSections(page);
+  if (!options?.alreadyExpanded) {
+    await expandCreateFormSections(page);
+  }
   if (!options?.skipStatusAndCondition) {
     await prefillBuildingStatusAndCondition(page, listing);
   }
-  const constructionEarly = getFlexChipPrefillValue(listing, "სამშენებლო მასალა");
-  const parkingEarly = getParkingPrefillValue(listing);
-  const heatingEarly = getFlexChipPrefillValue(listing, "გათბობა");
-  const hotWaterEarly = getFlexChipPrefillValue(listing, "ცხელი წყალი");
-  const doorsEarly = getFlexChipPrefillValue(listing, "კარ-ფანჯარა");
-  if (constructionEarly || parkingEarly || heatingEarly || hotWaterEarly || doorsEarly) {
-    await closeOpenDropdowns(page);
-    if (constructionEarly) {
-      await prefillFlexChipRowField(page, "სამშენებლო მასალა", constructionEarly);
-    }
-    if (parkingEarly) {
-      await prefillFlexChipRowField(page, "პარკირება", parkingEarly);
-    }
-    if (heatingEarly) {
-      await prefillFlexChipRowField(page, "გათბობა", heatingEarly);
-    }
-    if (hotWaterEarly) {
-      await prefillFlexChipRowField(page, "ცხელი წყალი", hotWaterEarly);
-    }
-    if (doorsEarly) {
-      await prefillFlexChipRowField(page, "კარ-ფანჯარა", doorsEarly);
-    }
-  }
 
   const isLandPlot = /მიწის\s*ნაკვეთი/i.test(listing.propertyType || "");
+  const skipMain = options?.skipMainFormFields === true;
 
-  await batchPrefillChips(page, buildPostExpandChipTasks(listing));
-  if (!isLandPlot) {
-    await scrollToFormField(page, "საძინებელი");
-    await prefillMainCountChips(page, listing);
-    if (listingHasFurniture(listing)) {
-      await prefillGeneralFurnitureChip(page);
+  if (!skipMain) {
+    const constructionEarly = getFlexChipPrefillValue(listing, "სამშენებლო მასალა");
+    const parkingEarly = getParkingPrefillValue(listing);
+    const heatingEarly = getFlexChipPrefillValue(listing, "გათბობა");
+    const hotWaterEarly = getFlexChipPrefillValue(listing, "ცხელი წყალი");
+    const doorsEarly = getFlexChipPrefillValue(listing, "კარ-ფანჯარა");
+    if (constructionEarly || parkingEarly || heatingEarly || hotWaterEarly || doorsEarly) {
+      await closeOpenDropdowns(page);
+      if (constructionEarly) {
+        await prefillFlexChipRowField(page, "სამშენებლო მასალა", constructionEarly);
+      }
+      if (parkingEarly) {
+        await prefillFlexChipRowField(page, "პარკირება", parkingEarly);
+      }
+      if (heatingEarly) {
+        await prefillFlexChipRowField(page, "გათბობა", heatingEarly);
+      }
+      if (hotWaterEarly) {
+        await prefillFlexChipRowField(page, "ცხელი წყალი", hotWaterEarly);
+      }
+      if (doorsEarly) {
+        await prefillFlexChipRowField(page, "კარ-ფანჯარა", doorsEarly);
+      }
     }
-  }
 
-  for (const field of PREFILL_NUMERIC_FIELDS) {
-    let value = field.getValue(listing)?.trim();
-    if (!value) continue;
-    value = normalizeNumericParam(value);
-
-    for (const label of field.labels) {
-      await fillLabeledInput(page, label, value);
-      break;
+    await batchPrefillChips(page, buildPostExpandChipTasks(listing));
+    if (!isLandPlot) {
+      await scrollToFormField(page, "საძინებელი");
+      await prefillMainCountChips(page, listing);
+      if (listingHasFurniture(listing)) {
+        await prefillGeneralFurnitureChip(page);
+      }
     }
-  }
 
-  if (!isLandPlot) {
-    await prefillFloorFields(page, listing);
+    for (const field of PREFILL_NUMERIC_FIELDS) {
+      let value = field.getValue(listing)?.trim();
+      if (!value) continue;
+      value = normalizeNumericParam(value);
+
+      for (const label of field.labels) {
+        await fillLabeledInput(page, label, value);
+        break;
+      }
+    }
+
+    if (!isLandPlot) {
+      await prefillFloorFields(page, listing);
+      await prefillBalconyFields(page, listing);
+      await prefillLoggiaFields(page, listing);
+      await prefillVerandaFields(page, listing);
+    }
+    await prefillYardAreaFields(page, listing);
+    if (!isLandPlot) {
+      await prefillCeilingHeightFields(page, listing);
+    }
+
+    for (const label of CHIP_STYLE_ROW_LABELS) {
+      const value = getRawPreferenceValue(listing, label);
+      if (!value || value === "კი" || value === "არა") continue;
+      await prefillPreferenceField(page, label, value);
+    }
+  } else if (!isLandPlot) {
     await prefillBalconyFields(page, listing);
     await prefillLoggiaFields(page, listing);
     await prefillVerandaFields(page, listing);
-  }
-  await prefillYardAreaFields(page, listing);
-  if (!isLandPlot) {
+    await prefillYardAreaFields(page, listing);
+    await prefillConstructionYearField(page, listing);
     await prefillCeilingHeightFields(page, listing);
-  }
 
-  for (const label of CHIP_STYLE_ROW_LABELS) {
-    const value = getRawPreferenceValue(listing, label);
-    if (!value || value === "კი" || value === "არა") continue;
-    if (label === "პარკირება" && parkingEarly) continue;
-    if (label === "სამშენებლო მასალა" && constructionEarly) continue;
-    if (label === "გათბობა" && heatingEarly) continue;
-    if (label === "ცხელი წყალი" && hotWaterEarly) continue;
-    if (label === "კარ-ფანჯარა" && doorsEarly) continue;
-    await prefillPreferenceField(page, label, value);
-  }
-
-  if (!isLandPlot) {
     await closeOpenDropdowns(page);
     for (const nested of NESTED_LUK_TYPE_SECTIONS) {
       const value = getNestedSectionTypeValue(listing, nested.valueKeys);
@@ -5857,6 +6218,100 @@ async function applyAdditionalParametersPrefill(
       }
     }
 
+    await prefillFlexChipRowsInOrder(page, listing);
+
+    for (const label of CHIP_ROW_PARAM_LABELS) {
+      const value = getRawPreferenceValue(listing, label);
+      if (!value || value === "კი" || value === "არა") continue;
+      await prefillPreferenceField(page, label, value);
+    }
+
+    const kitchenArea = listing.rawData?.["სამზარეულოს ფართი"]?.trim();
+    if (kitchenArea) {
+      await fillLabeledInput(
+        page,
+        "სამზარეულოს ფართი",
+        normalizeNumericParam(kitchenArea)
+      );
+    }
+
+    if (listingHasFurniture(listing)) {
+      await prefillGeneralFurnitureChip(page);
+    }
+    await prefillChipTasksSequential(page, buildChipPrefillTasks(listing));
+  } else {
+    await prefillYardAreaFields(page, listing);
+    await prefillFlexChipRowsInOrder(page, listing);
+    await prefillChipTasksSequential(page, buildChipPrefillTasks(listing));
+  }
+
+  if (!skipMain) {
+    if (!isLandPlot) {
+      await closeOpenDropdowns(page);
+      for (const nested of NESTED_LUK_TYPE_SECTIONS) {
+        const value = getNestedSectionTypeValue(listing, nested.valueKeys);
+        if (!value) continue;
+        if (nested.section === "სათავსო" && isParkingChipValue(value)) continue;
+        await prefillNestedSectionTypeDropdown(
+          page,
+          nested.section,
+          nested.dropdownHint,
+          value
+        );
+        if (nested.areaKey) {
+          const sectionArea = getNestedSectionAreaValue(
+            listing,
+            nested.areaKey,
+            nested.valueKeys
+          );
+          if (sectionArea) {
+            await fillInputInNestedSection(page, nested.section, "ფართი", sectionArea);
+          }
+        }
+      }
+
+      await prefillViewField(page, listing);
+
+      const lukSelectPrefillOrder = ["შესასვლელი"] as const;
+      for (const label of lukSelectPrefillOrder) {
+        const value =
+          listing.rawData?.[label]?.trim() ||
+          PREFILL_LIST_FIELDS.find((f) => f.labels.includes(label))?.getValue(listing)?.trim() ||
+          "";
+        if (!value) continue;
+        await prefillLukSelectByLabel(page, label, value);
+      }
+
+      for (const field of PREFILL_LIST_FIELDS) {
+        const value = field.getValue(listing)?.trim();
+        if (!value) continue;
+        for (const label of field.labels) {
+          if (label === "პროექტის ტიპი") continue;
+          if (
+            label === "სათავსო" ||
+            label === "სათავსოს ტიპი" ||
+            label === "მისაღები"
+          ) {
+            continue;
+          }
+          if (lukSelectPrefillOrder.includes(label as (typeof lukSelectPrefillOrder)[number])) {
+            continue;
+          }
+          await closeOpenDropdowns(page);
+          await prefillLukSelectByLabel(page, label, value);
+          break;
+        }
+      }
+
+      const projectType = getProjectTypeValue(listing, {
+        sourceUrl: options?.sourceUrl,
+      });
+      if (projectType) {
+        await closeOpenDropdowns(page);
+        await prefillProjectTypeField(page, projectType);
+      }
+    }
+  } else if (!isLandPlot) {
     await prefillViewField(page, listing);
 
     const lukSelectPrefillOrder = ["შესასვლელი"] as const;
@@ -5888,14 +6343,6 @@ async function applyAdditionalParametersPrefill(
         await prefillLukSelectByLabel(page, label, value);
         break;
       }
-    }
-
-    const projectType = getProjectTypeValue(listing, {
-      sourceUrl: options?.sourceUrl,
-    });
-    if (projectType) {
-      await closeOpenDropdowns(page);
-      await prefillProjectTypeField(page, projectType);
     }
   }
 
@@ -9085,7 +9532,15 @@ export async function createMyhomePost(
     sourceUrl: options.sourceUrl,
   });
 
+  // Discovery-spike: when capturing, always start a fresh, instrumented context
+  // so recordHar + the request logger see the full login -> create -> publish
+  // -> checkout sequence from a clean state.
+  const captureEnabled = isMyhomeCaptureEnabled();
+  const captureStamp = captureEnabled ? newCaptureTimestamp() : "";
+  let capture: StatementApiCapture | null = null;
+
   const reuseSession =
+    !captureEnabled &&
     shouldReusePrefillSession() &&
     postSession?.email === credentials.email &&
     postSession.browser.isConnected();
@@ -9124,7 +9579,13 @@ export async function createMyhomePost(
         "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
       locale: "ka-GE",
       viewport: headless ? { width: 1920, height: 1080 } : null,
+      ...(captureEnabled
+        ? { recordHar: { path: harPathFor(captureStamp), content: "embed" as const } }
+        : {}),
     });
+    if (captureEnabled) {
+      capture = attachStatementApiCapture(context, captureStamp);
+    }
     await context.route("**/*", (route) => {
       const type = route.request().resourceType();
       if (type === "media" || type === "font") {
@@ -9167,298 +9628,14 @@ export async function createMyhomePost(
     reporter.stepDone("form");
 
     reporter.step("fields");
-    // Chips = leaf span/div elements with exact text, click the rounded parent.
-    // Inputs = found via label > span text, filled with React-compatible setter.
-    async function fillForm(data: Record<string, string>) {
-      await page.evaluate((d) => {
-        // React-compatible input value setter
-        const inputSetter = Object.getOwnPropertyDescriptor(
-          window.HTMLInputElement.prototype, "value"
-        )?.set;
-        const textareaSetter = Object.getOwnPropertyDescriptor(
-          window.HTMLTextAreaElement.prototype, "value"
-        )?.set;
-
-        function setInputValue(el: HTMLInputElement | HTMLTextAreaElement, value: string) {
-          const setter = el.tagName === "TEXTAREA" ? textareaSetter : inputSetter;
-          if (setter) {
-            setter.call(el, value);
-            el.dispatchEvent(new Event("input", { bubbles: true }));
-            el.dispatchEvent(new Event("change", { bubbles: true }));
-          }
-        }
-
-        function labelInBalconySection(lbl: Element): boolean {
-          let node: Element | null = lbl.parentElement;
-          while (node) {
-            if (/^H[234]$/.test(node.tagName)) {
-              const t = (node.textContent || "").replace(/\s*\*\s*$/, "").trim();
-              if (t === "აივანი" || /^აივნის\s*რაოდენობა$/iu.test(t)) return true;
-            }
-            node = node.parentElement;
-          }
-          return false;
-        }
-
-        function fillInputByLabel(labelText: string, value: string) {
-          if (!value) return;
-          let filled = false;
-          document.querySelectorAll("label").forEach((label) => {
-            if (filled) return;
-            if (labelText === "ფართი" && labelInBalconySection(label)) return;
-            const forAttr = label.getAttribute("for");
-            const normLabel = (label.textContent || "")
-              .replace(/\s*\*\s*$/, "")
-              .trim()
-              .replace(/\s+/g, " ");
-            if (labelText === "ფართი" && (normLabel === "ფართი" || normLabel.startsWith("ფართი "))) {
-              const input = forAttr
-                ? (document.getElementById(forAttr) as HTMLInputElement)
-                : (label.querySelector("input") as HTMLInputElement);
-              if (input?.tagName === "INPUT" && !labelInBalconySection(label)) {
-                setInputValue(input, value);
-                filled = true;
-                return;
-              }
-            }
-            const spans = label.querySelectorAll("span");
-            for (const span of spans) {
-              const t = span.textContent?.trim()?.replace(/\s*\*\s*$/, "").trim();
-              if (t === labelText) {
-                const input = forAttr
-                  ? (document.getElementById(forAttr) as HTMLInputElement)
-                  : (label.querySelector("input") as HTMLInputElement);
-                if (input?.tagName === "INPUT") {
-                  setInputValue(input, value);
-                  filled = true;
-                }
-                break;
-              }
-            }
-          });
-        }
-
-        if (d.price) {
-          const priceInput = document.getElementById("total_price") as HTMLInputElement;
-          if (priceInput) setInputValue(priceInput, d.price.replace(/[^\d.]/g, ""));
-        }
-
-        if (d.pricePerSqm) {
-          fillInputByLabel("კვ. ფასი", d.pricePerSqm.replace(/[^\d.]/g, ""));
-        }
-
-        fillInputByLabel("ფართი", d.area);
-
-        fillInputByLabel("სართული", d.floor);
-        fillInputByLabel("სართულები სულ", d.totalFloors);
-
-        function chipVariants(value: string): string[] {
-          const digits = value.replace(/[^\d]/g, "");
-          if (!digits) return [value.trim()].filter(Boolean);
-          const n = parseInt(digits, 10);
-          const list = [String(n), `${n}+`];
-          if (n >= 10) list.push("10+");
-          return list;
-        }
-
-        function clickCountInRow(rowLabels: string[], value: string): boolean {
-          if (!value?.trim()) return false;
-          const variants = chipVariants(
-            value === "10" ? "10+" : value.trim()
-          );
-
-          function norm(s: string) {
-            return (s || "").replace(/\s*\*\s*$/, "").trim().replace(/\s+/g, " ");
-          }
-
-          function rowLabelMatches(text: string): boolean {
-            const t = norm(text);
-            if (!t || t.length > 45) return false;
-            for (const label of rowLabels) {
-              const l = norm(label);
-              if (t === l) return true;
-              if (t.includes("სვ") && t.includes("წერტილი")) return true;
-              if (/^საძინებელი/i.test(l) && /^საძინებელი/i.test(t)) return true;
-            }
-            return false;
-          }
-
-          function chipInExclusiveBalconyBlock(chip: Element): boolean {
-            let node: Element | null = chip;
-            for (let depth = 0; depth < 16 && node; depth++) {
-              let hasBalconyCount = false;
-              let hasOtherCountSection = false;
-              for (const marker of node.querySelectorAll("label,span,p")) {
-                const t = norm(marker.textContent || "");
-                if (/^აივნის\s*რაოდენობა$/iu.test(t)) hasBalconyCount = true;
-                if (/^საძინებელი/i.test(t)) hasOtherCountSection = true;
-                if (/^ოთახ/i.test(t)) hasOtherCountSection = true;
-                if (t.includes("სვ") && t.includes("წერტილი")) hasOtherCountSection = true;
-              }
-              if (hasBalconyCount && !hasOtherCountSection) return true;
-              node = node.parentElement;
-            }
-            return false;
-          }
-
-          function tryGluedCountChip(parent: Element | null, re: RegExp): boolean {
-            if (!parent) return false;
-            const joined = (parent.textContent || "").replace(/\s+/g, "");
-            const glued = joined.match(re);
-            if (!glued) return false;
-            const digit = glued[1];
-            if (!variants.some((v) => v === digit || v.replace(/\+$/, "") === digit)) {
-              return false;
-            }
-            for (const el of parent.querySelectorAll("span,motion.div,motion.div,div,button,p")) {
-              if (el.children.length > 0) continue;
-              const t = norm(el.textContent || "");
-              if (t === digit || t === `${digit}+` || variants.includes(t)) {
-                const chip = (el.closest("[class*='rounded']") || el) as HTMLElement;
-                if (chipInExclusiveBalconyBlock(chip)) continue;
-                chip.click();
-                return true;
-              }
-            }
-            return false;
-          }
-
-          function digitCount(node: Element): number {
-            let n = 0;
-            node.querySelectorAll("span,motion.div,div,button,p").forEach((el) => {
-              if (el.children.length > 0) return;
-              if (/^\d+\+?$/.test(norm(el.textContent || ""))) n++;
-            });
-            return n;
-          }
-
-          let row: Element | null = null;
-          for (const el of document.querySelectorAll("label,span,p,motion.div,div")) {
-            if (!rowLabelMatches(el.textContent || "")) continue;
-            const parent = el.parentElement;
-            if (rowLabels.some((l) => /^საძინებელი/i.test(l))) {
-              if (tryGluedCountChip(parent, /^საძინებელი(\d+)$/iu)) return true;
-            }
-            if (rowLabels.some((l) => l.includes("სვ"))) {
-              if (tryGluedCountChip(parent, /^სვ[.\s]*წერტილი(?:ები)?(\d+)$/iu)) {
-                return true;
-              }
-            }
-            let node: Element | null = el;
-            for (let depth = 0; depth < 14 && node; depth++) {
-              if (digitCount(node) >= 2) {
-                row = node;
-                break;
-              }
-              node = node.parentElement;
-            }
-            if (row) break;
-          }
-          if (!row) return false;
-
-          let clicked = false;
-          for (const el of row.querySelectorAll("span,motion.div,div,button,p")) {
-            if (clicked) break;
-            if (el.children.length > 0) continue;
-            const chip = (el.closest("[class*='rounded']") || el) as HTMLElement;
-            if (chipInExclusiveBalconyBlock(chip)) continue;
-            const t = norm(el.textContent || "");
-            if (!variants.includes(t)) {
-              const tm = t.match(/^(\d+)\+?$/);
-              if (!tm || !variants.some((v) => v.match(/^(\d+)/)?.[1] === tm[1])) {
-                continue;
-              }
-            }
-            chip.click();
-            clicked = true;
-          }
-          return clicked;
-        }
-
-        if (d.rooms) {
-          clickCountInRow(["ოთახი", "ოთახები"], d.rooms);
-        }
-        if (d.bedrooms) {
-          clickCountInRow(["საძინებელი", "საძინებლები"], d.bedrooms);
-        }
-        if (d.bathrooms) {
-          clickCountInRow(
-            [
-              "სვ.წერტილი",
-              "სვ.წერტილები",
-              "სველი წერტილი",
-              "სველი წერტილები",
-            ],
-            d.bathrooms
-          );
-        }
-
-        // Description
-        if (d.description) {
-          const ta = document.querySelector(
-            'textarea[placeholder*="დამატებითი აღწერა"]'
-          ) as HTMLTextAreaElement;
-          if (ta) setInputValue(ta, d.description);
-        }
-      }, data);
-    }
-
-    const empty = {
-      propertyType: "",
-      dealType: "",
-      buildingStatus: "",
-      condition: "",
-      city: "",
-      street: "",
-      streetNumber: "",
-      cadastralCode: "",
-      price: "",
-      pricePerSqm: "",
-      currency: "",
-      area: "",
-      rooms: "",
-      floor: "",
-      totalFloors: "",
-      bathrooms: "",
-      description: "",
-    };
-
-    await batchPrefillChips(page, buildEarlyPropertyChipTasks(listing));
-    await prefillPause(page, 40);
-    await prefillBuildingStatusAndCondition(page, listing);
-
-    await fillLocationFields(page, listingLocation(listing));
-
-    await switchPriceFieldToUsd(page, "#total_price");
-    await prefillMainAreaField(page, listing);
-
-    const isLandPlotListing = /მიწის\s*ნაკვეთი/i.test(
-      listing.propertyType || ""
-    );
-    const bedroomsForForm = getBedroomsValue(listing);
-    const bathroomsForForm = getBathroomsValue(listing);
-    const totalFloorsForForm = getTotalFloorsValue(listing);
-    const areaForForm = getAreaValue(listing);
-
-    await fillForm({
-      ...empty,
-      price: listing.price,
-      pricePerSqm: listing.pricePerSqm,
-      currency: "USD",
-      area: areaForForm,
-      rooms: isLandPlotListing ? "" : listing.rooms,
-      bedrooms: isLandPlotListing ? "" : bedroomsForForm,
-      bathrooms: isLandPlotListing ? "" : bathroomsForForm,
-      floor: isLandPlotListing ? "" : listing.floor,
-      totalFloors: isLandPlotListing ? "" : totalFloorsForForm,
-      description: listing.description,
+    await runMyhomeSequentialFormPrefill(page, listing, {
+      sourceUrl: options.sourceUrl,
     });
     reporter.stepDone("fields");
 
     reporter.step("amenities");
     try {
-      await applyAdditionalParametersPrefill(page, listing, {
-        skipStatusAndCondition: true,
+      await runMyhomeExpandedParametersPrefill(page, listing, {
         sourceUrl: options.sourceUrl,
       });
       if (accountDisplayName) {
@@ -9475,6 +9652,7 @@ export async function createMyhomePost(
     reporter.stepDone("amenities");
 
     try {
+      const isLandPlotListing = /მიწის\s*ნაკვეთ/i.test(listing.propertyType || "");
       if (!isLandPlotListing && !listingHasBalconyData(listing)) {
         await clearBalconyFormFields(page);
       }
@@ -9605,10 +9783,18 @@ export async function createMyhomePost(
       error: error instanceof Error ? error.message : "Failed to create post",
     };
   } finally {
-    if (headless || !shouldReusePrefillSession()) {
+    if (capture) {
+      capture.dispose();
+      console.log(`[myhome-capture] JSONL written -> ${capture.jsonlPath}`);
+    }
+    // Capturing forces a context close so recordHar flushes its file to disk.
+    if (headless || captureEnabled || !shouldReusePrefillSession()) {
       await closeBrowserSession(browser, context);
       if (postSession?.browser === browser) {
         postSession = null;
+      }
+      if (captureEnabled) {
+        console.log(`[myhome-capture] HAR written -> ${harPathFor(captureStamp)}`);
       }
     } else {
       scheduleMyhomePostSessionIdleClose();

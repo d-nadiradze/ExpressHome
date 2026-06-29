@@ -76,6 +76,16 @@ export function isCommercialPropertyType(propertyType?: string | null): boolean 
   return /კომერციული/i.test((propertyType || "").trim());
 }
 
+/** ბინა / კომერციული ფართი — prefill parsed street + building number on create forms. */
+export function isApartmentOrCommercialType(
+  propertyType?: string | null
+): boolean {
+  const pt = (propertyType || "").trim();
+  if (!pt) return false;
+  if (/ბინა/i.test(pt)) return true;
+  return isCommercialPropertyType(pt);
+}
+
 function compactCommercialTypeKey(s: string): string {
   return s.replace(/\s+/g, "").toLowerCase();
 }

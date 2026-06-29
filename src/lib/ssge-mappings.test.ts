@@ -3,11 +3,13 @@
  */
 import assert from "node:assert/strict";
 import {
+  isApartmentOrCommercialType,
   isCommercialPropertyType,
   isMyhomeCommercialTypeValue,
   resolveSsgeCommercialTypeChip,
 } from "./ssge-mappings";
 import { normalizeListingForSsgePrefill } from "./cross-platform-prefill";
+import { resolvePrefillStreetNumber } from "./myhome-parser";
 import type { MyhomeListing } from "./myhome-parser";
 
 function test(name: string, fn: () => void): void {
@@ -24,6 +26,44 @@ test("detects commercial property types", () => {
   assert.equal(isCommercialPropertyType("კომერციული"), true);
   assert.equal(isCommercialPropertyType("კომერციული ფართი"), true);
   assert.equal(isCommercialPropertyType("ბინა"), false);
+});
+
+test("street number prefill only for apartment and commercial", () => {
+  assert.equal(isApartmentOrCommercialType("ბინა"), true);
+  assert.equal(isApartmentOrCommercialType("კომერციული ფართი"), true);
+  assert.equal(isApartmentOrCommercialType("კომერციული"), true);
+  assert.equal(isApartmentOrCommercialType("კერძო სახლი"), false);
+  assert.equal(isApartmentOrCommercialType("მიწის ნაკვეთი"), false);
+});
+
+test("resolvePrefillStreetNumber extracts embedded number or defaults to 0", () => {
+  assert.equal(
+    resolvePrefillStreetNumber({
+      street: "ხატაეთის ქ. 46",
+      streetNumber: "",
+      address: "",
+      rawData: {},
+    }),
+    "46"
+  );
+  assert.equal(
+    resolvePrefillStreetNumber({
+      street: "ხატაეთის ქ",
+      streetNumber: "",
+      address: "",
+      rawData: {},
+    }),
+    "0"
+  );
+  assert.equal(
+    resolvePrefillStreetNumber({
+      street: "ხატაეთის ქ",
+      streetNumber: "12",
+      address: "",
+      rawData: {},
+    }),
+    "12"
+  );
 });
 
 test("maps myhome universal status to ss.ge commercial space chip", () => {
