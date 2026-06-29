@@ -21,9 +21,10 @@ import {
   type SsgeApiSession,
 } from "@/lib/ssge-api-auth";
 import {
-  DEFAULT_SSGE_SERVICE,
-  DEFAULT_SSGE_SERVICE_DAYS,
-} from "@/lib/ssge-api-constants";
+  fetchSsgePaidServiceTariff,
+  parseCreateApplicationPayment,
+  resolvePaidServiceSelection,
+} from "@/lib/ssge-api-payment";
 import {
   buildApplicationPayload,
   buildBootstrapDraftPayload,
@@ -193,17 +194,35 @@ async function loadDraft(
 
 async function publishWithBalance(
   session: SsgeApiSession,
-  application: ReturnType<typeof buildApplicationPayload>,
-  serviceDays = DEFAULT_SSGE_SERVICE_DAYS
+  application: ReturnType<typeof buildApplicationPayload>
 ): Promise<{ success: boolean; error?: string; paymentUrl?: string }> {
   const draft =
     (await loadDraft(session, application.realEstateApplicationId)) ||
     application;
 
+  const tariffResult = await fetchSsgePaidServiceTariff(session, {
+    realEstateDealTypeId: application.realEstateDealTypeId,
+    cityId: application.cityId,
+  });
+  if ("error" in tariffResult) {
+    return { success: false, error: tariffResult.error };
+  }
+
+  const service = resolvePaidServiceSelection(tariffResult.tariff);
+  if ("error" in service) {
+    return { success: false, error: service.error };
+  }
+
+  console.log(
+    `[ss.ge API prefill] Publish tariff: ${service.paidService} ${service.days}d = ${service.price} GEL`
+  );
+
   const body = {
     application: {
       ...draft,
       ...application,
+      moderationBlockCategories:
+        (draft.moderationBlockCategories as unknown) ?? null,
       realEstateApplicationId: application.realEstateApplicationId,
     },
     paidServices: {
@@ -217,7 +236,10 @@ async function publishWithBalance(
           realEstateDealTypeId: application.realEstateDealTypeId,
           cityId: application.cityId,
           paidServices: [
-            { paidService: DEFAULT_SSGE_SERVICE, days: serviceDays },
+            {
+              paidService: service.paidService,
+              days: service.days,
+            },
           ],
         },
       ],
@@ -239,38 +261,17 @@ async function publishWithBalance(
   );
 
   const raw = await res.text();
-  let json: {
-    payment?: { success?: boolean; data?: { redirectUrl?: string } };
-    applicationId?: number;
-    userMessage?: string;
-    rawResponse?: string;
-  } = {};
-  try {
-    json = JSON.parse(raw);
-  } catch {
-    /* non-json */
-  }
-
-  const paymentOk =
-    res.ok &&
-    (json.payment?.success === true ||
-      (res.status < 300 && !json.payment && json.applicationId));
-
-  if (!paymentOk) {
-    const detail =
-      json.userMessage ||
-      json.rawResponse ||
-      raw.slice(0, 400) ||
-      `HTTP ${res.status}`;
+  const parsed = parseCreateApplicationPayment(res, raw, service.price);
+  if (!parsed.success) {
     return {
       success: false,
-      error: `Balance payment failed: ${detail}`,
+      error: `Balance payment failed: ${parsed.error}`,
     };
   }
 
   return {
     success: true,
-    paymentUrl: json.payment?.data?.redirectUrl,
+    paymentUrl: parsed.paymentUrl,
   };
 }
 
