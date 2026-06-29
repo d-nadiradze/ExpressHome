@@ -8,6 +8,11 @@ import {
 } from "@/lib/myhome-api-prefill";
 import { closeSsgePostSession, createSsgePost } from "@/lib/ssge-parser";
 import {
+  createSsgePostViaApi,
+  isSsgeApiPrefillEnabled,
+  shouldFallbackToBrowserPrefill as shouldSsgeFallbackToBrowser,
+} from "@/lib/ssge-api-prefill";
+import {
   completePrefillJob,
   createCancellablePrefillReporter,
   failPrefillJob,
@@ -203,14 +208,49 @@ export async function runSsgePrefillJob(jobId: string, listingId: string, userId
       data: { ssgePostStatus: "PENDING" },
     });
 
-    reporter.info("Queued — starting ss.ge prefill");
+    const useApi = isSsgeApiPrefillEnabled();
+    reporter.info(
+      useApi
+        ? "Queued — starting ss.ge API prefill (no wizard browser)"
+        : "Queued — starting ss.ge browser prefill"
+    );
+    if (useApi) {
+      await closeSsgePostSession();
+    }
 
     const password = decrypt(ssgeAccount.ssgePassword);
-    const result = await createSsgePost(
-      { email: ssgeAccount.ssgeEmail, password },
-      listingPayload(listing),
-      { listingId, userId, sourceUrl: listing.sourceUrl, reporter }
-    );
+    const listingInput = listingPayload(listing);
+    const prefillOpts = {
+      listingId,
+      userId,
+      sourceUrl: listing.sourceUrl,
+      reporter,
+    };
+
+    let result;
+    if (useApi) {
+      result = await createSsgePostViaApi(
+        { email: ssgeAccount.ssgeEmail, password },
+        listingInput,
+        prefillOpts
+      );
+      if (!result.success && shouldSsgeFallbackToBrowser()) {
+        reporter.info(
+          `API prefill failed — falling back to browser (headless=${process.env.SSGE_PREFILL_HEADLESS !== "false"})`
+        );
+        result = await createSsgePost(
+          { email: ssgeAccount.ssgeEmail, password },
+          listingInput,
+          prefillOpts
+        );
+      }
+    } else {
+      result = await createSsgePost(
+        { email: ssgeAccount.ssgeEmail, password },
+        listingInput,
+        prefillOpts
+      );
+    }
 
     if (!result.success) {
       if (isCancelled() || result.error === "Prefill cancelled by user") {
