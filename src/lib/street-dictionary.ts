@@ -100,6 +100,99 @@ export function normalizeStreetForMatch(raw: string | null | undefined): string 
   return joined;
 }
 
+/** Canonical full-word street types (values of STREET_TYPE_CANONICAL). */
+const STREET_TYPE_VALUE_SET = new Set<string>(
+  Object.values(STREET_TYPE_CANONICAL)
+);
+
+/** True when the (raw) street name carries an explicit street-type token. */
+export function hasStreetType(raw: string | null | undefined): boolean {
+  return splitStreetName(raw).type.length > 0;
+}
+
+export interface SplitStreetName {
+  /** Normalized name without the trailing street-type token. */
+  base: string;
+  /** Canonical street-type token (e.g. „ქუჩა", „გამზირი") or "" when absent. */
+  type: string;
+  /** Full normalized name (base + type). */
+  norm: string;
+}
+
+/**
+ * Split a normalized street name into its base name and trailing street-type
+ * token. „წერეთლის გამზ." → { base: "წერეთლის", type: "გამზირი" }.
+ */
+export function splitStreetName(raw: string | null | undefined): SplitStreetName {
+  const norm = normalizeStreetForMatch(raw);
+  if (!norm) return { base: "", type: "", norm: "" };
+  const tokens = norm.split(" ");
+  const last = tokens[tokens.length - 1];
+  if (tokens.length > 1 && STREET_TYPE_VALUE_SET.has(last)) {
+    return { base: tokens.slice(0, -1).join(" "), type: last, norm };
+  }
+  return { base: norm, type: "", norm };
+}
+
+/** One token array is a leading- or trailing-aligned subsequence of the other. */
+function tokenPrefixOrSuffix(a: string[], b: string[]): boolean {
+  const [short, long] = a.length <= b.length ? [a, b] : [b, a];
+  if (short.length === 0) return false;
+  const startsAligned = short.every((t, i) => long[i] === t);
+  const endOffset = long.length - short.length;
+  const endsAligned = short.every((t, i) => long[endOffset + i] === t);
+  return startsAligned || endsAligned;
+}
+
+/**
+ * Type-aware similarity score between a wanted street name and a candidate.
+ * Honors the street type: a matching base with the *same* type ranks highest,
+ * a matching base with a *conflicting* type is heavily penalized so the correct
+ * type (e.g. გამზირი vs ქუჩა) wins even against district-hint bonuses.
+ *
+ * Returns 0 for a non-match; a strong match is ~1000+.
+ */
+export function scoreStreetNameMatch(
+  want: string | null | undefined,
+  candidate: string | null | undefined
+): number {
+  const w = splitStreetName(want);
+  const c = splitStreetName(candidate);
+  if (!w.norm || !c.norm) return 0;
+
+  let base = 0;
+  if (w.base === c.base) {
+    base = 1000;
+  } else {
+    const wt = w.base.split(" ").filter(Boolean);
+    const ct = c.base.split(" ").filter(Boolean);
+    if (tokenPrefixOrSuffix(wt, ct)) {
+      // Candidate carries extra name tokens (e.g. „აკაკი წერეთლის" vs
+      // „წერეთლის"). Penalize by how much longer the candidate is.
+      const shorter = Math.min(wt.length, ct.length);
+      const longer = Math.max(wt.length, ct.length);
+      base = Math.round(820 * (shorter / longer));
+    } else if (c.base.startsWith(w.base) || w.base.startsWith(c.base)) {
+      // Character-level prefix (handles inflected endings) — proportional.
+      const shorter = Math.min(w.base.length, c.base.length);
+      const longer = Math.max(w.base.length, c.base.length);
+      base = Math.round(560 * (shorter / longer));
+    } else {
+      return 0;
+    }
+  }
+
+  if (w.type && c.type) {
+    base += w.type === c.type ? 250 : -600;
+  } else if (w.type && !c.type) {
+    base -= 30;
+  } else if (!w.type && c.type) {
+    base -= 15;
+  }
+
+  return Math.max(0, base);
+}
+
 /** Drop the leading token (initial or first name) — used for person-named streets. */
 export function streetMatchKeyWithoutLead(raw: string | null | undefined): string {
   const norm = normalizeStreetForMatch(raw);

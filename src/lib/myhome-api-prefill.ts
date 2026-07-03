@@ -284,8 +284,9 @@ function buildCreateForm(
   const raw = listing.rawData ?? {};
   const isLand = /მიწის\s*ნაკვეთ/i.test(listing.propertyType || "");
 
+  const dealTypeId = reverseMaps.dealType(listing.dealType);
   appendIf(form, "real_estate_type_id", reverseMaps.propertyType(listing.propertyType));
-  appendIf(form, "deal_type_id", reverseMaps.dealType(listing.dealType));
+  appendIf(form, "deal_type_id", dealTypeId);
   appendIf(form, "city_id", location.city_id);
   appendIf(form, "street_id", location.street_id);
   appendIf(form, "location_id", location.location_id);
@@ -354,7 +355,11 @@ function buildCreateForm(
 
   const currencyId = reverseMaps.currency(listing.currency || "USD") ?? 2;
   form.append("currency_id", String(currencyId));
-  form.append("can_exchanged", "0");
+  // myhome rejects `can_exchanged` unless deal_type_id === 1 (sale). Exchange is
+  // only meaningful when selling, so omit it for rent/lease/daily deal types.
+  if (dealTypeId === 1) {
+    form.append("can_exchanged", "0");
+  }
 
   const phone = digitsOnlyPhone(profile.phone || raw["ნომერი"] || "");
   if (phone) form.append("phone_number", phone);
@@ -424,13 +429,24 @@ async function payForStatement(
     }
   );
 
-  const initJson = (await initRes.json().catch(() => ({}))) as {
+  const initRaw = await initRes.text();
+  let initJson: {
     result?: boolean;
     data?: { payment_uuid?: string };
-  };
+    errors?: unknown;
+  } = {};
+  try {
+    initJson = JSON.parse(initRaw);
+  } catch {
+    /* non-JSON */
+  }
   const paymentUuid = initJson.data?.payment_uuid;
   if (!initRes.ok || !initJson.result || !paymentUuid) {
-    return { success: false, error: `Payment init failed (HTTP ${initRes.status})` };
+    const detail = JSON.stringify(initJson.errors ?? initRaw).slice(0, 400);
+    return {
+      success: false,
+      error: `Payment init failed (HTTP ${initRes.status}): ${detail}`,
+    };
   }
 
   const payRes = await fetchWithTimeout(`${API_BASE}/v2/payments/pay`, {

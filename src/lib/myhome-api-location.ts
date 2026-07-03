@@ -5,7 +5,10 @@
 import tbilisiStreets from "@/data/tbilisi-streets-myhome.json";
 import { cityForPrefill } from "@/lib/location-prefill";
 import { resolveListingDistrict } from "@/lib/parser-districts";
-import { normalizeStreetForMatch } from "@/lib/street-dictionary";
+import {
+  hasStreetType,
+  scoreStreetNameMatch,
+} from "@/lib/street-dictionary";
 import type { MyhomeListing } from "@/lib/myhome-parser";
 
 const LOCATIONS_API = "https://api-locations.tnet.ge/v2";
@@ -41,13 +44,19 @@ interface StreetRow {
 const TBILISI_STREETS = tbilisiStreets as StreetRow[];
 
 function streetScore(want: string, candidate: string): number {
-  const a = normalizeStreetForMatch(want);
-  const b = normalizeStreetForMatch(candidate);
-  if (!a || !b) return 0;
-  if (a === b) return 1000;
-  if (b.startsWith(a) || a.startsWith(b)) return 900;
-  if (b.includes(a) || a.includes(b)) return Math.min(a.length, b.length) * 10;
-  return 0;
+  return scoreStreetNameMatch(want, candidate);
+}
+
+/**
+ * Choose the street string that best preserves the street-type token (ქუჩა /
+ * გამზირი / …). Fields without a type lose precision at match time, so prefer
+ * the first candidate that carries one, falling back to the first non-empty.
+ */
+function pickStreetQuery(candidates: (string | null | undefined)[]): string {
+  const values = candidates
+    .map((c) => c?.trim())
+    .filter((c): c is string => Boolean(c));
+  return values.find((v) => hasStreetType(v)) ?? values[0] ?? "";
 }
 
 function districtHint(listing: MyhomeListing): string {
@@ -71,15 +80,19 @@ function resolveFromTbilisiJson(
   let bestScore = 0;
 
   for (const row of TBILISI_STREETS) {
-    let score = streetScore(want, row.display_name);
+    const nameScore = streetScore(want, row.display_name);
+    if (nameScore <= 0) continue;
+
+    // District hint only disambiguates between name matches of similar quality;
+    // it is intentionally small so it can never override a street-type conflict
+    // (a wrong type is penalized by ~600 in the name score).
+    let score = nameScore;
     if (districtHintText) {
       const d = districtHintText.toLowerCase();
-      if (row.urban_name.toLowerCase().includes(d) || row.district_name.toLowerCase().includes(d)) {
-        score += 50;
-      }
-      if (d.includes(row.urban_name.toLowerCase()) || d.includes(row.district_name.toLowerCase())) {
-        score += 40;
-      }
+      const u = row.urban_name.toLowerCase();
+      const dist = row.district_name.toLowerCase();
+      if (u.includes(d) || dist.includes(d)) score += 40;
+      if (d.includes(u) || d.includes(dist)) score += 30;
     }
     if (score > bestScore) {
       bestScore = score;
@@ -87,7 +100,7 @@ function resolveFromTbilisiJson(
     }
   }
 
-  return bestScore >= 80 ? best : null;
+  return bestScore >= 300 ? best : null;
 }
 
 async function fetchJson<T>(url: string, headers?: Record<string, string>): Promise<T> {
@@ -142,11 +155,11 @@ export async function resolveMyhomeLocationIds(
   listing: MyhomeListing
 ): Promise<MyhomeLocationIds | null> {
   const city = cityForPrefill(listing.city || listing.rawData?.["მდებარეობა"] || "");
-  const street =
-    listing.street?.trim() ||
-    listing.rawData?.["ქუჩა"]?.trim() ||
-    listing.address?.trim() ||
-    "";
+  const street = pickStreetQuery([
+    listing.street,
+    listing.rawData?.["ქუჩა"],
+    listing.address,
+  ]);
   if (!street) return null;
 
   const hint = districtHint(listing);

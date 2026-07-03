@@ -77,7 +77,9 @@ export function resolvePaidServiceSelection(
     return { error: `ss.ge tariff has no day options for "${paidService}"` };
   }
 
-  if (picked.price <= 0) {
+  // price === 0 is valid: some deal types (e.g. rent) offer a free Standard
+  // listing. Only a negative price is a real tariff error.
+  if (picked.price < 0) {
     return {
       error: `ss.ge "${paidService}" tariff resolved to ${picked.price} GEL (day=${picked.day})`,
     };
@@ -164,6 +166,26 @@ export function parseCreateApplicationPayment(
         json.rawResponse ||
         raw.slice(0, 400) ||
         `HTTP ${res.status}`,
+    };
+  }
+
+  // Free listing (0 GEL tariff — common for some rent categories): ss.ge may
+  // return no payment object because there is nothing to charge. Treat a
+  // created application as a successful free publish.
+  if (expectedPrice === 0) {
+    if (json.applicationId || json.payment?.success === true) {
+      return {
+        success: true,
+        paymentUrl: json.payment?.data?.redirectUrl,
+        chargedGel: 0,
+      };
+    }
+    return {
+      success: false,
+      error:
+        json.userMessage ||
+        json.rawResponse ||
+        "Free publish did not confirm listing creation",
     };
   }
 

@@ -235,7 +235,8 @@ async function publishWithBalance(
   }
 
   console.log(
-    `[ss.ge API prefill] Publish tariff: ${service.paidService} ${service.days}d = ${service.price} GEL`
+    `[ss.ge API prefill] Publish tariff: ${service.paidService} ${service.days}d = ${service.price} GEL` +
+      (service.price === 0 ? " (free listing)" : "")
   );
 
   const body = {

@@ -8,6 +8,7 @@ import {
 } from "@/lib/ssge-api-constants";
 import type { SsgeApiSession } from "@/lib/ssge-api-auth";
 import { reverseSsgeCityId } from "@/lib/ssge-api-reverse";
+import { scoreStreetNameMatch } from "@/lib/street-dictionary";
 
 interface StreetRow {
   id: number;
@@ -18,43 +19,6 @@ interface StreetRow {
 }
 
 const STREETS = streetsData as StreetRow[];
-
-function norm(s: string): string {
-  return s.replace(/\s+/g, " ").trim().toLowerCase();
-}
-
-function streetQueries(street: string): string[] {
-  const s = (street || "").replace(/\s+/g, " ").trim();
-  if (!s) return [];
-  const seen = new Set<string>();
-  const out: string[] = [];
-  const push = (q: string) => {
-    const v = q.replace(/\s+/g, " ").trim();
-    if (!v || seen.has(norm(v))) return;
-    seen.add(norm(v));
-    out.push(v);
-  };
-
-  push(s);
-  const withoutSuffix = s.replace(/\s+(ქ\.?|ქუჩა|შეს\.?|შესახვევი)\s*$/iu, "").trim();
-  if (withoutSuffix) {
-    push(withoutSuffix);
-    push(`${withoutSuffix} ქ.`);
-  }
-  return out;
-}
-
-function scoreStreetMatch(query: string, row: StreetRow): number {
-  const q = norm(query);
-  const title = norm(row.title);
-  if (title === q) return 100;
-  if (title.includes(q) || q.includes(title)) return 80;
-  const qBase = q.replace(/\s+(ქ\.?|ქუჩა)$/iu, "").trim();
-  const tBase = title.replace(/\s+(ქ\.?|ქუჩა)$/iu, "").trim();
-  if (tBase === qBase) return 90;
-  if (tBase.includes(qBase) || qBase.includes(tBase)) return 70;
-  return 0;
-}
 
 export interface SsgeLocationIds {
   cityId: number;
@@ -72,16 +36,14 @@ export function resolveSsgeLocationFromJson(
   }
 
   let best: { row: StreetRow; score: number } | null = null;
-  for (const query of streetQueries(street)) {
-    for (const row of STREETS) {
-      const score = scoreStreetMatch(query, row);
-      if (!best || score > best.score) {
-        best = { row, score };
-      }
+  for (const row of STREETS) {
+    const score = scoreStreetNameMatch(street, row.title);
+    if (score > 0 && (!best || score > best.score)) {
+      best = { row, score };
     }
   }
 
-  if (!best || best.score < 60) {
+  if (!best || best.score < 300) {
     return { cityId, subdistrictId: null, streetId: null };
   }
 

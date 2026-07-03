@@ -128,6 +128,9 @@ export async function runMyhomePrefillJob(jobId: string, listingId: string, user
       reporter.info("Using myhome API prefill (no browser)");
       result = await createMyhomePostViaApi(credentials, payload, runOptions);
       if (!result.success && shouldFallbackToBrowserPrefill()) {
+        console.warn(
+          `[myhome API prefill] failed — falling back to browser: ${result.error}`
+        );
         reporter.warn(
           `API prefill failed (${result.error}) — falling back to browser`
         );
@@ -235,8 +238,11 @@ export async function runSsgePrefillJob(jobId: string, listingId: string, userId
         prefillOpts
       );
       if (!result.success && shouldSsgeFallbackToBrowser()) {
-        reporter.info(
-          `API prefill failed — falling back to browser (headless=${process.env.SSGE_PREFILL_HEADLESS !== "false"})`
+        console.warn(
+          `[ss.ge API prefill] failed — falling back to browser: ${result.error}`
+        );
+        reporter.warn(
+          `API prefill failed (${result.error}) — falling back to browser (headless=${process.env.SSGE_PREFILL_HEADLESS !== "false"})`
         );
         result = await createSsgePost(
           { email: ssgeAccount.ssgeEmail, password },

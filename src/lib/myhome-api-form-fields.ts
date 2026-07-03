@@ -79,16 +79,54 @@ function buildParameterNameIndex(
   return map;
 }
 
+/**
+ * Match a raw amenity label to a parameter id. Beyond exact match, prefer
+ * whole-token agreement over loose substring so „ლიფტი" does not toggle
+ * „სატვირთო ლიფტი" and „წყალი" does not toggle „ცხელი წყალი".
+ */
 function lookupParameterId(
   index: Map<string, number>,
   label: string
 ): number | undefined {
   const want = normLower(label);
+  if (!want) return undefined;
   if (index.has(want)) return index.get(want);
+
+  const wantTokens = want.split(" ").filter(Boolean);
+  const wantSet = new Set(wantTokens);
+
+  let bestId: number | undefined;
+  let bestScore = 0;
+  let bestNameLen = Infinity;
+
   for (const [name, id] of index) {
-    if (name.includes(want) || want.includes(name)) return id;
+    const nameTokens = name.split(" ").filter(Boolean);
+    let score = 0;
+
+    if (nameTokens.length === wantTokens.length && nameTokens.every((t) => wantSet.has(t))) {
+      score = 95;
+    } else if (nameTokens.every((t) => wantSet.has(t))) {
+      // Parameter name fully covered by the (more specific) raw label.
+      score = 85;
+    } else if (wantTokens.every((t) => nameTokens.includes(t))) {
+      // Raw label fully covered by the (more specific) parameter name.
+      score = 70;
+    } else if (name.includes(want) || want.includes(name)) {
+      const ratio = Math.min(name.length, want.length) / Math.max(name.length, want.length);
+      score = ratio >= 0.75 ? Math.round(60 * ratio) : 0;
+    }
+
+    if (score === 0) continue;
+    // Highest score wins; ties break toward the shorter (more general) name so
+    // a plain label prefers the plain parameter over a more specific variant.
+    if (score > bestScore || (score === bestScore && name.length < bestNameLen)) {
+      bestScore = score;
+      bestNameLen = name.length;
+      bestId = id;
+    }
   }
-  return undefined;
+
+  return bestScore >= 45 ? bestId : undefined;
 }
 
 export function parametersForPropertyType(
@@ -177,11 +215,18 @@ function reverseIdByDisplayName(
   for (const item of items) {
     if (normLower(item.display_name) === want) return item.id;
   }
+  let bestId: number | undefined;
+  let bestRatio = 0;
   for (const item of items) {
     const n = normLower(item.display_name);
-    if (n.includes(want) || want.includes(n)) return item.id;
+    if (!n || (!n.includes(want) && !want.includes(n))) continue;
+    const ratio = Math.min(n.length, want.length) / Math.max(n.length, want.length);
+    if (ratio > bestRatio) {
+      bestRatio = ratio;
+      bestId = item.id;
+    }
   }
-  return undefined;
+  return bestRatio >= 0.6 ? bestId : undefined;
 }
 
 function normalizeArea(value: string): string {

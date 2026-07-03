@@ -69,6 +69,7 @@ const cheap = resolvePaidServiceSelection(sampleTariff, "Standard", 30);
 assert.equal("days" in cheap && cheap.days, 1);
 assert.equal("price" in cheap && cheap.price, 0.1);
 
+// Free (0 GEL) Standard — valid for some rent categories, not an error.
 const zeroTariff = [
   {
     paidService: "Standard",
@@ -76,7 +77,17 @@ const zeroTariff = [
   },
 ];
 const zeroPrice = resolvePaidServiceSelection(zeroTariff, "Standard", 30);
-assert.ok("error" in zeroPrice);
+assert.equal("price" in zeroPrice && zeroPrice.price, 0);
+assert.equal("days" in zeroPrice && zeroPrice.days, 30);
+
+// Negative price is still a real tariff error.
+const negativeTariff = [
+  {
+    paidService: "Standard",
+    paidServiceTariffs: [{ dailyPrices: [{ day: 30, price: -5, fullPrice: null }] }],
+  },
+];
+assert.ok("error" in resolvePaidServiceSelection(negativeTariff, "Standard", 30));
 
 const noPayment = parseCreateApplicationPayment(
   new Response(JSON.stringify({ applicationId: 123 }), { status: 200 }),
@@ -84,6 +95,23 @@ const noPayment = parseCreateApplicationPayment(
   15
 );
 assert.equal(noPayment.success, false);
+
+// Free publish (expectedPrice 0): created application counts as success.
+const freePublish = parseCreateApplicationPayment(
+  new Response(JSON.stringify({ applicationId: 456 }), { status: 200 }),
+  JSON.stringify({ applicationId: 456 }),
+  0
+);
+assert.equal(freePublish.success, true);
+assert.equal(freePublish.chargedGel, 0);
+
+// Free publish that did not create anything is still a failure.
+const freeFail = parseCreateApplicationPayment(
+  new Response(JSON.stringify({ userMessage: "boom" }), { status: 200 }),
+  JSON.stringify({ userMessage: "boom" }),
+  0
+);
+assert.equal(freeFail.success, false);
 
 const okPayment = parseCreateApplicationPayment(
   new Response(JSON.stringify({ payment: { success: true, data: { amount: 15 } } }), {

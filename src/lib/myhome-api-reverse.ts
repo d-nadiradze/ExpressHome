@@ -21,10 +21,19 @@ import {
 } from "@/lib/myhome-api-constants";
 
 function norm(s: string): string {
-  return s.replace(/\s+/g, " ").trim().toLowerCase();
+  return s
+    .toLowerCase()
+    // collapse spacing around joiners so „ცენტრალური + იატაკის" == „ცენტრალური+იატაკის"
+    .replace(/\s*([+/])\s*/g, "$1")
+    .replace(/\s+/g, " ")
+    .trim();
 }
 
-/** Exact then substring match against a label→id map. */
+/**
+ * Exact match, else the best overlapping candidate (highest length ratio).
+ * A minimum ratio avoids a short generic label winning over the correct longer
+ * one (e.g. „იატაკის გათბობა" hijacking „ცენტრალური+იატაკის გათბობა").
+ */
 export function reverseByLabel(
   map: Record<number, string>,
   label: string
@@ -35,11 +44,23 @@ export function reverseByLabel(
   for (const [id, name] of Object.entries(map)) {
     if (norm(name) === want) return Number(id);
   }
+
+  let bestId: number | undefined;
+  let bestRatio = 0;
+  let bestLen = 0;
   for (const [id, name] of Object.entries(map)) {
     const n = norm(name);
-    if (n.includes(want) || want.includes(n)) return Number(id);
+    if (!n) continue;
+    if (!n.includes(want) && !want.includes(n)) continue;
+    const ratio = Math.min(n.length, want.length) / Math.max(n.length, want.length);
+    // Prefer the highest overlap; break ties toward the longer (more specific) label.
+    if (ratio > bestRatio || (ratio === bestRatio && n.length > bestLen)) {
+      bestRatio = ratio;
+      bestLen = n.length;
+      bestId = Number(id);
+    }
   }
-  return undefined;
+  return bestRatio >= 0.6 ? bestId : undefined;
 }
 
 /** Rooms: accept "3", "3 ოთახიანი", etc. */
