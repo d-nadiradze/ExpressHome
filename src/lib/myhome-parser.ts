@@ -9641,6 +9641,25 @@ export async function createMyhomePost(
       if (accountDisplayName) {
         await fillLabeledInput(page, "სახელი", accountDisplayName);
       }
+      try {
+        const { fetchMyhomeAccountContact } = await import("@/lib/myhome-api-prefill");
+        const accountContact = await fetchMyhomeAccountContact(credentials);
+        if (accountContact.phone) {
+          for (const label of ["ტელეფონი", "მობილური", "ნომერი", "ტელ."]) {
+            await fillLabeledInput(page, label, accountContact.phone);
+          }
+        } else if (accountContact.error) {
+          console.warn(
+            "[myhome prefill] account phone not set — form may keep default:",
+            accountContact.error
+          );
+        }
+      } catch (e) {
+        console.warn(
+          "[myhome prefill] could not load account phone:",
+          e instanceof Error ? e.message : e
+        );
+      }
     } catch (e) {
       const msg = e instanceof Error ? e.message : String(e);
       reporter.stepWarn("amenities", msg);

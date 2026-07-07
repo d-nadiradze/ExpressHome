@@ -364,12 +364,7 @@ function isKnownSsgeProjectLabel(value: string): boolean {
   const v = normProjectLabel(value);
   if (!v) return false;
   if (PROJECT_TYPE_TO_SSGE[v]) return true;
-  if (PROJECT_TYPE_SUBSET.includes(v as (typeof PROJECT_TYPE_SUBSET)[number])) {
-    return true;
-  }
-  return Object.values(PROJECT_TYPE_TO_SSGE).some(
-    (label) => v === label || v.includes(label) || label.includes(v)
-  );
+  return Object.values(PROJECT_TYPE_TO_SSGE).includes(v);
 }
 
 function isKnownMyhomeProjectLabel(value: string): boolean {
@@ -393,14 +388,19 @@ export function resolveProjectTypeCanonical(
 
   for (const raw of candidates) {
     const fromAlias = resolveMyhomeProjectTypeFromAliases(raw);
-    if (fromAlias) return fromAlias;
+    if (fromAlias) {
+      const mapped = PROJECT_TYPE_TO_SSGE[fromAlias];
+      return mapped || fromAlias;
+    }
 
     const v = normProjectLabel(raw);
     if (PROJECT_TYPE_TO_SSGE[v]) return PROJECT_TYPE_TO_SSGE[v];
     if (PROJECT_TYPE_SUBSET.includes(v as (typeof PROJECT_TYPE_SUBSET)[number])) {
       return v;
     }
-    if (MYHOME_PROJECT_TYPE_LABELS.has(v)) return v;
+    if (MYHOME_PROJECT_TYPE_LABELS.has(v)) {
+      return PROJECT_TYPE_TO_SSGE[v] || DEFAULT_PROJECT_TYPE;
+    }
   }
 
   return DEFAULT_PROJECT_TYPE;
@@ -470,28 +470,32 @@ export function resolveSsgeProjectChip(
 export const PROJECT_TYPE_SUBSET = ["დუპლექსი", "ტრიპლექსი", "სხვენი"] as const;
 
 /**
- * Step 5 (`დამატებითი ინფორმაცია` → "პროექტი") full chip list.
- * MyHome uses a few alternate spellings — accept both keys but emit ss.ge label.
+ * Step 5 (`დამატებითი ინფორმაცია` → "პროექტი") ss.ge chip labels.
+ * Keys are myhome.ge canonical labels; values are exact ss.ge form labels.
+ * IDs differ between platforms (e.g. myhome id 8 = არასტანდარტული, ss.ge id 4).
  */
 export const PROJECT_TYPE_TO_SSGE: Record<string, string> = {
+  "არასტანდარტული": "არასტანდარტული",
+  "თუხარელის": "თუხარელის",
+  "ყავლაშვილის": "ყავლაშვილის",
+  "ხრუშოვის": "ხრუშჩოვის",
+  "ხრუშჩოვის": "ხრუშჩოვის",
+  "იტალიური ეზო": "თბილისური ეზო",
+  "თბილისური ეზო": "თბილისური ეზო",
+  "ლენინგრადის": "ლენინგრადის",
+  "ლვოვის": "ლვოვის",
+  "ჩეხური": "ჩეხური",
+  "ქალაქური": "ქალაქური",
+  "მოსკოვის": "მოსკოვის",
+  "კიევლების": "კიევი",
+  "კიევი": "კიევი",
+  "ვეძისი": "ვეძისი",
+  "მეტრომშენის": "მეტრომშენის",
+  "იუგოსლავიის": "იუგოსლავიის",
+  // House / step-4 floor chips (unchanged on ss.ge wizard)
   "დუპლექსი": "დუპლექსი",
   "ტრიპლექსი": "ტრიპლექსი",
   "სხვენი": "სხვენი",
-  "ლუქსი": "ლუქსი",
-  "კავკასიური": "კავკასიური",
-  "თბილისური ეზო": "თბილისური ეზო",
-  "მოსკოვის": "მოსკოვის",
-  "ქალაქური": "ქალაქური",
-  "ჩეხური": "ჩეხური",
-  "ხრუშჩოვის": "ხრუშჩოვის",
-  "თუხარელის": "თუხარელის",
-  "ვერსი": "ვერსი",
-  "იყალთოს": "იყალთოს",
-  "მერონიშენი": "მერონიშენი",
-  "მეტრომშენის": "მეტრომშენის",
-  "არასტანდარტული": "არასტანდარტული",
-  "კიევლების": "კიევლების",
-  "ცალკე საცხოვრებელი": "ცალკე საცხოვრებელი",
 };
 
 /**

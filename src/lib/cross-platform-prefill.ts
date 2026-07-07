@@ -20,6 +20,7 @@ import {
   applyProjectTypeDefaults,
 } from "@/lib/ssge-mappings";
 import { cityForPrefill } from "@/lib/location-prefill";
+import { applySsgeDescriptionLocationFix } from "@/lib/ssge-description-location";
 import {
   applyMyhomeAmenityAliasesToSsgeRaw,
   applySsgeAmenityAliasesToMyhomeRaw,
@@ -28,6 +29,7 @@ import {
   isTruthyAmenityValue,
 } from "@/lib/platform-amenity-mappings";
 import { applyStreetCrossfill } from "@/lib/street-crossfill";
+import { splitStreetHouseNumber } from "@/lib/street-dictionary";
 import { sanitizeBuildingStatusValue } from "@/lib/building-status-sanitize";
 
 const SSGE_HOST = /(?:^|\/\/)(?:[^/]+\.)?ss\.ge\b/i;
@@ -177,6 +179,19 @@ function resolveBuildingStatusForMyhome(
   return status;
 }
 
+/** Parsed seller contact must never flow into publish — use logged-in account instead. */
+function stripParsedSellerContact(listing: MyhomeListing): MyhomeListing {
+  const rawData = { ...(listing.rawData || {}) };
+  delete rawData["ნომერი"];
+  delete rawData["მესაკუთრე"];
+  return {
+    ...listing,
+    ownerName: undefined,
+    mobileNumber: undefined,
+    rawData,
+  };
+}
+
 /**
  * Prepare a listing parsed from ss.ge (or unknown source) for myhome.ge statement create prefill.
  */
@@ -184,6 +199,8 @@ export function normalizeListingForMyhomePrefill(
   listing: MyhomeListing,
   options?: { sourceUrl?: string | null }
 ): MyhomeListing {
+  listing = stripParsedSellerContact(listing);
+
   if (options?.sourceUrl && isMyhomeSourceUrl(options.sourceUrl)) {
     return listing;
   }
@@ -346,6 +363,11 @@ export function normalizeListingForSsgePrefill(
   listing: MyhomeListing,
   options?: { sourceUrl?: string | null }
 ): MyhomeListing {
+  listing = stripParsedSellerContact(listing);
+
+  // Correct wrong structured city from ss.ge payload using explicit ლოკაცია in text.
+  listing = applySsgeDescriptionLocationFix(listing);
+
   if (options?.sourceUrl && isSsgeSourceUrl(options.sourceUrl)) {
     const bedrooms = pickNumericField(
       listing.bedrooms,
@@ -440,10 +462,19 @@ export function normalizeListingForSsgePrefill(
 
   let streetNumber =
     listing.streetNumber?.trim() || rawData["ქუჩის ნომერი"]?.trim() || "";
+  let streetForCrossfill = listing.street?.trim() || "";
+  if (streetForCrossfill && !streetNumber) {
+    const { street: nameOnly, number } = splitStreetHouseNumber(streetForCrossfill);
+    if (number) {
+      streetForCrossfill = nameOnly;
+      streetNumber = number;
+      rawData["ქუჩის ნომერი"] = number;
+    }
+  }
 
   const streetCrossfill = applyStreetCrossfill(
     {
-      street: listing.street,
+      street: streetForCrossfill,
       address: listing.address,
       rawData,
     },
