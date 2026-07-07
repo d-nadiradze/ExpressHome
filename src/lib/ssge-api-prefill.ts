@@ -12,6 +12,7 @@
 import { readFile } from "fs/promises";
 import path from "path";
 import type { MyhomeListing } from "@/lib/myhome-parser";
+import { resolveListingDistrict } from "@/lib/parser-districts";
 import type { SsgeCredentials } from "@/lib/ssge-parser";
 import { normalizeListingForSsgePrefill } from "@/lib/cross-platform-prefill";
 import {
@@ -360,11 +361,16 @@ export async function createSsgePostViaApi(
     reporter.stepDone("login", loginMsg);
 
     reporter.step("location");
+    const district =
+      resolveListingDistrict(listing) ||
+      listing.rawData?.["უბანი"] ||
+      listing.rawData?.["რაიონი"] ||
+      null;
     const location = await resolveSsgeLocationIds(
       apiCtx.session,
       listing.city,
       listing.street || listing.address,
-      listing.district || listing.rawData?.["უბანი"] || listing.rawData?.["რაიონი"]
+      district
     );
     console.log(
       `[ss.ge API prefill] location cityId=${location.cityId} ` +
