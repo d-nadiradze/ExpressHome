@@ -70,6 +70,34 @@ function nfc(value: string): string {
  * flattened, street-type abbreviations expanded, trailing house numbers and
  * parentheticals removed, and known spelling variants collapsed.
  */
+/** Split a trailing house number from a street label (e.g. „მ. ერისთავის ქ. 12“). */
+export function splitStreetHouseNumber(
+  raw: string | null | undefined
+): { street: string; number: string } {
+  const text = nfc(String(raw || ""))
+    .replace(/\s+/g, " ")
+    .trim();
+  if (!text) return { street: "", number: "" };
+
+  const typed = text.match(
+    /^(.+?\s+(?:ქ\.?|ქუჩა|გამზ\.?|შესახვევი|ჩიხი))\s+(\d+[ა-ჰa-z]?)(?:\s+.+)?$/iu
+  );
+  if (typed) {
+    return { street: typed[1].trim(), number: typed[2].trim() };
+  }
+
+  const tokens = text.split(" ");
+  const last = tokens[tokens.length - 1];
+  if (tokens.length > 1 && /^\d/.test(last)) {
+    return {
+      street: tokens.slice(0, -1).join(" ").trim(),
+      number: last.trim(),
+    };
+  }
+
+  return { street: text, number: "" };
+}
+
 export function normalizeStreetForMatch(raw: string | null | undefined): string {
   if (!raw) return "";
   let s = nfc(String(raw)).toLowerCase().trim();

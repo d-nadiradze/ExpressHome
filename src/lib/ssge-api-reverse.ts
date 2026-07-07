@@ -10,6 +10,7 @@ import {
 } from "@/lib/ssge-mappings";
 import {
   SSGE_BUILDING_STATUS,
+  SSGE_CITY,
   SSGE_COMMERCIAL_TYPE,
   SSGE_CONDITION,
   SSGE_DEAL_TYPE,
@@ -18,6 +19,7 @@ import {
   SSGE_PROPERTY_TYPE,
   SSGE_TOILET,
 } from "@/lib/ssge-api-constants";
+import { MYHOME_PROJECT_TYPE } from "@/lib/myhome-api-constants";
 import { reverseByLabel } from "@/lib/myhome-api-reverse";
 
 export { reverseByLabel };
@@ -86,19 +88,43 @@ export function reverseSsgeConditionId(
   return reverseByLabel(SSGE_CONDITION, condition);
 }
 
+function projectTypeCandidates(
+  projectType: string,
+  rawData?: Record<string, string> | null
+): string[] {
+  const out: string[] = [];
+  const add = (value?: string) => {
+    const v = (value || "").trim();
+    if (!v || out.includes(v)) return;
+    out.push(v);
+  };
+
+  add(projectType);
+  add(rawData?.["პროექტი"]);
+  add(rawData?.["პროექტის ტიპი"]);
+
+  const expanded: string[] = [];
+  for (const candidate of out) {
+    expanded.push(candidate);
+    if (/^\d+$/.test(candidate)) {
+      const myhomeLabel = MYHOME_PROJECT_TYPE[Number(candidate)];
+      if (myhomeLabel) expanded.push(myhomeLabel);
+    }
+  }
+  return expanded;
+}
+
+/** ss.ge project field uses platform-specific numeric ids — map labels only. */
 export function reverseSsgeProjectId(
   projectType: string,
   rawData?: Record<string, string> | null
 ): number | undefined {
-  const label = resolveSsgeProjectChip(
-    projectType || rawData?.["პროექტი"] || rawData?.["პროექტის ტიპი"] || "",
-    rawData || {}
-  );
-  if (label) {
+  for (const candidate of projectTypeCandidates(projectType, rawData)) {
+    const label = resolveSsgeProjectChip(candidate, rawData || {});
     const id = reverseByLabel(SSGE_PROJECT_TYPE, label);
     if (id !== undefined) return id;
   }
-  return reverseByLabel(SSGE_PROJECT_TYPE, projectType);
+  return undefined;
 }
 
 export function reverseSsgeToiletId(bathrooms: string): number | undefined {
@@ -143,11 +169,6 @@ export function reverseSsgeLandTypeId(
 
 export function reverseSsgeCityId(city: string): number {
   const c = (city || "თბილისი").trim();
-  const id = reverseByLabel(
-    Object.fromEntries(
-      Object.entries({ 95: "თბილისი", 96: "ბათუმი", 73: "ქუთაისი", 79: "რუსთავი" })
-    ),
-    c
-  );
+  const id = reverseByLabel(SSGE_CITY, c);
   return id ?? 95;
 }

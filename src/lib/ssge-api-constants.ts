@@ -30,6 +30,7 @@ export const SSGE_CURRENCY: Record<number, string> = {
 };
 
 export const SSGE_CITY: Record<number, string> = {
+  3: "სიღნაღი",
   95: "თბილისი",
   96: "ბათუმი",
   73: "ქუთაისი",
@@ -64,22 +65,22 @@ export const SSGE_TOILET: Record<number, string> = {
   422: "საერთო",
 };
 
-/** Project type (field `project`). Partial map — extend as verified. */
+/** Project type (field `project`) — verified from home.ss.ge create form (2026-07). */
 export const SSGE_PROJECT_TYPE: Record<number, string> = {
-  4: "ლუქსი",
-  5: "დუპლექსი",
-  17: "კავკასიური",
-  18: "თბილისური ეზო",
-  19: "მოსკოვის",
-  20: "ქალაქური",
-  25: "ჩეხური",
-  26: "ხრუშჩოვის",
-  27: "ვერსი",
-  28: "იყალთოს",
+  4: "არასტანდარტული",
+  5: "ყავლაშვილის",
+  17: "ლენინგრადის",
+  18: "ლვოვის",
+  19: "კიევი",
+  20: "თბილისური ეზო",
+  25: "მოსკოვის",
+  26: "ქალაქური",
+  27: "ჩეხური",
+  28: "ხრუშჩოვის",
   29: "თუხარელის",
-  30: "მერონიშენი",
-  36: "არასტანდარტული",
-  38: "კიევლების",
+  30: "ვეძისი",
+  36: "იუგოსლავიის",
+  38: "მეტრომშენის",
 };
 
 export const SSGE_LAND_TYPE: Record<number, string> = {

@@ -127,23 +127,34 @@ async function resolveLocationId(
   try {
     const q = encodeURIComponent(cityName || "თბილისი");
     const cities = await fetchJson<{
-      data?: Array<{ id: number; display_name?: string; name?: string }>;
+      data?: Array<{
+        id?: number;
+        location_id?: number;
+        display_name?: string;
+        name?: string;
+      }>;
     }>(`${LOCATIONS_API}/suggestions?q=${q}&with_visible_in_cities=1`);
 
     const items = cities.data ?? [];
     const urbanNeedle = (urbanName || districtName).toLowerCase();
     for (const item of items) {
       const label = (item.display_name || item.name || "").toLowerCase();
-      if (urbanNeedle && label.includes(urbanNeedle)) return item.id;
+      if (urbanNeedle && label.includes(urbanNeedle)) {
+        return item.location_id ?? item.id;
+      }
     }
-    if (items[0]?.id) return items[0].id;
+    if (items[0]) {
+      const firstId = items[0].location_id ?? items[0].id;
+      if (firstId) return firstId;
+    }
 
     if (districtName) {
       const dq = encodeURIComponent(districtName);
-      const districts = await fetchJson<{ data?: Array<{ id: number }> }>(
+      const districts = await fetchJson<{ data?: Array<{ id?: number; location_id?: number }> }>(
         `${LOCATIONS_API}/suggestions?q=${dq}&with_visible_in_cities=1`
       );
-      return districts.data?.[0]?.id;
+      const districtItem = districts.data?.[0];
+      return districtItem?.location_id ?? districtItem?.id;
     }
   } catch (e) {
     console.warn("[myhome-api-location] suggestions lookup failed:", e);
@@ -160,10 +171,9 @@ export async function resolveMyhomeLocationIds(
     listing.rawData?.["ქუჩა"],
     listing.address,
   ]);
-  if (!street) return null;
 
   const hint = districtHint(listing);
-  const row = resolveFromTbilisiJson(street, hint);
+  const row = street ? resolveFromTbilisiJson(street, hint) : null;
 
   if (row) {
     const location_id =
@@ -185,13 +195,17 @@ export async function resolveMyhomeLocationIds(
   // Fallback: live streets API (non-Tbilisi or unknown street)
   try {
     const cityQ = encodeURIComponent(city || "თბილისი");
-    const locRes = await fetchJson<{ data?: Array<{ id: number }> }>(
+    const locRes = await fetchJson<{ data?: Array<{ id?: number; location_id?: number }> }>(
       `${LOCATIONS_API}/suggestions?q=${cityQ}&with_visible_in_cities=1`
     );
-    const locationId = locRes.data?.[0]?.id;
+    const firstLoc = locRes.data?.[0];
+    const locationId = firstLoc?.location_id ?? firstLoc?.id;
     if (!locationId) return null;
 
-    const streetQ = encodeURIComponent(street);
+    // When source has no street (common on some ss.ge regional listings), use
+    // city text as a coarse query so locations API can return an "unaddressed
+    // streets" fallback entry instead of hard-failing the whole API prefill.
+    const streetQ = encodeURIComponent(street || city || "");
     const streets = await fetchJson<{
       data?: Array<{
         id: number;
