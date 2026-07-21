@@ -20,6 +20,7 @@ services:
       - MYHOME_AUTO_PUBLISH=${MYHOME_AUTO_PUBLISH:-false}
       - SSGE_PREFILL_HEADLESS=${SSGE_PREFILL_HEADLESS:-true}
       - SSGE_AUTO_PUBLISH=${SSGE_AUTO_PUBLISH:-false}
+      - SSGE_HTTP_AUTH=${SSGE_HTTP_AUTH:-true}
       - OPENAI_API_KEY=${OPENAI_API_KEY:-}
       - OPENAI_MODEL=${OPENAI_MODEL:-gpt-4o-mini}
       - UPLOAD_DIR=/app/data/uploads
@@ -36,6 +37,8 @@ services:
         condition: service_healthy
     networks:
       - app-network
+    # App also launches Playwright (listing parse, phone reveal) — needs shared memory
+    shm_size: "1gb"
 
   worker:
     image: ${WORKER_IMAGE:-ghcr.io/d-nadiradze/expresshome-worker:latest}
@@ -60,7 +63,7 @@ services:
       - SSGE_API_PREFILL_FALLBACK=${SSGE_API_PREFILL_FALLBACK:-true}
       - SSGE_TOKEN_CACHE=${SSGE_TOKEN_CACHE:-true}
       - SSGE_TOKEN_CACHE_SKEW_MS=${SSGE_TOKEN_CACHE_SKEW_MS:-120000}
-      - SSGE_HTTP_AUTH=${SSGE_HTTP_AUTH:-false}
+      - SSGE_HTTP_AUTH=${SSGE_HTTP_AUTH:-true}
       - PREFILL_MAX_CONCURRENT=${PREFILL_MAX_CONCURRENT:-3}
       - UPLOAD_DIR=/app/data/uploads
     volumes:
