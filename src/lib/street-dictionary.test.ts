@@ -6,6 +6,7 @@ import crosswalk from "@/data/tbilisi-street-crosswalk.json";
 import {
   normalizeStreetForMatch,
   resolveStreetForTarget,
+  splitStreetHouseNumber,
   streetMatchKeyWithoutLead,
   type StreetCrosswalkEntry,
 } from "./street-dictionary";
@@ -47,6 +48,17 @@ test("strips trailing house numbers and parentheticals", () => {
     normalizeStreetForMatch("აბაშიძის ქ. (ვაკე)"),
     "აბაშიძის ქუჩა"
   );
+});
+
+test("splitStreetHouseNumber separates name and building number", () => {
+  assert.deepEqual(splitStreetHouseNumber("მ. ერისთავის ქ. 12"), {
+    street: "მ. ერისთავის ქ.",
+    number: "12",
+  });
+  assert.deepEqual(splitStreetHouseNumber("პეკინის გამზირი"), {
+    street: "პეკინის გამზირი",
+    number: "",
+  });
 });
 
 test("keeps leading numeric tokens that are part of the name", () => {

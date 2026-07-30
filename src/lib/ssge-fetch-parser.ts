@@ -10,6 +10,9 @@
 import type { MyhomeListing } from "@/lib/myhome-parser";
 import { sanitizeBuildingStatusValue } from "@/lib/building-status-sanitize";
 import { resolveListingDisplayArea } from "@/lib/listing-area";
+import {
+  extractDescriptionLocation,
+} from "@/lib/ssge-description-location";
 import { ssgeOriginalImageUrl } from "@/lib/ssge-image";
 
 const USER_AGENT =
@@ -185,6 +188,8 @@ export async function parseSsgeListingViaFetch(url: string): Promise<{
   // ---- Title ---------------------------------------------------------------
   const title = norm(app.title);
 
+  const description = extractDescription(app.description);
+
   // ---- Address -------------------------------------------------------------
   const addr = app.address ?? {};
   let city = norm(addr.cityTitle ?? addr.cityName ?? addr.city ?? "");
@@ -193,9 +198,23 @@ export async function parseSsgeListingViaFetch(url: string): Promise<{
     if (m) city = norm(m[1]);
   }
   const street = norm(addr.streetTitle ?? addr.street ?? "");
-  const streetNumber = norm(addr.streetNumber ?? "");
-  const address = street
-    ? streetNumber ? `${street} ${streetNumber}` : street
+  const streetNumber = norm(addr.streetNumber ?? "").replace(/^0+$/u, "");
+
+  // Some ss.ge records have wrong structured city (e.g. თბილისი) while the
+  // description contains an explicit "ლოკაცია: <city>, <street>" line. Use that
+  // as a corrective signal when present.
+  const descLoc = extractDescriptionLocation(description);
+  if (descLoc.city && city && descLoc.city !== city) {
+    city = descLoc.city;
+  } else if (descLoc.city && !city) {
+    city = descLoc.city;
+  }
+  const resolvedStreet = street || descLoc.street || "";
+  const resolvedStreetNumber = streetNumber || descLoc.streetNumber || "";
+  const address = resolvedStreet
+    ? resolvedStreetNumber
+      ? `${resolvedStreet} ${resolvedStreetNumber}`
+      : resolvedStreet
     : "";
   // District info — useful for prefill location fields
   const districtTitle    = norm(addr.districtTitle ?? "");
@@ -255,7 +274,6 @@ export async function parseSsgeListingViaFetch(url: string): Promise<{
   if (app.description && typeof app.description !== "string") {
     console.log("[ss.ge] description shape:", JSON.stringify(app.description).slice(0, 200));
   }
-  const description = extractDescription(app.description);
 
   // ---- Building status / condition -----------------------------------------
   // NOTE: "realEstateStatus" and "state" — not "status"/"condition"
@@ -345,8 +363,8 @@ export async function parseSsgeListingViaFetch(url: string): Promise<{
       condition,
       city,
       address,
-      street,
-      streetNumber,
+      street: resolvedStreet,
+      streetNumber: resolvedStreetNumber,
       cadastralCode,
       price,
       pricePerSqm,

@@ -30,6 +30,7 @@ export const SSGE_CURRENCY: Record<number, string> = {
 };
 
 export const SSGE_CITY: Record<number, string> = {
+  3: "სიღნაღი",
   95: "თბილისი",
   96: "ბათუმი",
   73: "ქუთაისი",

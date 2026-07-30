@@ -218,6 +218,29 @@ async function fetchStatementMetadata(
   return parseStatementMetadata(json);
 }
 
+function parseMyhomeUserProfile(body: unknown): {
+  phone?: string;
+  name?: string;
+} {
+  const root = body as Record<string, unknown>;
+  const data = (root.data ?? root) as Record<string, unknown>;
+  const phone = String(
+    data.phone ??
+      data.phone_number ??
+      data.user_phone_number ??
+      data.mobile ??
+      data.mobile_number ??
+      ""
+  ).trim();
+  const name = String(
+    data.name ?? data.display_name ?? data.user_name ?? data.full_name ?? ""
+  ).trim();
+  return {
+    phone: phone || undefined,
+    name: name || undefined,
+  };
+}
+
 async function fetchUserProfile(session: MyhomeApiSession): Promise<{
   phone?: string;
   name?: string;
@@ -226,15 +249,30 @@ async function fetchUserProfile(session: MyhomeApiSession): Promise<{
     headers: apiHeaders(session),
   });
   if (!res.ok) return {};
-  const json = (await res.json()) as {
-    data?: { phone?: string; name?: string };
-  };
-  return json.data ?? {};
+  const json = await res.json();
+  return parseMyhomeUserProfile(json);
 }
 
 function digitsOnlyPhone(phone: string): string {
   const d = phone.replace(/\D/g, "");
   return d.slice(-9);
+}
+
+/** Contact fields for statement create — account only, never parsed seller data. */
+export function resolveMyhomePublishContact(profile: {
+  phone?: string;
+  name?: string;
+}): { phone: string; ownerName: string; error?: string } {
+  const phone = digitsOnlyPhone(profile.phone || "");
+  if (!phone || phone.length !== 9 || !phone.startsWith("5")) {
+    return {
+      phone: "",
+      ownerName: "",
+      error:
+        "Logged-in myhome account has no valid mobile phone. Set it on myhome.ge before publishing.",
+    };
+  }
+  return { phone, ownerName: profile.name?.trim() || "" };
 }
 
 async function uploadImage(
@@ -406,12 +444,15 @@ function buildCreateForm(
     form.append("can_exchanged", "0");
   }
 
-  const phone = digitsOnlyPhone(profile.phone || raw["ნომერი"] || "");
-  if (phone) form.append("phone_number", phone);
+  const contact = resolveMyhomePublishContact(profile);
+  if (contact.error) {
+    throw new Error(contact.error);
+  }
+  form.append("phone_number", contact.phone);
 
   const streetDisplay = location.streetDisplay;
   const streetNumber = listing.streetNumber || raw["ქუჩის ნომერი"] || "";
-  const ownerName = profile.name || raw["მესაკუთრე"] || "";
+  const ownerName = contact.ownerName;
 
   const comment = listing.description?.trim() || "";
   for (const lang of ["ka", "en", "ru"] as const) {
@@ -520,6 +561,19 @@ async function payForStatement(
   return { success: true };
 }
 
+export async function fetchMyhomeAccountContact(
+  credentials: MyhomeCredentials
+): Promise<{ phone?: string; name?: string; error?: string }> {
+  const auth = await loginMyhomeApi(credentials);
+  if (!auth.success || !auth.session) {
+    return { error: auth.error || "API login failed" };
+  }
+  const profile = await fetchUserProfile(auth.session);
+  const contact = resolveMyhomePublishContact(profile);
+  if (contact.error) return { error: contact.error };
+  return { phone: contact.phone, name: contact.ownerName };
+}
+
 export async function createMyhomePostViaApi(
   credentials: MyhomeCredentials,
   listing: MyhomeListing,
@@ -569,6 +623,15 @@ export async function createMyhomePostViaApi(
       fetchStatementMetadata(session),
       fetchUserProfile(session),
     ]);
+    const profileContact = resolveMyhomePublishContact(profile);
+    if (profileContact.phone) {
+      console.log(
+        `[myhome-api] account contact: phone=${profileContact.phone.slice(0, 3)}…` +
+          ` name="${profileContact.ownerName || "(empty)"}"`
+      );
+    } else if (profileContact.error) {
+      console.warn(`[myhome-api] ${profileContact.error}`);
+    }
     const dealTypeId = reverseMaps.dealType(listing.dealType) ?? 1;
     const parameterIds = resolveListingParameterIds(listing, metadata, dealTypeId);
     reporter.stepDone("fields", location.streetDisplay);
@@ -608,6 +671,22 @@ export async function createMyhomePostViaApi(
     }
 
     reporter.step("publish");
+    const contact = resolveMyhomePublishContact(profile);
+    if (contact.error) {
+      reporter.stepDone("publish", "No account phone");
+      return { success: false, error: contact.error };
+    }
+
+    const parsedSellerPhone = digitsOnlyPhone(
+      listing.rawData?.["ნომერი"] || listing.mobileNumber || ""
+    );
+    if (parsedSellerPhone && parsedSellerPhone !== contact.phone) {
+      console.log(
+        `[myhome-api] using account phone ${contact.phone.slice(0, 3)}… ` +
+          `(ignoring parsed seller phone ${parsedSellerPhone.slice(0, 3)}…)`
+      );
+    }
+
     const form = buildCreateForm(
       listing,
       location,

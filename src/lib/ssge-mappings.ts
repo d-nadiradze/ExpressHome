@@ -364,12 +364,7 @@ function isKnownSsgeProjectLabel(value: string): boolean {
   const v = normProjectLabel(value);
   if (!v) return false;
   if (PROJECT_TYPE_TO_SSGE[v]) return true;
-  if (PROJECT_TYPE_SUBSET.includes(v as (typeof PROJECT_TYPE_SUBSET)[number])) {
-    return true;
-  }
-  return Object.values(PROJECT_TYPE_TO_SSGE).some(
-    (label) => v === label || v.includes(label) || label.includes(v)
-  );
+  return Object.values(PROJECT_TYPE_TO_SSGE).includes(v);
 }
 
 function isKnownMyhomeProjectLabel(value: string): boolean {
@@ -393,14 +388,19 @@ export function resolveProjectTypeCanonical(
 
   for (const raw of candidates) {
     const fromAlias = resolveMyhomeProjectTypeFromAliases(raw);
-    if (fromAlias) return fromAlias;
+    if (fromAlias) {
+      const mapped = PROJECT_TYPE_TO_SSGE[fromAlias];
+      return mapped || fromAlias;
+    }
 
     const v = normProjectLabel(raw);
     if (PROJECT_TYPE_TO_SSGE[v]) return PROJECT_TYPE_TO_SSGE[v];
     if (PROJECT_TYPE_SUBSET.includes(v as (typeof PROJECT_TYPE_SUBSET)[number])) {
       return v;
     }
-    if (MYHOME_PROJECT_TYPE_LABELS.has(v)) return v;
+    if (MYHOME_PROJECT_TYPE_LABELS.has(v)) {
+      return PROJECT_TYPE_TO_SSGE[v] || DEFAULT_PROJECT_TYPE;
+    }
   }
 
   return DEFAULT_PROJECT_TYPE;
@@ -470,8 +470,9 @@ export function resolveSsgeProjectChip(
 export const PROJECT_TYPE_SUBSET = ["დუპლექსი", "ტრიპლექსი", "სხვენი"] as const;
 
 /**
- * Step 5 (`დამატებითი ინფორმაცია` → "პროექტი") full chip list.
- * MyHome uses a few alternate spellings — accept both keys but emit ss.ge label.
+ * Step 5 (`დამატებითი ინფორმაცია` → "პროექტი") ss.ge chip labels.
+ * Keys are myhome.ge canonical labels; values are exact ss.ge form labels.
+ * IDs differ between platforms (e.g. myhome id 8 = არასტანდარტული, ss.ge id 4).
  */
 export const PROJECT_TYPE_TO_SSGE: Record<string, string> = {
   // Step-4 chip types (handled separately, not part of the ProjectType enum).

@@ -170,16 +170,6 @@ function applyAmenities(
   }
 }
 
-function extractPhone(listing: MyhomeListing): string {
-  const raw = listing.rawData || {};
-  return (
-    raw["ნომერი"]?.trim() ||
-    raw["ტელეფონი"]?.trim() ||
-    raw["მობილური"]?.trim() ||
-    ""
-  ).replace(/\D/g, "").slice(-9);
-}
-
 export function buildBootstrapDraftPayload(
   listing: MyhomeListing,
   location: SsgeLocationIds,
@@ -204,12 +194,18 @@ export function buildBootstrapDraftPayload(
   };
 }
 
+export { draftAccountPhones } from "@/lib/ssge-api-account";
+
 export function buildApplicationPayload(
   listing: MyhomeListing,
   location: SsgeLocationIds,
   applicationId: number,
   images: SsgeDraftImage[],
-  options?: { gelRate?: number; usdRate?: number }
+  options?: {
+    gelRate?: number;
+    usdRate?: number;
+    accountPhones?: SsgeDraftPayload["phoneNumbers"];
+  }
 ): SsgeDraftPayload {
   listing = normalizeListingForSsgePrefill(listing);
   const raw = listing.rawData || {};
@@ -299,17 +295,9 @@ export function buildApplicationPayload(
 
   applyAmenities(payload, raw);
 
-  const phone = extractPhone(listing);
-  if (phone.length >= 9) {
-    payload.phoneNumbers = [
-      {
-        phoneNumber: phone,
-        isMain: true,
-        hasViber: true,
-        hasWhatsapp: true,
-        isApproved: false,
-      },
-    ];
+  const accountPhones = options?.accountPhones;
+  if (accountPhones?.length) {
+    payload.phoneNumbers = accountPhones;
   }
 
   return payload;

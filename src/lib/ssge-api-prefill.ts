@@ -12,6 +12,7 @@
 import { readFile } from "fs/promises";
 import path from "path";
 import type { MyhomeListing } from "@/lib/myhome-parser";
+import { resolveListingDistrict } from "@/lib/parser-districts";
 import type { SsgeCredentials } from "@/lib/ssge-parser";
 import { normalizeListingForSsgePrefill } from "@/lib/cross-platform-prefill";
 import {
@@ -30,8 +31,11 @@ import {
 import {
   buildApplicationPayload,
   buildBootstrapDraftPayload,
+  draftAccountPhones,
   type SsgeDraftImage,
 } from "@/lib/ssge-api-form-fields";
+import { resolveSsgeAccountPhones } from "@/lib/ssge-api-account";
+import { resolveSsgeProjectChip } from "@/lib/ssge-mappings";
 import { resolveSsgeLocationIds } from "@/lib/ssge-api-location";
 import {
   resolveImagesForPlaywright,
@@ -239,10 +243,17 @@ async function publishWithBalance(
       (service.price === 0 ? " (free listing)" : "")
   );
 
+  const draftPhones = draftAccountPhones(draft);
+  const publishPhones = application.phoneNumbers?.length
+    ? application.phoneNumbers
+    : draftPhones;
+
   const body = {
     application: {
       ...draft,
       ...application,
+      ...(application.project != null ? { project: application.project } : {}),
+      ...(publishPhones?.length ? { phoneNumbers: publishPhones } : {}),
       moderationBlockCategories:
         (draft.moderationBlockCategories as unknown) ?? null,
       realEstateApplicationId: application.realEstateApplicationId,
@@ -350,11 +361,28 @@ export async function createSsgePostViaApi(
     reporter.stepDone("login", loginMsg);
 
     reporter.step("location");
+    const district =
+      resolveListingDistrict(listing) ||
+      listing.rawData?.["უბანი"] ||
+      listing.rawData?.["რაიონი"] ||
+      null;
     const location = await resolveSsgeLocationIds(
       apiCtx.session,
       listing.city,
-      listing.street || listing.address
+      listing.street || listing.address,
+      district
     );
+    console.log(
+      `[ss.ge API prefill] location cityId=${location.cityId} ` +
+        `subdistrictId=${location.subdistrictId ?? "null"} ` +
+        `streetId=${location.streetId ?? "null"} ` +
+        `street="${listing.street || ""}" #${listing.streetNumber || "0"}`
+    );
+    if (!location.streetId && (listing.street || listing.address)?.trim()) {
+      reporter.warn(
+        `Street not resolved for API prefill: "${listing.street || listing.address}"`
+      );
+    }
     reporter.stepDone("location");
 
     const rates = await getCurrencyRates(apiCtx);
@@ -370,6 +398,12 @@ export async function createSsgePostViaApi(
     }
     const applicationId = created.applicationId;
     reporter.stepDone("draft", `Draft ${applicationId}`);
+
+    const accountPhones = await resolveSsgeAccountPhones({
+      userId: options.userId,
+      accessToken: session.accessToken,
+      loadDraft: () => loadDraft(apiCtx, applicationId),
+    });
 
     reporter.step("images");
     const resolved = await resolveImagesForPlaywright(
@@ -401,18 +435,33 @@ export async function createSsgePostViaApi(
     }
     reporter.stepDone("images", `${uploaded.length} uploaded`);
 
+    if (autoPublish && !accountPhones?.length) {
+      reporter.stepDone("save", "No account phone");
+      return {
+        success: false,
+        error:
+          "No account phone for ss.ge publish. Set phone on myhome.ge / ss.ge account first.",
+      };
+    }
+
     reporter.step("save");
     const fullPayload = buildApplicationPayload(
       listing,
       location,
       applicationId,
       uploaded,
-      { usdRate: rates.usdRate, gelRate: rates.gelRate }
+      { usdRate: rates.usdRate, gelRate: rates.gelRate, accountPhones }
     );
     const saved = await saveFullDraft(apiCtx, fullPayload);
     if (!saved.success) {
       reporter.stepDone("save", saved.error || "Save failed");
       return { success: false, error: saved.error || "Save draft failed" };
+    }
+    if (fullPayload.project != null) {
+      console.log(
+        `[ss.ge API prefill] project id=${fullPayload.project} ` +
+          `(label "${resolveSsgeProjectChip(listing.projectType, listing.rawData)}")`
+      );
     }
     reporter.stepDone("save");
 

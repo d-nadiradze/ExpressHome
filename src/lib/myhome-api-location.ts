@@ -215,10 +215,9 @@ export async function resolveMyhomeLocationIds(
     city,
     listing.rawData?.["მდებარეობა"],
   ]);
-  if (!street) return null;
 
   const hint = districtHint(listing);
-  const row = resolveFromTbilisiJson(street, hint);
+  const row = street ? resolveFromTbilisiJson(street, hint) : null;
 
   if (row) {
     const location_id =
@@ -249,7 +248,10 @@ export async function resolveMyhomeLocationIds(
     );
     if (!locationId) return null;
 
-    const streetQ = encodeURIComponent(street);
+    // When source has no street (common on some ss.ge regional listings), use
+    // city text as a coarse query so locations API can return an "unaddressed
+    // streets" fallback entry instead of hard-failing the whole API prefill.
+    const streetQ = encodeURIComponent(street || city || "");
     const streets = await fetchJson<{
       data?: Array<{
         id: number;
