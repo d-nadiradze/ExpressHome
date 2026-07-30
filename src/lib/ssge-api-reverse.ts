@@ -104,13 +104,15 @@ export function reverseSsgeProjectId(
 export function reverseSsgeToiletId(bathrooms: string): number | undefined {
   const s = (bathrooms || "").trim();
   if (!s) return undefined;
-  if (/საერთო/i.test(s)) return 422;
-  if (/3\+|3\s*\+/i.test(s)) return 421;
+  // ss.ge toilet ids: 418=1, 419=2, 420=3, 421=4, 422=5+, 423=none.
+  // "საერთო" (shared) has no ss.ge equivalent — treat as a single point.
+  if (/საერთო/i.test(s)) return 418;
   const n = parseInt(s.match(/(\d+)/)?.[1] || s, 10);
   if (n === 1) return 418;
   if (n === 2) return 419;
   if (n === 3) return 420;
-  if (n >= 4) return 421;
+  if (n === 4) return 421;
+  if (n >= 5) return 422;
   return reverseByLabel(SSGE_TOILET, s);
 }
 

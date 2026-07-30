@@ -4,6 +4,7 @@ import {
   getUserTokenUsageStatus,
   parseOptionalTokenLimit,
 } from "@/lib/ai-token-usage";
+import bcrypt from "bcryptjs";
 
 // PATCH: update user role or status
 export async function PATCH(
@@ -21,7 +22,16 @@ export async function PATCH(
 
   try {
     const body = await request.json();
-    const { name, userRole, isActive, aiTokenLimitHour, aiTokenLimitDay, aiTokenLimitMonth } =
+    const {
+      name,
+      email,
+      password,
+      userRole,
+      isActive,
+      aiTokenLimitHour,
+      aiTokenLimitDay,
+      aiTokenLimitMonth,
+    } =
       body;
 
     // Prevent admin from deactivating themselves
@@ -56,10 +66,33 @@ export async function PATCH(
       };
     }
 
+    if (email !== undefined) {
+      if (typeof email !== "string" || !email.trim()) {
+        return NextResponse.json({ error: "Email is required" }, { status: 400 });
+      }
+      const existingByEmail = await db.user.findUnique({ where: { email } });
+      if (existingByEmail && existingByEmail.id !== id) {
+        return NextResponse.json({ error: "Email is already in use" }, { status: 409 });
+      }
+    }
+
+    let passwordHash: string | undefined;
+    if (password !== undefined) {
+      if (typeof password !== "string" || password.length < 8) {
+        return NextResponse.json(
+          { error: "Password must be at least 8 characters" },
+          { status: 400 }
+        );
+      }
+      passwordHash = await bcrypt.hash(password, 12);
+    }
+
     const user = await db.user.update({
       where: { id },
       data: {
         ...(name !== undefined && { name }),
+        ...(email !== undefined && { email }),
+        ...(passwordHash !== undefined && { passwordHash }),
         ...(userRole !== undefined && { role: userRole }),
         ...(isActive !== undefined && { isActive }),
         ...limitData,

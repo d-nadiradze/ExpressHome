@@ -43,43 +43,54 @@ export const SSGE_BUILDING_STATUS: Record<number, string> = {
   453: "ძველი აშენებული",
 };
 
-/** Condition (field `state`). */
+/**
+ * Condition (field `state`). Numeric ids verified against ss.ge localization
+ * dictionary (RealEstateState{ID}) — do NOT reorder without re-checking.
+ */
 export const SSGE_CONDITION: Record<number, string> = {
   8: "შავი კარკასი",
-  9: "მწვანე კარკასი",
-  10: "თეთრი კარკასი",
-  11: "ძველი რემონტით",
-  12: "სარემონტო",
-  15: "მიმდინარე რემონტი",
+  9: "თეთრი კარკასი",
+  10: "სარემონტო",
+  11: "მიმდინარე რემონტი",
+  12: "ძველი რემონტით",
+  15: "გარემონტებული",
   16: "ახალი რემონტით",
-  35: "გარემონტებული",
+  35: "მწვანე კარკასი",
 };
 
-/** Bathroom count (field `toilet`). */
+/**
+ * Bathroom count (field `toilet`). Verified against ss.ge localization
+ * dictionary (Toilet{ID}).
+ */
 export const SSGE_TOILET: Record<number, string> = {
   418: "1",
   419: "2",
   420: "3",
-  421: "3+",
-  422: "საერთო",
+  421: "4",
+  422: "5+",
+  423: "არ აქვს",
 };
 
-/** Project type (field `project`). Partial map — extend as verified. */
+/**
+ * Project type (field `project`). Numeric ids verified against ss.ge
+ * localization dictionary (ProjectType{ID}) — do NOT reorder without
+ * re-checking; ss.ge's ids are non-sequential and easy to scramble.
+ */
 export const SSGE_PROJECT_TYPE: Record<number, string> = {
-  4: "ლუქსი",
-  5: "დუპლექსი",
-  17: "კავკასიური",
-  18: "თბილისური ეზო",
-  19: "მოსკოვის",
-  20: "ქალაქური",
-  25: "ჩეხური",
-  26: "ხრუშჩოვის",
-  27: "ვერსი",
-  28: "იყალთოს",
+  4: "არასტანდარტული",
+  5: "ყავლაშვილის",
+  17: "ლენინგრადის",
+  18: "ლვოვის",
+  19: "კიევი",
+  20: "თბილისური ეზო",
+  25: "მოსკოვის",
+  26: "ქალაქური",
+  27: "ჩეხური",
+  28: "ხრუშჩოვის",
   29: "თუხარელის",
-  30: "მერონიშენი",
-  36: "არასტანდარტული",
-  38: "კიევლების",
+  30: "ვეძისი",
+  36: "იუგოსლავიის",
+  38: "მეტრომშენის",
 };
 
 export const SSGE_LAND_TYPE: Record<number, string> = {

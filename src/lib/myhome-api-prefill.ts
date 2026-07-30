@@ -38,6 +38,11 @@ import {
   noopPrefillReporter,
   type PrefillReporter,
 } from "@/lib/prefill-progress";
+import {
+  DEFAULT_PROJECT_TYPE,
+  mapLandPlotStatusForMyhome,
+  resolveProjectTypeCanonical,
+} from "@/lib/ssge-mappings";
 
 const AUTH_URL = "https://accounts.tnet.ge/api/ka/user/auth";
 const API_BASE = "https://api-statements.tnet.ge";
@@ -272,6 +277,48 @@ function appendIf(form: FormData, key: string, value: string | number | undefine
   form.append(key, s);
 }
 
+function normalizeStatusToken(value: string | undefined): string {
+  const s = (value || "").trim();
+  if (!s || s === "-" || s === "—") return "";
+  return s;
+}
+
+function resolveStatusIdForCreate(
+  listing: MyhomeListing,
+  raw: Record<string, string>
+): number | undefined {
+  const landRaw = normalizeStatusToken(raw["მიწის ნაკვეთი"]);
+  const landMapped = landRaw ? mapLandPlotStatusForMyhome(landRaw) : "";
+
+  const candidates = [
+    normalizeStatusToken(listing.buildingStatus),
+    normalizeStatusToken(raw["სტატუსი"]),
+    landMapped,
+    landRaw,
+  ].filter(Boolean);
+
+  for (const candidate of candidates) {
+    const id = reverseMaps.status(candidate);
+    if (id) return id;
+  }
+  return undefined;
+}
+
+function resolveProjectTypeIdForCreate(
+  listing: MyhomeListing,
+  raw: Record<string, string>
+): number | undefined {
+  const canonical = resolveProjectTypeCanonical(
+    listing.projectType || "",
+    raw
+  );
+  const normalized = canonical || DEFAULT_PROJECT_TYPE;
+  return (
+    reverseMaps.projectType(normalized) ||
+    reverseMaps.projectType(DEFAULT_PROJECT_TYPE)
+  );
+}
+
 function buildCreateForm(
   listing: MyhomeListing,
   location: NonNullable<Awaited<ReturnType<typeof resolveMyhomeLocationIds>>>,
@@ -302,12 +349,10 @@ function buildCreateForm(
     form.append(`parameters[${i}]`, String(id));
   });
 
-  const statusId = reverseMaps.status(listing.buildingStatus || raw["სტატუსი"] || "");
+  const statusId = resolveStatusIdForCreate(listing, raw);
   if (statusId) appendIf(form, "status_id", statusId);
 
-  const projectId = reverseMaps.projectType(
-    listing.projectType || raw["პროექტი"] || raw["პროექტის ტიპი"] || ""
-  );
+  const projectId = resolveProjectTypeIdForCreate(listing, raw);
   if (projectId) appendIf(form, "project_type_id", projectId);
 
   if (!isLand) {

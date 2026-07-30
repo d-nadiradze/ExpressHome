@@ -43,6 +43,14 @@ interface StreetRow {
 
 const TBILISI_STREETS = tbilisiStreets as StreetRow[];
 
+interface LocationSuggestion {
+  id?: number;
+  location_id?: number;
+  name?: string;
+  display_name?: string;
+  locations?: string[];
+}
+
 function streetScore(want: string, candidate: string): number {
   return scoreStreetNameMatch(want, candidate);
 }
@@ -67,6 +75,47 @@ function districtHint(listing: MyhomeListing): string {
     resolveListingDistrict(listing) ||
     ""
   ).trim();
+}
+
+function normalizeForMatch(value: string): string {
+  return value.toLowerCase().replace(/\s+/g, " ").trim();
+}
+
+function suggestionLocationId(item: LocationSuggestion): number | undefined {
+  const raw = item.location_id ?? item.id;
+  return typeof raw === "number" && Number.isFinite(raw) ? raw : undefined;
+}
+
+function suggestionText(item: LocationSuggestion): string {
+  const parts = [
+    item.display_name,
+    item.name,
+    ...(Array.isArray(item.locations) ? item.locations : []),
+  ]
+    .map((v) => (typeof v === "string" ? v.trim() : ""))
+    .filter(Boolean);
+  return normalizeForMatch(parts.join(" "));
+}
+
+function pickBestSuggestionLocationId(
+  items: LocationSuggestion[],
+  query: string
+): number | undefined {
+  if (!items.length) return undefined;
+  const q = normalizeForMatch(query);
+
+  if (q) {
+    // Prefer an exact/near-exact location text match for "village-like" inputs
+    // (e.g. "ქვემო თელეთი"), otherwise we often pick unrelated "ქვემო ..." rows.
+    const exact = items.find((item) => {
+      const text = suggestionText(item);
+      return text === q || text.includes(`, ${q}`) || text.includes(` ${q}`);
+    });
+    const exactId = exact ? suggestionLocationId(exact) : undefined;
+    if (exactId) return exactId;
+  }
+
+  return items.map(suggestionLocationId).find((id): id is number => Boolean(id));
 }
 
 function resolveFromTbilisiJson(
@@ -126,24 +175,28 @@ async function resolveLocationId(
 ): Promise<number | undefined> {
   try {
     const q = encodeURIComponent(cityName || "თბილისი");
-    const cities = await fetchJson<{
-      data?: Array<{ id: number; display_name?: string; name?: string }>;
-    }>(`${LOCATIONS_API}/suggestions?q=${q}&with_visible_in_cities=1`);
+    const cities = await fetchJson<{ data?: LocationSuggestion[] }>(
+      `${LOCATIONS_API}/suggestions?q=${q}&with_visible_in_cities=1`
+    );
 
     const items = cities.data ?? [];
     const urbanNeedle = (urbanName || districtName).toLowerCase();
     for (const item of items) {
-      const label = (item.display_name || item.name || "").toLowerCase();
-      if (urbanNeedle && label.includes(urbanNeedle)) return item.id;
+      const label = suggestionText(item);
+      if (urbanNeedle && label.includes(urbanNeedle)) {
+        const id = suggestionLocationId(item);
+        if (id) return id;
+      }
     }
-    if (items[0]?.id) return items[0].id;
+    const fallbackByCity = pickBestSuggestionLocationId(items, cityName);
+    if (fallbackByCity) return fallbackByCity;
 
     if (districtName) {
       const dq = encodeURIComponent(districtName);
-      const districts = await fetchJson<{ data?: Array<{ id: number }> }>(
+      const districts = await fetchJson<{ data?: LocationSuggestion[] }>(
         `${LOCATIONS_API}/suggestions?q=${dq}&with_visible_in_cities=1`
       );
-      return districts.data?.[0]?.id;
+      return pickBestSuggestionLocationId(districts.data ?? [], districtName);
     }
   } catch (e) {
     console.warn("[myhome-api-location] suggestions lookup failed:", e);
@@ -159,6 +212,8 @@ export async function resolveMyhomeLocationIds(
     listing.street,
     listing.rawData?.["ქუჩა"],
     listing.address,
+    city,
+    listing.rawData?.["მდებარეობა"],
   ]);
   if (!street) return null;
 
@@ -185,10 +240,13 @@ export async function resolveMyhomeLocationIds(
   // Fallback: live streets API (non-Tbilisi or unknown street)
   try {
     const cityQ = encodeURIComponent(city || "თბილისი");
-    const locRes = await fetchJson<{ data?: Array<{ id: number }> }>(
+    const locRes = await fetchJson<{ data?: LocationSuggestion[] }>(
       `${LOCATIONS_API}/suggestions?q=${cityQ}&with_visible_in_cities=1`
     );
-    const locationId = locRes.data?.[0]?.id;
+    const locationId = pickBestSuggestionLocationId(
+      locRes.data ?? [],
+      city || listing.rawData?.["მდებარეობა"] || ""
+    );
     if (!locationId) return null;
 
     const streetQ = encodeURIComponent(street);

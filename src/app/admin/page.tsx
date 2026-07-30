@@ -17,6 +17,12 @@ interface AdminUser {
   aiTokenLimitMonth: number | null;
   createdAt: string;
   _count: { parsedListings: number };
+  listingStats?: {
+    total: number;
+    inRange: number;
+    firstUploadAt: string | null;
+    lastUploadAt: string | null;
+  };
   myhomeAccount: { myhomeEmail: string; isVerified: boolean } | null;
   aiTokenUsage: { hour: number; day: number; month: number };
 }
@@ -37,6 +43,11 @@ export default function AdminPage() {
   const [total, setTotal] = useState(0);
   const [loading, setLoading] = useState(true);
   const [showCreateModal, setShowCreateModal] = useState(false);
+  const [rangeType, setRangeType] = useState<"all" | "days" | "months" | "custom">("all");
+  const [rangeDays, setRangeDays] = useState("30");
+  const [rangeMonths, setRangeMonths] = useState("1");
+  const [customStart, setCustomStart] = useState("");
+  const [customEnd, setCustomEnd] = useState("");
 
   // Create user form state
   const [newEmail, setNewEmail] = useState("");
@@ -51,18 +62,127 @@ export default function AdminPage() {
   const [limitMonth, setLimitMonth] = useState("");
   const [savingLimits, setSavingLimits] = useState(false);
 
+  const [editUser, setEditUser] = useState<AdminUser | null>(null);
+  const [editName, setEditName] = useState("");
+  const [editEmail, setEditEmail] = useState("");
+  const [editPassword, setEditPassword] = useState("");
+  const [savingEdit, setSavingEdit] = useState(false);
+
+  const rangeListingSum = users.reduce(
+    (sum, user) => sum + (user.listingStats?.inRange ?? user._count.parsedListings),
+    0
+  );
+  const totalListingSum = users.reduce(
+    (sum, user) => sum + (user.listingStats?.total ?? user._count.parsedListings),
+    0
+  );
+
+  const getListingDateRange = useCallback((): { start?: string; end?: string } => {
+    if (rangeType === "all") return {};
+
+    const now = new Date();
+    if (rangeType === "days") {
+      const days = Number.parseInt(rangeDays, 10);
+      if (!Number.isFinite(days) || days <= 0) return {};
+      const start = new Date(now);
+      start.setDate(start.getDate() - days);
+      return { start: start.toISOString() };
+    }
+
+    if (rangeType === "months") {
+      const months = Number.parseInt(rangeMonths, 10);
+      if (!Number.isFinite(months) || months <= 0) return {};
+      const start = new Date(now);
+      start.setMonth(start.getMonth() - months);
+      return { start: start.toISOString() };
+    }
+
+    if (rangeType === "custom") {
+      if (!customStart && !customEnd) return {};
+      const range: { start?: string; end?: string } = {};
+      if (customStart) range.start = new Date(customStart).toISOString();
+      if (customEnd) {
+        const end = new Date(customEnd);
+        end.setHours(23, 59, 59, 999);
+        range.end = end.toISOString();
+      }
+      return range;
+    }
+
+    return {};
+  }, [rangeType, rangeDays, rangeMonths, customStart, customEnd]);
+
   const fetchUsers = useCallback(async () => {
     setLoading(true);
-    const res = await fetch("/api/admin/users");
+    const params = new URLSearchParams();
+    const listingRange = getListingDateRange();
+    if (listingRange.start) params.set("listingStart", listingRange.start);
+    if (listingRange.end) params.set("listingEnd", listingRange.end);
+
+    const query = params.toString();
+    const res = await fetch(`/api/admin/users${query ? `?${query}` : ""}`);
     const data = await res.json();
+    if (!res.ok) {
+      toast.error(data.error || "Failed to load users");
+      setLoading(false);
+      return;
+    }
     setUsers(data.users || []);
     setTotal(data.total || 0);
     setLoading(false);
-  }, []);
+  }, [getListingDateRange]);
 
   useEffect(() => {
     fetchUsers();
   }, [fetchUsers]);
+
+  function openEditModal(user: AdminUser) {
+    setEditUser(user);
+    setEditName(user.name ?? "");
+    setEditEmail(user.email);
+    setEditPassword("");
+  }
+
+  function closeEditModal() {
+    setEditUser(null);
+    setEditName("");
+    setEditEmail("");
+    setEditPassword("");
+  }
+
+  async function handleSaveUser(e: React.FormEvent) {
+    e.preventDefault();
+    if (!editUser) return;
+
+    setSavingEdit(true);
+    const payload: Record<string, string> = {
+      name: editName.trim(),
+      email: editEmail.trim(),
+    };
+    if (editPassword.trim()) payload.password = editPassword;
+
+    const res = await fetch(`/api/admin/users/${editUser.id}`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(payload),
+    });
+    const data = await res.json();
+
+    if (!res.ok) {
+      toast.error(data.error || "Failed to update user");
+      setSavingEdit(false);
+      return;
+    }
+
+    toast.success("User updated");
+    setUsers((prev) =>
+      prev.map((u) =>
+        u.id === editUser.id ? { ...u, name: data.user.name, email: data.user.email } : u
+      )
+    );
+    closeEditModal();
+    setSavingEdit(false);
+  }
 
   async function handleRoleChange(userId: string, userRole: Role) {
     const res = await fetch(`/api/admin/users/${userId}`, {
@@ -215,6 +335,101 @@ export default function AdminPage() {
         </button>
       </div>
 
+      <div className="card p-4">
+        <div className="flex flex-wrap items-end gap-3">
+          <div>
+            <label className="block text-xs font-medium text-slate-500 dark:text-slate-400 mb-1">
+              Listing range
+            </label>
+            <select
+              value={rangeType}
+              onChange={(e) => setRangeType(e.target.value as "all" | "days" | "months" | "custom")}
+              className="input min-w-[180px]"
+            >
+              <option value="all">All time</option>
+              <option value="days">Last N days</option>
+              <option value="months">Last N months</option>
+              <option value="custom">Custom dates</option>
+            </select>
+          </div>
+
+          {rangeType === "days" && (
+            <div>
+              <label className="block text-xs font-medium text-slate-500 dark:text-slate-400 mb-1">
+                Days
+              </label>
+              <input
+                type="number"
+                min={1}
+                className="input w-28"
+                value={rangeDays}
+                onChange={(e) => setRangeDays(e.target.value)}
+              />
+            </div>
+          )}
+
+          {rangeType === "months" && (
+            <div>
+              <label className="block text-xs font-medium text-slate-500 dark:text-slate-400 mb-1">
+                Months
+              </label>
+              <input
+                type="number"
+                min={1}
+                className="input w-28"
+                value={rangeMonths}
+                onChange={(e) => setRangeMonths(e.target.value)}
+              />
+            </div>
+          )}
+
+          {rangeType === "custom" && (
+            <>
+              <div>
+                <label className="block text-xs font-medium text-slate-500 dark:text-slate-400 mb-1">
+                  From
+                </label>
+                <input
+                  type="date"
+                  className="input"
+                  value={customStart}
+                  onChange={(e) => setCustomStart(e.target.value)}
+                />
+              </div>
+              <div>
+                <label className="block text-xs font-medium text-slate-500 dark:text-slate-400 mb-1">
+                  To
+                </label>
+                <input
+                  type="date"
+                  className="input"
+                  value={customEnd}
+                  onChange={(e) => setCustomEnd(e.target.value)}
+                />
+              </div>
+            </>
+          )}
+
+          <button type="button" onClick={fetchUsers} className="btn-secondary">
+            Apply
+          </button>
+        </div>
+        <div className="mt-4 flex items-center gap-6">
+          <div>
+            <p className="text-xs text-slate-500 dark:text-slate-400">Range sum</p>
+            <p className="text-lg font-semibold tabular-nums text-slate-900 dark:text-slate-100">
+              {rangeListingSum.toLocaleString()}
+            </p>
+          </div>
+          <div>
+            <p className="text-xs text-slate-500 dark:text-slate-400">Total sum</p>
+            <p className="text-lg font-semibold tabular-nums text-slate-900 dark:text-slate-100">
+              {totalListingSum.toLocaleString()}
+            </p>
+          </div>
+        </div>
+      </div>
+
       {/* Users table */}
       <div className="card p-0 overflow-hidden">
         <div className="overflow-x-auto">
@@ -242,7 +457,9 @@ export default function AdminPage() {
                 <th className="text-left px-6 py-3 text-xs font-medium text-gray-500 dark:text-slate-400 uppercase tracking-wider">
                   Joined
                 </th>
-                <th className="px-6 py-3" />
+                <th className="text-left px-6 py-3 text-xs font-medium text-gray-500 dark:text-slate-400 uppercase tracking-wider">
+                  Actions
+                </th>
               </tr>
             </thead>
             <tbody className="divide-y divide-slate-100 dark:divide-slate-800">
@@ -300,7 +517,9 @@ export default function AdminPage() {
                       )}
                     </td>
                     <td className="px-6 py-4">
-                      <span className="text-sm text-muted tabular-nums">{user._count.parsedListings}</span>
+                      <p className="text-sm font-medium tabular-nums text-slate-900 dark:text-slate-100">
+                        {user.listingStats?.inRange ?? user._count.parsedListings}
+                      </p>
                     </td>
                     <td className="px-6 py-4">
                       <div className="space-y-1">
@@ -332,12 +551,20 @@ export default function AdminPage() {
                       {new Date(user.createdAt).toLocaleDateString()}
                     </td>
                     <td className="px-6 py-4">
-                      <button
-                        onClick={() => handleDelete(user.id, user.email)}
-                        className="text-red-600 hover:text-red-700 dark:text-red-400 dark:hover:text-red-300 text-sm"
-                      >
-                        Delete
-                      </button>
+                      <div className="flex items-center gap-3">
+                        <button
+                          onClick={() => openEditModal(user)}
+                          className="text-blue-600 hover:text-blue-700 dark:text-blue-400 dark:hover:text-blue-300 text-sm"
+                        >
+                          Edit
+                        </button>
+                        <button
+                          onClick={() => handleDelete(user.id, user.email)}
+                          className="text-red-600 hover:text-red-700 dark:text-red-400 dark:hover:text-red-300 text-sm"
+                        >
+                          Delete
+                        </button>
+                      </div>
                     </td>
                   </tr>
                 ))
@@ -422,6 +649,63 @@ export default function AdminPage() {
       )}
 
       {/* AI token limits modal */}
+      {editUser && (
+        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
+          <div className="card shadow-xl w-full max-w-md p-6">
+            <h2 className="text-lg font-semibold text-slate-900 dark:text-slate-50 mb-1">
+              Edit user
+            </h2>
+            <p className="text-sm text-slate-500 dark:text-slate-400 mb-4">
+              Update private account information
+            </p>
+
+            <form onSubmit={handleSaveUser} className="space-y-4">
+              <div>
+                <label className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-1">Name</label>
+                <input
+                  type="text"
+                  className="input"
+                  value={editName}
+                  onChange={(e) => setEditName(e.target.value)}
+                />
+              </div>
+              <div>
+                <label className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-1">Email *</label>
+                <input
+                  type="email"
+                  className="input"
+                  value={editEmail}
+                  onChange={(e) => setEditEmail(e.target.value)}
+                  required
+                />
+              </div>
+              <div>
+                <label className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-1">
+                  New password
+                </label>
+                <input
+                  type="password"
+                  className="input"
+                  value={editPassword}
+                  onChange={(e) => setEditPassword(e.target.value)}
+                  placeholder="Leave blank to keep current password"
+                  minLength={8}
+                />
+              </div>
+
+              <div className="flex gap-3 pt-2">
+                <button type="button" onClick={closeEditModal} className="btn-secondary flex-1">
+                  Cancel
+                </button>
+                <button type="submit" className="btn-primary flex-1" disabled={savingEdit}>
+                  {savingEdit ? "Saving..." : "Save"}
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
       {limitsUser && (
         <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
           <div className="card shadow-xl w-full max-w-md p-6">
