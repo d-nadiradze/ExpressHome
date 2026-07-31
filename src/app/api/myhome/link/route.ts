@@ -2,6 +2,8 @@ import { NextRequest, NextResponse } from "next/server";
 import { db } from "@/lib/db";
 import { encrypt } from "@/lib/encryption";
 import { loginToMyhome } from "@/lib/myhome-parser";
+import { LimiterBusyError } from "@/lib/concurrency-limit";
+import { browserLoginLimiter } from "@/lib/server-limits";
 
 // GET: check if user has linked myhome account
 export async function GET(request: NextRequest) {
@@ -32,7 +34,9 @@ export async function POST(request: NextRequest) {
     }
 
     // Verify credentials by attempting login
-    const loginResult = await loginToMyhome({ email, password });
+    const loginResult = await browserLoginLimiter().run(() =>
+      loginToMyhome({ email, password })
+    );
 
     if (!loginResult.success) {
       return NextResponse.json(
@@ -63,6 +67,12 @@ export async function POST(request: NextRequest) {
 
     return NextResponse.json({ success: true, message: "Myhome account linked successfully" });
   } catch (error) {
+    if (error instanceof LimiterBusyError) {
+      return NextResponse.json(
+        { error: "Another account verification is in progress. Please try again shortly." },
+        { status: 503 }
+      );
+    }
     console.error("Link account error:", error);
     return NextResponse.json({ error: "Internal server error" }, { status: 500 });
   }

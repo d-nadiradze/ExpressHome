@@ -1,6 +1,5 @@
 import "@/lib/esbuild-shim";
 import {
-  chromium,
   type Browser,
   type BrowserContext,
   type Locator,
@@ -35,8 +34,8 @@ import { blockParseResources, getParseBrowser } from "@/lib/parse-browser";
 import {
   closeBrowserSession,
   isMyhomePrefillHeadless,
+  launchTrackedBrowser,
   prefillSessionTtlMs,
-  registerBrowser,
   shouldReusePrefillSession,
 } from "@/lib/browser-lifecycle";
 import { resolveListingDistrict } from "@/lib/parser-districts";
@@ -91,7 +90,7 @@ export interface MyhomeCredentials {
   password: string;
 }
 
-/** Reused visible browser session so repeat pre-fills skip login (~5–15s). */
+/** Idle headed session for optional reuse — never hold in-flight job browsers here. */
 let postSession: {
   email: string;
   browser: Browser;
@@ -100,6 +99,7 @@ let postSession: {
 
 let postSessionIdleTimer: ReturnType<typeof setTimeout> | null = null;
 
+/** Close the idle reusable session only (not an in-flight prefill browser). */
 export async function closeMyhomePostSession(): Promise<void> {
   if (postSessionIdleTimer) {
     clearTimeout(postSessionIdleTimer);
@@ -9525,6 +9525,8 @@ export async function createMyhomePost(
     userId: string;
     sourceUrl?: string | null;
     reporter?: PrefillReporter;
+    /** Registers a closer for this job's browser (cancel must not touch other jobs). */
+    bindSessionClose?: (close: () => Promise<void>) => void;
   }
 ): Promise<{ success: boolean; postUrl?: string; error?: string }> {
   const reporter = options.reporter ?? noopPrefillReporter;
@@ -9552,8 +9554,14 @@ export async function createMyhomePost(
   let page: Page;
 
   if (reuseSession && postSession) {
+    // Claim idle session so concurrent jobs cannot close it via closeMyhomePostSession.
     browser = postSession.browser;
     context = postSession.context;
+    postSession = null;
+    if (postSessionIdleTimer) {
+      clearTimeout(postSessionIdleTimer);
+      postSessionIdleTimer = null;
+    }
     for (const p of context.pages()) await p.close().catch(() => {});
     page = await context.newPage();
     await ensureBrowserEvaluateShim(page);
@@ -9561,19 +9569,17 @@ export async function createMyhomePost(
   } else {
     reporter.step("browser");
     await closeMyhomePostSession();
-    browser = registerBrowser(
-      await chromium.launch({
-        headless,
-        args: [
-          "--no-sandbox",
-          "--disable-setuid-sandbox",
-          "--disable-dev-shm-usage",
-          "--disable-gpu",
-          "--disable-crash-reporter",
-          ...(headless ? ["--window-size=1920,1080"] : ["--start-maximized"]),
-        ],
-      })
-    );
+    browser = await launchTrackedBrowser({
+      headless,
+      args: [
+        "--no-sandbox",
+        "--disable-setuid-sandbox",
+        "--disable-dev-shm-usage",
+        "--disable-gpu",
+        "--disable-crash-reporter",
+        ...(headless ? ["--window-size=1920,1080"] : ["--start-maximized"]),
+      ],
+    });
     context = await browser.newContext({
       userAgent:
         "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
@@ -9596,9 +9602,10 @@ export async function createMyhomePost(
     });
     await addBrowserEvaluateShim(context);
     page = await context.newPage();
-    postSession = { email: credentials.email, browser, context };
     reporter.stepDone("browser");
   }
+
+  options.bindSessionClose?.(() => closeBrowserSession(browser, context));
 
   try {
     if (listing.rawData) {
@@ -9795,11 +9802,15 @@ export async function createMyhomePost(
 
     return { success: true, postUrl };
   } catch (error) {
-    const msg = error instanceof Error ? error.message : "Failed to create post";
+    let msg = error instanceof Error ? error.message : "Failed to create post";
+    if (/Target page, context or browser has been closed/i.test(msg)) {
+      msg =
+        "Browser closed during prefill (another concurrent job, cancel, or the window was closed)";
+    }
     reporter.log("error", msg);
     return {
       success: false,
-      error: error instanceof Error ? error.message : "Failed to create post",
+      error: msg,
     };
   } finally {
     if (capture) {
@@ -9809,13 +9820,11 @@ export async function createMyhomePost(
     // Capturing forces a context close so recordHar flushes its file to disk.
     if (headless || captureEnabled || !shouldReusePrefillSession()) {
       await closeBrowserSession(browser, context);
-      if (postSession?.browser === browser) {
-        postSession = null;
-      }
       if (captureEnabled) {
         console.log(`[myhome-capture] HAR written -> ${harPathFor(captureStamp)}`);
       }
-    } else {
+    } else if (browser.isConnected()) {
+      postSession = { email: credentials.email, browser, context };
       scheduleMyhomePostSessionIdleClose();
     }
   }

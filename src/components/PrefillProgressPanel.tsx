@@ -3,6 +3,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import toast from "react-hot-toast";
 import { defaultPrefillSteps } from "@/lib/prefill-steps";
+import { pollFetch } from "@/lib/poll-fetch";
 
 type PrefillPlatform = "myhome" | "ssge";
 type PrefillJobStatus = "queued" | "running" | "success" | "failed" | "partial";
@@ -146,12 +147,14 @@ export default function PrefillProgressPanel({
     let cancelled = false;
     let intervalId: ReturnType<typeof setInterval> | null = null;
     let completed = false;
+    let inFlight = false;
 
     async function tick() {
-      if (cancelled || completed) return;
+      if (cancelled || completed || inFlight) return;
+      inFlight = true;
 
       try {
-        const res = await fetch(
+        const res = await pollFetch(
           `/api/prefill/status?jobId=${encodeURIComponent(jobId)}`
         );
 
@@ -188,6 +191,8 @@ export default function PrefillProgressPanel({
         }
       } catch {
         // transient — keep polling until terminal or unmount
+      } finally {
+        inFlight = false;
       }
     }
 

@@ -142,6 +142,10 @@ const prefillWorker = new Worker<PrefillJobData>(
     connection: redisConnection,
     concurrency: PREFILL_CONCURRENCY,
     lockDuration: 600_000, // 10 min max per prefill
+    // A prefill may already have created/published a listing before its lock
+    // lapsed, so never re-run it: that would double-post and launch a second
+    // browser on a host that is evidently already struggling.
+    maxStalledCount: 0,
   }
 );
 

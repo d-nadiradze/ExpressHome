@@ -7,6 +7,7 @@
  * The worker handles ss.ge parse jobs and all prefill jobs.
  */
 import { getParseQueue } from "@/lib/bullmq-queue";
+import { myhomeParseLimiter } from "@/lib/server-limits";
 import { isValidSsgeUrl } from "@/lib/utils";
 
 interface ParseJob {
@@ -34,7 +35,7 @@ export function enqueueParseJob(job: ParseJob): void {
       userId: job.userId,
     });
   } else {
-    void runMyhomeParseInProcess(job);
+    void myhomeParseLimiter().run(() => runMyhomeParseInProcess(job));
   }
 }
 

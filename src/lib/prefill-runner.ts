@@ -84,9 +84,10 @@ export async function runMyhomePrefillJob(jobId: string, listingId: string, user
   // Cancelled while waiting in the queue but picked up before removal
   if (await isPrefillCancelled(jobId)) return;
 
+  let closeJobSession: (() => Promise<void>) | undefined;
   const { reporter, dispose, isCancelled } = createCancellablePrefillReporter(
     jobId,
-    () => closeMyhomePostSession()
+    () => closeJobSession?.() ?? closeMyhomePostSession()
   );
   await markPrefillRunning(jobId);
 
@@ -120,6 +121,9 @@ export async function runMyhomePrefillJob(jobId: string, listingId: string, user
       userId,
       sourceUrl: listing.sourceUrl,
       reporter,
+      bindSessionClose: (close: () => Promise<void>) => {
+        closeJobSession = close;
+      },
     };
 
     let result: { success: boolean; postUrl?: string; error?: string };
@@ -142,7 +146,7 @@ export async function runMyhomePrefillJob(jobId: string, listingId: string, user
 
     if (!result.success) {
       if (isCancelled() || result.error === "Prefill cancelled by user") {
-        await closeMyhomePostSession();
+        await (closeJobSession?.() ?? closeMyhomePostSession());
         return;
       }
       await db.parsedListing.update({
@@ -163,7 +167,7 @@ export async function runMyhomePrefillJob(jobId: string, listingId: string, user
     await completePrefillJob(jobId, result.postUrl);
   } catch (error) {
     if (error instanceof PrefillCancelledError || isCancelled()) {
-      await closeMyhomePostSession();
+      await (closeJobSession?.() ?? closeMyhomePostSession());
       return;
     }
     await db.parsedListing
@@ -185,9 +189,10 @@ export async function runSsgePrefillJob(jobId: string, listingId: string, userId
   // Cancelled while waiting in the queue but picked up before removal
   if (await isPrefillCancelled(jobId)) return;
 
+  let closeJobSession: (() => Promise<void>) | undefined;
   const { reporter, dispose, isCancelled } = createCancellablePrefillReporter(
     jobId,
-    () => closeSsgePostSession()
+    () => closeJobSession?.() ?? closeSsgePostSession()
   );
   await markPrefillRunning(jobId);
 
@@ -218,6 +223,7 @@ export async function runSsgePrefillJob(jobId: string, listingId: string, userId
         : "Queued — starting ss.ge browser prefill"
     );
     if (useApi) {
+      // Only clears an idle headed reuse session — not another job's in-flight browser.
       await closeSsgePostSession();
     }
 
@@ -228,6 +234,9 @@ export async function runSsgePrefillJob(jobId: string, listingId: string, userId
       userId,
       sourceUrl: listing.sourceUrl,
       reporter,
+      bindSessionClose: (close: () => Promise<void>) => {
+        closeJobSession = close;
+      },
     };
 
     let result;
@@ -260,7 +269,7 @@ export async function runSsgePrefillJob(jobId: string, listingId: string, userId
 
     if (!result.success) {
       if (isCancelled() || result.error === "Prefill cancelled by user") {
-        await closeSsgePostSession();
+        await (closeJobSession?.() ?? closeSsgePostSession());
         return;
       }
       await db.parsedListing.update({
@@ -281,7 +290,7 @@ export async function runSsgePrefillJob(jobId: string, listingId: string, userId
     await completePrefillJob(jobId, result.postUrl);
   } catch (error) {
     if (error instanceof PrefillCancelledError || isCancelled()) {
-      await closeSsgePostSession();
+      await (closeJobSession?.() ?? closeSsgePostSession());
       return;
     }
     await db.parsedListing

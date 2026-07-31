@@ -1,6 +1,5 @@
 import "@/lib/esbuild-shim";
 import {
-  chromium,
   type Browser,
   type BrowserContext,
   type Locator,
@@ -23,8 +22,8 @@ import {
   closeBrowserSession,
   isSsgeApiAuthHeadless,
   isSsgePrefillHeadless,
+  launchTrackedBrowser,
   prefillSessionTtlMs,
-  registerBrowser,
   shouldReusePrefillSession,
 } from "@/lib/browser-lifecycle";
 import { resolveImagesForPlaywright } from "@/lib/listing-images";
@@ -134,19 +133,13 @@ async function clickSsgeSignInButton(page: Page): Promise<boolean> {
 
 /** Open account login through home.ss.ge NextAuth (preserves OAuth callback). */
 async function openSsgeLoginViaNextAuth(page: Page): Promise<void> {
-  if (!page.url().includes("home.ss.ge")) {
+  if (!page.url().includes("home.ss.ge") || !page.url().includes("/create")) {
     await page.goto(SSGE_CREATE_URL, {
-      waitUntil: "load",
+      waitUntil: "domcontentloaded",
       timeout: 45000,
     });
-  } else if (!page.url().includes("/create")) {
-    await page.goto(SSGE_CREATE_URL, {
-      waitUntil: "load",
-      timeout: 45000,
-    });
-  } else {
-    await page.waitForLoadState("load", { timeout: 15000 }).catch(() => null);
   }
+  await page.waitForLoadState("load", { timeout: 15000 }).catch(() => null);
   await prefillPause(page, 1500);
 
   if (!(await clickSsgeSignInButton(page))) {
@@ -156,12 +149,7 @@ async function openSsgeLoginViaNextAuth(page: Page): Promise<void> {
     }
   }
 
-  await page.waitForURL(
-    (url) =>
-      url.href.includes("account.ss.ge") &&
-      (url.href.includes("/login") || url.href.includes("/Login")),
-    { timeout: 20000 }
-  );
+  await page.waitForURL((url) => isSsgeLoginPage(url.href), { timeout: 20000 });
 }
 
 /** NextAuth entry on create, or direct account login if the sign-in button is missing. */
@@ -173,14 +161,21 @@ async function gotoSsgeAccountLogin(page: Page): Promise<void> {
     /* fall through to direct login URL */
   }
 
+  // The account page renders its login card from JS, so `load` can hang on
+  // third-party assets long after the form is usable.
   const loginUrl = `${SSGE_ACCOUNT_LOGIN_URL}?returnUrl=${encodeURIComponent(SSGE_CREATE_URL)}`;
-  await page.goto(loginUrl, { waitUntil: "load", timeout: 30000 });
+  await page.goto(loginUrl, { waitUntil: "domcontentloaded", timeout: 30000 });
   if (isSsgeBrokenAccountUrl(page.url())) {
     await page.goto(SSGE_ACCOUNT_LOGIN_URL, {
-      waitUntil: "load",
+      waitUntil: "domcontentloaded",
       timeout: 30000,
     });
   }
+  await page
+    .locator('input[name="password"], input[type="password"]')
+    .first()
+    .waitFor({ state: "visible", timeout: 15000 })
+    .catch(() => null);
 }
 
 /** True after a successful sign-in (for account linking — wizard not required). */
@@ -262,7 +257,11 @@ function ssgeLoginFailureMessage(page: Page): string {
   return `ss.ge login failed — create form did not load (at ${page.url()})`;
 }
 
-/** Reused visible browser session so repeat pre-fills skip login. */
+/**
+ * Idle headed session kept only for optional reuse (PREFILL_REUSE_BROWSER).
+ * In-flight jobs must NOT store their browser here — concurrent prefills would
+ * call closeSsgePostSession() and kill another job mid-login.
+ */
 let postSession: {
   email: string;
   browser: Browser;
@@ -271,6 +270,7 @@ let postSession: {
 
 let postSessionIdleTimer: ReturnType<typeof setTimeout> | null = null;
 
+/** Close the idle reusable session only (not an in-flight prefill browser). */
 export async function closeSsgePostSession(): Promise<void> {
   if (postSessionIdleTimer) {
     clearTimeout(postSessionIdleTimer);
@@ -631,12 +631,10 @@ export async function loginToSsge(credentials: SsgeCredentials): Promise<{
   success: boolean;
   error?: string;
 }> {
-  const browser = registerBrowser(
-    await chromium.launch({
-      headless: true,
-      args: DOCKER_SAFE_CHROMIUM_ARGS,
-    })
-  );
+  const browser = await launchTrackedBrowser({
+    headless: true,
+    args: DOCKER_SAFE_CHROMIUM_ARGS,
+  });
   const context = await browser.newContext({
     userAgent: USER_AGENT,
     locale: "ka-GE",
@@ -669,12 +667,10 @@ export async function loginToSsge(credentials: SsgeCredentials): Promise<{
 export async function obtainSsgeApiAccessToken(
   credentials: SsgeCredentials
 ): Promise<{ success: boolean; accessToken?: string; error?: string }> {
-  const browser = registerBrowser(
-    await chromium.launch({
-      headless: isSsgeApiAuthHeadless(),
-      args: DOCKER_SAFE_CHROMIUM_ARGS,
-    })
-  );
+  const browser = await launchTrackedBrowser({
+    headless: isSsgeApiAuthHeadless(),
+    args: DOCKER_SAFE_CHROMIUM_ARGS,
+  });
   const context = await browser.newContext({
     userAgent: USER_AGENT,
     locale: "ka-GE",
@@ -2650,6 +2646,8 @@ export async function createSsgePost(
     userId: string;
     sourceUrl?: string | null;
     reporter?: PrefillReporter;
+    /** Registers a closer for this job's browser (cancel must not touch other jobs). */
+    bindSessionClose?: (close: () => Promise<void>) => void;
   }
 ): Promise<{ success: boolean; postUrl?: string; error?: string }> {
   const reporter = options.reporter ?? noopPrefillReporter;
@@ -2677,8 +2675,14 @@ export async function createSsgePost(
   let page: Page;
 
   if (reuseSession && postSession) {
+    // Claim idle session so concurrent jobs cannot close it via closeSsgePostSession.
     browser = postSession.browser;
     context = postSession.context;
+    postSession = null;
+    if (postSessionIdleTimer) {
+      clearTimeout(postSessionIdleTimer);
+      postSessionIdleTimer = null;
+    }
     for (const p of context.pages()) await p.close().catch(() => {});
     page = await context.newPage();
     await ensureBrowserEvaluateShim(page);
@@ -2686,15 +2690,13 @@ export async function createSsgePost(
   } else {
     reporter.step("browser");
     await closeSsgePostSession();
-    browser = registerBrowser(
-      await chromium.launch({
-        headless,
-        args: [
-          ...DOCKER_SAFE_CHROMIUM_ARGS,
-          ...(headless ? [] : ["--start-maximized"]),
-        ],
-      })
-    );
+    browser = await launchTrackedBrowser({
+      headless,
+      args: [
+        ...DOCKER_SAFE_CHROMIUM_ARGS,
+        ...(headless ? [] : ["--start-maximized"]),
+      ],
+    });
     context = await browser.newContext({
       userAgent: USER_AGENT,
       locale: "ka-GE",
@@ -2709,9 +2711,10 @@ export async function createSsgePost(
     await addBrowserEvaluateShim(context);
     page = await context.newPage();
     await ensureBrowserEvaluateShim(page);
-    postSession = { email: credentials.email, browser, context };
     reporter.stepDone("browser");
   }
+
+  options.bindSessionClose?.(() => closeBrowserSession(browser, context));
 
   const cleanups: Array<() => Promise<void>> = [];
 
@@ -3109,7 +3112,11 @@ export async function createSsgePost(
     );
     return { success: true, postUrl };
   } catch (error) {
-    const msg = error instanceof Error ? error.message : "Pre-fill failed";
+    let msg = error instanceof Error ? error.message : "Pre-fill failed";
+    if (/Target page, context or browser has been closed/i.test(msg)) {
+      msg =
+        "Browser closed during prefill (another concurrent job, cancel, or the window was closed)";
+    }
     reporter.log("error", msg);
     return {
       success: false,
@@ -3125,13 +3132,11 @@ export async function createSsgePost(
     }
     if (headless || captureEnabled || !shouldReusePrefillSession()) {
       await closeBrowserSession(browser, context);
-      if (postSession?.browser === browser) {
-        postSession = null;
-      }
       if (captureEnabled) {
         console.log(`[ssge-capture] HAR written -> ${ssgeHarPathFor(captureStamp)}`);
       }
-    } else {
+    } else if (browser.isConnected()) {
+      postSession = { email: credentials.email, browser, context };
       scheduleSsgePostSessionIdleClose();
     }
   }
