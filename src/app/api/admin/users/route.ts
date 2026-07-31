@@ -53,37 +53,37 @@ export async function GET(request: NextRequest) {
   ]);
 
   const userIds = users.map((u) => u.id);
-  const [dateRangeCounts, allTimeCounts, listingBounds] = await Promise.all([
-    db.parsedListing.groupBy({
-      by: ["userId"],
-      where: {
-        userId: { in: userIds },
-        ...(startDate || endDate
-          ? {
-              createdAt: {
-                ...(startDate ? { gte: startDate } : {}),
-                ...(endDate ? { lte: endDate } : {}),
-              },
-            }
-          : {}),
-      },
-      _count: { _all: true },
-    }),
+  const [listingBounds, dateRangeCounts] = await Promise.all([
     db.parsedListing.groupBy({
       by: ["userId"],
       where: { userId: { in: userIds } },
       _count: { _all: true },
-    }),
-    db.parsedListing.groupBy({
-      by: ["userId"],
-      where: { userId: { in: userIds } },
       _min: { createdAt: true },
       _max: { createdAt: true },
     }),
+    // Without a date filter the range count equals the all-time count, so the
+    // extra aggregation over parsed_listings is skipped.
+    startDate || endDate
+      ? db.parsedListing.groupBy({
+          by: ["userId"],
+          where: {
+            userId: { in: userIds },
+            createdAt: {
+              ...(startDate ? { gte: startDate } : {}),
+              ...(endDate ? { lte: endDate } : {}),
+            },
+          },
+          _count: { _all: true },
+        })
+      : null,
   ]);
 
-  const rangeCountMap = new Map(dateRangeCounts.map((row) => [row.userId, row._count._all]));
-  const allTimeCountMap = new Map(allTimeCounts.map((row) => [row.userId, row._count._all]));
+  const allTimeCountMap = new Map(
+    listingBounds.map((row) => [row.userId, row._count._all])
+  );
+  const rangeCountMap = dateRangeCounts
+    ? new Map(dateRangeCounts.map((row) => [row.userId, row._count._all]))
+    : allTimeCountMap;
   const boundsMap = new Map(
     listingBounds.map((row) => [
       row.userId,

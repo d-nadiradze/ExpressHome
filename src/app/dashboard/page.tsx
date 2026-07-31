@@ -8,38 +8,44 @@ export default async function DashboardPage() {
   const user = await getCurrentUser();
   if (!user) return null;
 
-  const listings = await db.parsedListing.findMany({
-    where: { userId: user.id },
-    orderBy: { createdAt: "desc" },
-    select: {
-      id: true,
-      title: true,
-      price: true,
-      currency: true,
-      description: true,
-      address: true,
-      area: true,
-      rooms: true,
-      floor: true,
-      totalFloors: true,
-      postStatus: true,
-      postUrl: true,
-      ssgePostStatus: true,
-      sourceUrl: true,
-      images: true,
-      rawData: true,
-      createdAt: true,
-    },
-  });
+  const [listings, statusCounts] = await Promise.all([
+    db.parsedListing.findMany({
+      where: { userId: user.id },
+      orderBy: { createdAt: "desc" },
+      select: {
+        id: true,
+        title: true,
+        price: true,
+        currency: true,
+        description: true,
+        address: true,
+        area: true,
+        rooms: true,
+        floor: true,
+        totalFloors: true,
+        postStatus: true,
+        postUrl: true,
+        ssgePostStatus: true,
+        sourceUrl: true,
+        images: true,
+        rawData: true,
+        createdAt: true,
+      },
+    }),
+    db.parsedListing.groupBy({
+      by: ["postStatus"],
+      where: { userId: user.id },
+      _count: { _all: true },
+    }),
+  ]);
+
+  const countFor = (status: string) =>
+    statusCounts.find((row) => row.postStatus === status)?._count._all ?? 0;
 
   const stats = {
-    total: await db.parsedListing.count({ where: { userId: user.id } }),
-    posted: await db.parsedListing.count({
-      where: { userId: user.id, postStatus: "POSTED" },
-    }),
-    pending: await db.parsedListing.count({
-      where: { userId: user.id, postStatus: "PENDING" },
-    }),
+    total: statusCounts.reduce((sum, row) => sum + row._count._all, 0),
+    posted: countFor("POSTED"),
+    pending: countFor("PENDING"),
   };
 
   const hasMyHomeAccount = !!user.myhomeAccount;

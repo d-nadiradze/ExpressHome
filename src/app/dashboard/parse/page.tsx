@@ -3,6 +3,7 @@
 import { useState, useEffect, useRef, useCallback } from "react";
 import { useRouter } from "next/navigation";
 import toast from "react-hot-toast";
+import { pollFetch } from "@/lib/poll-fetch";
 
 type ParseStatus = "idle" | "queued" | "parsing" | "done" | "failed";
 
@@ -13,6 +14,7 @@ export default function ParsePage() {
   const [queuePosition, setQueuePosition] = useState<number | null>(null);
   const pollingRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const listingIdRef = useRef<string | null>(null);
+  const pollInFlightRef = useRef(false);
 
   const stopPolling = useCallback(() => {
     if (pollingRef.current) {
@@ -23,10 +25,11 @@ export default function ParsePage() {
 
   const pollStatus = useCallback(async () => {
     const id = listingIdRef.current;
-    if (!id) return;
+    if (!id || pollInFlightRef.current) return;
+    pollInFlightRef.current = true;
 
     try {
-      const res = await fetch(`/api/myhome/parse/status?listingId=${id}`);
+      const res = await pollFetch(`/api/myhome/parse/status?listingId=${id}`);
       const data = await res.json();
 
       if (data.status === "PARSING") {
@@ -46,6 +49,8 @@ export default function ParsePage() {
       }
     } catch {
       // network error — keep polling
+    } finally {
+      pollInFlightRef.current = false;
     }
   }, [stopPolling, router]);
 

@@ -151,6 +151,11 @@ model ParsedListing {
 
   user User @relation(fields: [userId], references: [id], onDelete: Cascade)
 
+  // Every dashboard/admin query filters by userId; without these the whole
+  // table is scanned on each request and the app slows down as rows pile up.
+  @@index([userId, createdAt])
+  @@index([userId, postStatus])
+  @@index([userId, ssgePostStatus])
   @@map("parsed_listings")
 }
 

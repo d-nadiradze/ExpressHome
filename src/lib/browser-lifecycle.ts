@@ -1,15 +1,48 @@
-import type { Browser, BrowserContext } from "playwright";
+import {
+  chromium,
+  type Browser,
+  type BrowserContext,
+  type LaunchOptions,
+} from "playwright";
+import { chromiumLaunchLimiter } from "@/lib/server-limits";
 
 const activeBrowsers = new Set<Browser>();
+const slotReleases = new WeakMap<Browser, () => void>();
 
 function trackBrowser(browser: Browser): Browser {
   activeBrowsers.add(browser);
-  browser.once("disconnected", () => activeBrowsers.delete(browser));
+  browser.once("disconnected", () => {
+    activeBrowsers.delete(browser);
+    const release = slotReleases.get(browser);
+    if (release) {
+      slotReleases.delete(browser);
+      release();
+    }
+  });
   return browser;
 }
 
 export function registerBrowser(browser: Browser): Browser {
   return trackBrowser(browser);
+}
+
+/**
+ * Launch Chromium under the process-wide browser slot cap.
+ * The slot is held until the browser disconnects / is closed — not just until
+ * launch returns — so concurrent prefills cannot stack multiple Chromiums.
+ */
+export async function launchTrackedBrowser(
+  options?: LaunchOptions
+): Promise<Browser> {
+  const release = await chromiumLaunchLimiter().acquire();
+  try {
+    const browser = trackBrowser(await chromium.launch(options));
+    slotReleases.set(browser, release);
+    return browser;
+  } catch (error) {
+    release();
+    throw error;
+  }
 }
 
 export async function closeBrowserSession(
@@ -23,13 +56,27 @@ export async function closeBrowserSession(
     await browser.close().catch(() => null);
   }
   if (browser) {
+    const release = slotReleases.get(browser);
+    if (release) {
+      slotReleases.delete(browser);
+      release();
+    }
     activeBrowsers.delete(browser);
   }
 }
 
 export async function closeAllBrowsers(): Promise<void> {
   const browsers = [...activeBrowsers];
-  await Promise.all(browsers.map((b) => b.close().catch(() => null)));
+  await Promise.all(
+    browsers.map(async (b) => {
+      await b.close().catch(() => null);
+      const release = slotReleases.get(b);
+      if (release) {
+        slotReleases.delete(b);
+        release();
+      }
+    })
+  );
   activeBrowsers.clear();
 }
 

@@ -8,6 +8,9 @@ services:
       target: runner
     container_name: myhome-app
     restart: unless-stopped
+    # Keep the site up when Playwright/parse work spikes — OOM kills this
+    # container instead of starving MySQL/nginx on a 1 GB host.
+    mem_limit: ${APP_MEM_LIMIT:-280m}
     ports:
       - "3000:3000"
     environment:
@@ -21,6 +24,10 @@ services:
       - SSGE_PREFILL_HEADLESS=${SSGE_PREFILL_HEADLESS:-true}
       - SSGE_AUTO_PUBLISH=${SSGE_AUTO_PUBLISH:-false}
       - SSGE_HTTP_AUTH=${SSGE_HTTP_AUTH:-true}
+      - BROWSER_LOGIN_MAX_CONCURRENT=${BROWSER_LOGIN_MAX_CONCURRENT:-1}
+      - BROWSER_LOGIN_MAX_WAIT_MS=${BROWSER_LOGIN_MAX_WAIT_MS:-45000}
+      - BROWSER_MAX_CONCURRENT=${BROWSER_MAX_CONCURRENT:-1}
+      - MYHOME_PARSE_MAX_CONCURRENT=${MYHOME_PARSE_MAX_CONCURRENT:-3}
       - OPENAI_API_KEY=${OPENAI_API_KEY:-}
       - OPENAI_MODEL=${OPENAI_MODEL:-gpt-4o-mini}
       - UPLOAD_DIR=/app/data/uploads
@@ -37,8 +44,8 @@ services:
         condition: service_healthy
     networks:
       - app-network
-    # App also launches Playwright (listing parse, phone reveal) — needs shared memory
-    shm_size: "1gb"
+    # Chromium uses --disable-dev-shm-usage; keep /dev/shm small on 1 GB hosts.
+    shm_size: "128mb"
 
   worker:
     image: ${WORKER_IMAGE:-ghcr.io/d-nadiradze/expresshome-worker:latest}
@@ -47,6 +54,7 @@ services:
       target: worker-runner
     container_name: myhome-worker
     restart: unless-stopped
+    mem_limit: ${WORKER_MEM_LIMIT:-320m}
     command: ["node", "node_modules/tsx/dist/cli.mjs", "src/worker/prefill-worker.ts"]
     environment:
       - HOME=/app
@@ -65,6 +73,8 @@ services:
       - SSGE_TOKEN_CACHE_SKEW_MS=${SSGE_TOKEN_CACHE_SKEW_MS:-120000}
       - SSGE_HTTP_AUTH=${SSGE_HTTP_AUTH:-true}
       - PREFILL_MAX_CONCURRENT=${PREFILL_MAX_CONCURRENT:-3}
+      - PARSE_MAX_CONCURRENT=${PARSE_MAX_CONCURRENT:-3}
+      - BROWSER_MAX_CONCURRENT=${BROWSER_MAX_CONCURRENT:-1}
       - UPLOAD_DIR=/app/data/uploads
     volumes:
       - ./data/uploads:/app/data/uploads
@@ -75,14 +85,14 @@ services:
         condition: service_healthy
     networks:
       - app-network
-    # Playwright needs shared memory
-    shm_size: "1gb"
+    shm_size: "128mb"
 
   redis:
     image: redis:7-alpine
     container_name: myhome-redis
     restart: unless-stopped
-    command: redis-server --save 60 1 --loglevel warning
+    mem_limit: ${REDIS_MEM_LIMIT:-64m}
+    command: redis-server --save 60 1 --loglevel warning --maxmemory 48mb --maxmemory-policy allkeys-lru
     ports:
       - "127.0.0.1:6379:6379"
     volumes:
@@ -99,6 +109,13 @@ services:
     image: mysql:8.0
     container_name: myhome-mysql
     restart: unless-stopped
+    mem_limit: ${MYSQL_MEM_LIMIT:-220m}
+    # Defaults are too large for a 1 GB VPS — keep InnoDB buffer modest.
+    command:
+      - --innodb-buffer-pool-size=128M
+      - --performance-schema=OFF
+      - --table-open-cache=200
+      - --max-connections=50
     environment:
       - MYSQL_ROOT_PASSWORD=${MYSQL_ROOT_PASSWORD}
       - MYSQL_DATABASE=myhome_parser
@@ -120,6 +137,7 @@ services:
     image: nginx:alpine
     container_name: myhome-nginx
     restart: unless-stopped
+    mem_limit: ${NGINX_MEM_LIMIT:-32m}
     ports:
       - "80:80"
       - "443:443"
@@ -138,6 +156,7 @@ services:
   certbot:
     image: certbot/certbot
     container_name: myhome-certbot
+    mem_limit: ${CERTBOT_MEM_LIMIT:-64m}
     volumes:
       - ./certbot/conf:/etc/letsencrypt
       - ./certbot/www:/var/www/certbot

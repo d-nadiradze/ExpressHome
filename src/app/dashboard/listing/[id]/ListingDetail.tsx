@@ -7,6 +7,7 @@ import Link from "next/link";
 import ListingImageGallery from "@/components/ListingImageGallery";
 import PrefillProgressPanel from "@/components/PrefillProgressPanel";
 import { resolveListingDisplayArea } from "@/lib/listing-area";
+import { pollFetch } from "@/lib/poll-fetch";
 
 interface Listing {
   id: string;
@@ -135,6 +136,7 @@ export default function ListingDetail({ listing: initial }: { listing: Listing }
   const [descriptionDraft, setDescriptionDraft] = useState("");
   const [savingDescription, setSavingDescription] = useState(false);
   const reparsePollRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const reparsePollInFlightRef = useRef(false);
 
   useEffect(() => {
     return () => {
@@ -186,8 +188,11 @@ export default function ListingDetail({ listing: initial }: { listing: Listing }
   }, []);
 
   const pollReparseStatus = useCallback(async () => {
+    if (reparsePollInFlightRef.current) return;
+    reparsePollInFlightRef.current = true;
+
     try {
-      const res = await fetch(`/api/myhome/parse/status?listingId=${listing.id}`);
+      const res = await pollFetch(`/api/myhome/parse/status?listingId=${listing.id}`);
       const data = await res.json();
 
       if (data.status === "PENDING" || data.status === "POSTED") {
@@ -205,6 +210,8 @@ export default function ListingDetail({ listing: initial }: { listing: Listing }
       }
     } catch {
       // keep polling
+    } finally {
+      reparsePollInFlightRef.current = false;
     }
   }, [listing.id, router, stopReparsePolling]);
 

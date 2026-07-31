@@ -2,6 +2,8 @@ import { NextRequest, NextResponse } from "next/server";
 import { db } from "@/lib/db";
 import { encrypt } from "@/lib/encryption";
 import { loginToSsge } from "@/lib/ssge-parser";
+import { LimiterBusyError } from "@/lib/concurrency-limit";
+import { browserLoginLimiter } from "@/lib/server-limits";
 
 export async function GET(request: NextRequest) {
   const userId = request.headers.get("x-user-id");
@@ -29,7 +31,9 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    const loginResult = await loginToSsge({ email, password });
+    const loginResult = await browserLoginLimiter().run(() =>
+      loginToSsge({ email, password })
+    );
 
     if (!loginResult.success) {
       return NextResponse.json(
@@ -59,6 +63,12 @@ export async function POST(request: NextRequest) {
 
     return NextResponse.json({ success: true, message: "ss.ge account linked successfully" });
   } catch (error) {
+    if (error instanceof LimiterBusyError) {
+      return NextResponse.json(
+        { error: "Another account verification is in progress. Please try again shortly." },
+        { status: 503 }
+      );
+    }
     console.error("Link ss.ge account error:", error);
     return NextResponse.json({ error: "Internal server error" }, { status: 500 });
   }

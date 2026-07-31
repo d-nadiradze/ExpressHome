@@ -1,8 +1,8 @@
 import "@/lib/esbuild-shim";
-import { chromium, type Browser, type Route } from "playwright";
+import { type Browser, type Route } from "playwright";
 import {
   closeBrowserSession,
-  registerBrowser,
+  launchTrackedBrowser,
 } from "@/lib/browser-lifecycle";
 
 const LAUNCH_ARGS = [
@@ -40,12 +40,10 @@ export async function getParseBrowser(): Promise<Browser> {
   lastUsedAt = Date.now();
 
   if (!browserInstance?.isConnected()) {
-    browserInstance = registerBrowser(
-      await chromium.launch({
-        headless: true,
-        args: LAUNCH_ARGS,
-      })
-    );
+    browserInstance = await launchTrackedBrowser({
+      headless: true,
+      args: LAUNCH_ARGS,
+    });
   }
 
   scheduleIdleClose();
