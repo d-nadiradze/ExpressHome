@@ -26,6 +26,11 @@ import {
   type ParseJobData,
 } from "@/lib/bullmq-queue";
 import { runMyhomePrefillJob, runSsgePrefillJob } from "@/lib/prefill-runner";
+import {
+  abortPrefillJob,
+  markPrefillFailedIfPending,
+} from "@/lib/prefill-progress-redis";
+import { withDeadline } from "@/lib/job-deadline";
 import { closeAllBrowsers, registerBrowserShutdownHooks } from "@/lib/browser-lifecycle";
 import { db } from "@/lib/db";
 import { parseSsgeListingViaFetch } from "@/lib/ssge-fetch-parser";
@@ -35,6 +40,15 @@ const PARSE_CONCURRENCY = parseInt(process.env.PARSE_MAX_CONCURRENT || "3", 10);
 const PREFILL_CONCURRENCY = parseInt(process.env.PREFILL_MAX_CONCURRENT || "2", 10);
 const REDIS_URL = process.env.REDIS_URL || "redis://localhost:6379";
 
+const PREFILL_JOB_TIMEOUT_MS = parseInt(
+  process.env.PREFILL_JOB_TIMEOUT_MS || "900000",
+  10
+);
+const PARSE_JOB_TIMEOUT_MS = parseInt(
+  process.env.PARSE_JOB_TIMEOUT_MS || "180000",
+  10
+);
+
 console.log(
   `[worker] Starting — parse concurrency=${PARSE_CONCURRENCY}, prefill concurrency=${PREFILL_CONCURRENCY}, redis=${REDIS_URL}`
 );
@@ -42,6 +56,20 @@ console.log(
 // ---- Parse job processor ---------------------------------------------------
 
 async function processParseJob(job: Job<ParseJobData>): Promise<void> {
+  return withDeadline(
+    `Parse job ${job.id}`,
+    PARSE_JOB_TIMEOUT_MS,
+    runParseJob(job),
+    () => {
+      console.error(`[worker] Parse job ${job.id} hit its deadline`);
+      void db.parsedListing
+        .update({ where: { id: job.data.listingId }, data: { postStatus: "FAILED" } })
+        .catch(() => null);
+    }
+  );
+}
+
+async function runParseJob(job: Job<ParseJobData>): Promise<void> {
   const { listingId, url, userId } = job.data;
   console.log(`[worker] Parse job ${job.id} — ${url}`);
 
@@ -110,17 +138,52 @@ async function processParseJob(job: Job<ParseJobData>): Promise<void> {
 
 // ---- Prefill job processor -------------------------------------------------
 
+/** Mark the listing row failed for a job that died outside the runner's own error handling. */
+async function markListingPrefillFailed(
+  type: PrefillJobData["type"],
+  listingId: string
+): Promise<void> {
+  await db.parsedListing
+    .update({
+      where: { id: listingId },
+      data:
+        type === "ssge"
+          ? { ssgePostStatus: "FAILED" }
+          : { postStatus: "FAILED" },
+    })
+    .catch(() => null);
+}
+
 async function processPrefillJob(job: Job<PrefillJobData>): Promise<void> {
   const { type, jobId, listingId, userId } = job.data;
   console.log(`[worker] Prefill job ${job.id} — type=${type}, listingId=${listingId}`);
 
+  let run: Promise<void>;
   if (type === "myhome") {
-    await runMyhomePrefillJob(jobId, listingId, userId);
+    run = runMyhomePrefillJob(jobId, listingId, userId);
   } else if (type === "ssge") {
-    await runSsgePrefillJob(jobId, listingId, userId);
+    run = runSsgePrefillJob(jobId, listingId, userId);
   } else {
     throw new Error(`Unknown prefill job type: ${(job.data as { type: string }).type}`);
   }
+
+  await withDeadline(
+    `Prefill job ${jobId}`,
+    PREFILL_JOB_TIMEOUT_MS,
+    run,
+    () => {
+      console.error(
+        `[worker] Prefill job ${jobId} hit its deadline — aborting browser session`
+      );
+      // Raises the cancel flag the runner's reporter polls, which closes the
+      // browser and frees its Chromium slot for the jobs stuck behind it.
+      void abortPrefillJob(
+        jobId,
+        `Prefill timed out after ${Math.round(PREFILL_JOB_TIMEOUT_MS / 1000)}s and was stopped`
+      );
+      void markListingPrefillFailed(type, listingId);
+    }
+  );
 }
 
 // ---- Workers ---------------------------------------------------------------
@@ -154,6 +217,22 @@ for (const [name, w] of [["parse", parseWorker], ["prefill", prefillWorker]] as 
   w.on("failed", (job, err) => console.error(`[worker:${name}] Job ${job?.id} failed:`, err.message));
   w.on("error", (err) => console.error(`[worker:${name}] error:`, err));
 }
+
+// A prefill can leave the queue without the runner ever writing a result — a
+// killed worker (stalled, maxStalledCount: 0) or a throw before the runner's own
+// handlers. Settle the progress record so the UI reports the failure instead of
+// polling a job that will never run.
+prefillWorker.on("failed", (job, err) => {
+  const jobId = job?.data?.jobId;
+  if (!jobId) return;
+  void markPrefillFailedIfPending(jobId, err.message || "Prefill failed");
+  if (job?.data) void markListingPrefillFailed(job.data.type, job.data.listingId);
+});
+
+prefillWorker.on("stalled", (jobId) => {
+  console.error(`[worker:prefill] Job ${jobId} stalled — worker lost its lock`);
+  void abortPrefillJob(jobId, "Worker restarted while this prefill was running");
+});
 
 // ---- Recover stuck PARSING listings on startup ----------------------------
 

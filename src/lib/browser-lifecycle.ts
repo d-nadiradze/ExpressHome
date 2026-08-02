@@ -9,15 +9,55 @@ import { chromiumLaunchLimiter } from "@/lib/server-limits";
 const activeBrowsers = new Set<Browser>();
 const slotReleases = new WeakMap<Browser, () => void>();
 
+/**
+ * Playwright's close() has no timeout of its own. A Chromium that lost its
+ * renderer (common under container memory pressure) never answers, so an
+ * awaited close would hang the prefill job forever and — worse — never hand
+ * its launch slot back, wedging every later job behind the limiter.
+ */
+function browserCloseTimeoutMs(): number {
+  return parseInt(process.env.BROWSER_CLOSE_TIMEOUT_MS || "15000", 10);
+}
+
+async function closeWithDeadline(
+  label: string,
+  close: () => Promise<void>
+): Promise<void> {
+  const ms = browserCloseTimeoutMs();
+  if (ms <= 0) {
+    await close().catch(() => null);
+    return;
+  }
+
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const timedOut = await Promise.race([
+    close().then(
+      () => false,
+      () => false
+    ),
+    new Promise<boolean>((resolve) => {
+      timer = setTimeout(() => resolve(true), ms);
+    }),
+  ]);
+  if (timer) clearTimeout(timer);
+  if (timedOut) {
+    console.warn(`[browser] ${label}.close() timed out after ${ms}ms`);
+  }
+}
+
+function releaseSlot(browser: Browser): void {
+  const release = slotReleases.get(browser);
+  if (release) {
+    slotReleases.delete(browser);
+    release();
+  }
+}
+
 function trackBrowser(browser: Browser): Browser {
   activeBrowsers.add(browser);
   browser.once("disconnected", () => {
     activeBrowsers.delete(browser);
-    const release = slotReleases.get(browser);
-    if (release) {
-      slotReleases.delete(browser);
-      release();
-    }
+    releaseSlot(browser);
   });
   return browser;
 }
@@ -49,19 +89,20 @@ export async function closeBrowserSession(
   browser?: Browser | null,
   context?: BrowserContext | null
 ): Promise<void> {
-  if (context) {
-    await context.close().catch(() => null);
-  }
-  if (browser?.isConnected()) {
-    await browser.close().catch(() => null);
-  }
-  if (browser) {
-    const release = slotReleases.get(browser);
-    if (release) {
-      slotReleases.delete(browser);
-      release();
+  try {
+    if (context) {
+      await closeWithDeadline("context", () => context.close());
     }
-    activeBrowsers.delete(browser);
+    if (browser?.isConnected()) {
+      await closeWithDeadline("browser", () => browser.close());
+    }
+  } finally {
+    // The slot must come back even when Chromium refused to die, otherwise the
+    // next prefill waits on a launch slot that no live browser owns.
+    if (browser) {
+      releaseSlot(browser);
+      activeBrowsers.delete(browser);
+    }
   }
 }
 
@@ -69,12 +110,8 @@ export async function closeAllBrowsers(): Promise<void> {
   const browsers = [...activeBrowsers];
   await Promise.all(
     browsers.map(async (b) => {
-      await b.close().catch(() => null);
-      const release = slotReleases.get(b);
-      if (release) {
-        slotReleases.delete(b);
-        release();
-      }
+      await closeWithDeadline("browser", () => b.close());
+      releaseSlot(b);
     })
   );
   activeBrowsers.clear();

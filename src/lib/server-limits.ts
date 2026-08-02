@@ -40,11 +40,16 @@ export function myhomeParseLimiter(): Limiter {
  * Hard cap on live Chromium processes in this Node process (app or worker).
  * Separate from PREFILL_MAX_CONCURRENT — one job can launch auth + wizard
  * browsers; this bounds the real memory cost.
+ *
+ * The wait is bounded on purpose: a slot that leaks (browser that never
+ * disconnects, close() that hangs) would otherwise park every later prefill
+ * here forever, so the whole queue backs up with no error anywhere.
  */
 export function chromiumLaunchLimiter(): Limiter {
   if (!store.chromiumLaunchLimiter) {
     store.chromiumLaunchLimiter = createLimiter({
       maxConcurrent: parseInt(process.env.BROWSER_MAX_CONCURRENT || "1", 10),
+      maxQueueWaitMs: parseInt(process.env.BROWSER_MAX_WAIT_MS || "600000", 10),
     });
   }
   return store.chromiumLaunchLimiter;

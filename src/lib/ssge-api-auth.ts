@@ -144,6 +144,12 @@ export async function closeSsgeApiSession(_session?: SsgeApiSession): Promise<vo
   /* Browser session is closed inside obtainSsgeApiAccessToken. */
 }
 
+/** Fallback deadline for callers that pass no signal of their own. */
+const API_FETCH_TIMEOUT_MS = parseInt(
+  process.env.SSGE_API_FETCH_TIMEOUT_MS || "20000",
+  10
+);
+
 export async function ssgeApiFetch(
   session: SsgeApiSession,
   path: string,
@@ -153,5 +159,8 @@ export async function ssgeApiFetch(
   return fetch(url, {
     ...init,
     headers: { ...session.headers, ...(init?.headers as Record<string, string>) },
+    // A stalled api-gateway socket would otherwise pin the prefill job that
+    // awaits it for as long as the connection stays open.
+    signal: init?.signal ?? AbortSignal.timeout(API_FETCH_TIMEOUT_MS),
   });
 }

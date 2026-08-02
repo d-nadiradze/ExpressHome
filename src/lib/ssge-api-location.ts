@@ -24,6 +24,11 @@ interface StreetRow {
 
 const STREETS = streetsData as StreetRow[];
 
+const LOOKUP_TIMEOUT_MS = parseInt(
+  process.env.SSGE_API_FETCH_TIMEOUT_MS || "20000",
+  10
+);
+
 export interface SsgeLocationIds {
   cityId: number;
   subdistrictId: number | null;
@@ -124,7 +129,7 @@ export async function resolveSsgeLocationIds(
       });
       const res = await fetch(
         `${SSGE_API_BASE}/RealEstate/find-location-by-street?${params}`,
-        { headers: session.headers }
+        { headers: session.headers, signal: AbortSignal.timeout(LOOKUP_TIMEOUT_MS) }
       );
       if (!res.ok) continue;
       const data = (await res.json()) as {
