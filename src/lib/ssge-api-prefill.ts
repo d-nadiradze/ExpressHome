@@ -42,6 +42,7 @@ import {
 } from "@/lib/listing-images";
 import {
   noopPrefillReporter,
+  SSGE_API_PREFILL_STEPS,
   type PrefillReporter,
 } from "@/lib/prefill-progress";
 
@@ -317,7 +318,13 @@ export async function createSsgePostViaApi(
     sourceUrl?: string | null;
     reporter?: PrefillReporter;
   }
-): Promise<{ success: boolean; postUrl?: string; error?: string }> {
+): Promise<{
+  success: boolean;
+  postUrl?: string;
+  error?: string;
+  /** True once the draft exists on ss.ge — callers must not retry via browser. */
+  listingCreated?: boolean;
+}> {
   const reporter = options.reporter ?? noopPrefillReporter;
   listing = normalizeListingForSsgePrefill(listing, {
     sourceUrl: options.sourceUrl,
@@ -331,6 +338,7 @@ export async function createSsgePostViaApi(
   let session: SsgeApiSession | undefined;
 
   try {
+    reporter.setSteps(SSGE_API_PREFILL_STEPS);
     reporter.step("login");
     const login = await loginSsgeApi(credentials, { userId: options.userId });
     if (!login.success || !login.session) {
@@ -475,12 +483,23 @@ export async function createSsgePostViaApi(
     reporter.step("publish");
     const paid = await publishWithBalance(apiCtx, fullPayload);
     if (!paid.success) {
-      reporter.stepDone("publish", paid.error || "Payment failed");
-      return { success: false, error: paid.error || "Publish/payment failed" };
+      // The paid-publish call may already have gone through on ss.ge's side, so
+      // retrying in a browser risks paying for and publishing the same listing
+      // twice. The draft is saved — it can be published by hand.
+      reporter.stepWarn(
+        "publish",
+        `${paid.error || "Publish/payment failed"} — draft ${applicationId} saved, publish it manually`
+      );
+      return {
+        success: false,
+        error: paid.error || "Publish/payment failed",
+        postUrl,
+        listingCreated: true,
+      };
     }
     reporter.stepDone("publish", "Published");
 
-    return { success: true, postUrl: paid.paymentUrl || postUrl };
+    return { success: true, postUrl: paid.paymentUrl || postUrl, listingCreated: true };
   } catch (error) {
     return {
       success: false,

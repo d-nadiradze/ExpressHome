@@ -95,6 +95,9 @@ async function fetchSsgeSessionPhone(
         Accept: "application/json",
         Authorization: `Bearer ${accessToken}`,
       },
+      signal: AbortSignal.timeout(
+        parseInt(process.env.SSGE_API_FETCH_TIMEOUT_MS || "20000", 10)
+      ),
     });
     if (!res.ok) return undefined;
     const body = await res.json().catch(() => null);

@@ -20,6 +20,7 @@ import {
 } from "@/lib/cross-platform-prefill";
 import { sanitizeBuildingStatusValue } from "@/lib/building-status-sanitize";
 import {
+  MYHOME_PREFILL_STEPS,
   noopPrefillReporter,
   type PrefillReporter,
 } from "@/lib/prefill-progress";
@@ -9530,6 +9531,8 @@ export async function createMyhomePost(
   }
 ): Promise<{ success: boolean; postUrl?: string; error?: string }> {
   const reporter = options.reporter ?? noopPrefillReporter;
+  // Restores the browser stages, which an API attempt before this one replaced.
+  reporter.setSteps(MYHOME_PREFILL_STEPS);
   listing = normalizeListingForMyhomePrefill(listing, {
     sourceUrl: options.sourceUrl,
   });

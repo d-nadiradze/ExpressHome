@@ -26,8 +26,10 @@ Thumbs.db
 certbot/
 mysql-data/
 
-# Debug/test scripts
-scripts/
+# Debug/spike scripts stay local; the CI test runner has to ship. (A negation
+# cannot re-include anything under an excluded directory, hence `scripts/*`.)
+scripts/*
+!scripts/run-tests.ts
 
 # Uploaded listing images
 data/uploads/

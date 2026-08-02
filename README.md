@@ -122,6 +122,16 @@ npm run dev
 
 Open [http://localhost:3000](http://localhost:3000).
 
+### 8. Tests
+
+```bash
+npm test        # every src/**/*.test.ts, each in its own process
+npm run typecheck
+```
+
+No database or network is needed — the suites stub what they call. CI runs both
+on every push.
+
 ---
 
 ## Default credentials

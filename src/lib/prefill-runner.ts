@@ -6,6 +6,11 @@ import {
   isMyhomeApiPrefillEnabled,
   shouldFallbackToBrowserPrefill,
 } from "@/lib/myhome-api-prefill";
+import {
+  isPartialSuccess,
+  shouldRetryInBrowser,
+  type PrefillAttemptResult,
+} from "@/lib/prefill-fallback";
 import { closeSsgePostSession, createSsgePost } from "@/lib/ssge-parser";
 import {
   createSsgePostViaApi,
@@ -126,12 +131,20 @@ export async function runMyhomePrefillJob(jobId: string, listingId: string, user
       },
     };
 
-    let result: { success: boolean; postUrl?: string; error?: string };
+    let result: PrefillAttemptResult;
 
     if (isMyhomeApiPrefillEnabled()) {
       reporter.info("Using myhome API prefill (no browser)");
       result = await createMyhomePostViaApi(credentials, payload, runOptions);
-      if (!result.success && shouldFallbackToBrowserPrefill()) {
+      if (isPartialSuccess(result)) {
+        console.warn(
+          `[myhome API prefill] listing already created — not retrying in a browser: ${result.error}`
+        );
+        reporter.warn(
+          `Listing was created on myhome.ge but a later step failed (${result.error}). ` +
+            "Not retrying in a browser — that would post it twice."
+        );
+      } else if (shouldRetryInBrowser(result, shouldFallbackToBrowserPrefill())) {
         console.warn(
           `[myhome API prefill] failed — falling back to browser: ${result.error}`
         );
@@ -144,7 +157,9 @@ export async function runMyhomePrefillJob(jobId: string, listingId: string, user
       result = await createMyhomePost(credentials, payload, runOptions);
     }
 
-    if (!result.success) {
+    // A created listing settles as a partial success: the failed step is already
+    // flagged as a warning, and the user needs the listing URL, not a bare error.
+    if (!result.success && !isPartialSuccess(result)) {
       if (isCancelled() || result.error === "Prefill cancelled by user") {
         await (closeJobSession?.() ?? closeMyhomePostSession());
         return;
@@ -239,14 +254,22 @@ export async function runSsgePrefillJob(jobId: string, listingId: string, userId
       },
     };
 
-    let result;
+    let result: PrefillAttemptResult;
     if (useApi) {
       result = await createSsgePostViaApi(
         { email: ssgeAccount.ssgeEmail, password },
         listingInput,
         prefillOpts
       );
-      if (!result.success && shouldSsgeFallbackToBrowser()) {
+      if (isPartialSuccess(result)) {
+        console.warn(
+          `[ss.ge API prefill] paid publish is in doubt — not retrying in a browser: ${result.error}`
+        );
+        reporter.warn(
+          `ss.ge publish failed after the draft was saved (${result.error}). ` +
+            "Not retrying in a browser — that could publish and charge twice."
+        );
+      } else if (shouldRetryInBrowser(result, shouldSsgeFallbackToBrowser())) {
         console.warn(
           `[ss.ge API prefill] failed — falling back to browser: ${result.error}`
         );
@@ -267,7 +290,9 @@ export async function runSsgePrefillJob(jobId: string, listingId: string, userId
       );
     }
 
-    if (!result.success) {
+    // A saved draft settles as a partial success: the failed step is already
+    // flagged as a warning, and the user needs the draft URL, not a bare error.
+    if (!result.success && !isPartialSuccess(result)) {
       if (isCancelled() || result.error === "Prefill cancelled by user") {
         await (closeJobSession?.() ?? closeSsgePostSession());
         return;

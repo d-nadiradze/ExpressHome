@@ -35,6 +35,7 @@ import {
   resolveImagesForPlaywright,
 } from "@/lib/listing-images";
 import {
+  MYHOME_API_PREFILL_STEPS,
   noopPrefillReporter,
   type PrefillReporter,
 } from "@/lib/prefill-progress";
@@ -51,8 +52,20 @@ const FETCH_TIMEOUT_MS = parseInt(process.env.PARSE_GOTO_TIMEOUT_MS || "20000", 
 const UA =
   "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36";
 
-const DEFAULT_SERVICE_TYPE_ID = parseInt(process.env.MYHOME_SERVICE_TYPE_ID || "22", 10);
-const DEFAULT_SERVICE_DAYS = parseInt(process.env.MYHOME_SERVICE_DAYS || "30", 10);
+/** Optional operator override; normally the fee is resolved from the live catalog. */
+function serviceTypeIdOverride(): number | null {
+  const raw = process.env.MYHOME_SERVICE_TYPE_ID;
+  if (!raw) return null;
+  const id = parseInt(raw, 10);
+  return Number.isFinite(id) && id > 0 ? id : null;
+}
+
+function defaultServiceDays(): number {
+  return parseInt(process.env.MYHOME_SERVICE_DAYS || "30", 10);
+}
+
+/** statements.tnet.ge website ids (WEBSITES = { LIVO: 1, MYHOME: 2 }). */
+const MYHOME_WEBSITE_ID = 2;
 
 export function isMyhomeApiPrefillEnabled(): boolean {
   return process.env.MYHOME_API_PREFILL === "true";
@@ -275,7 +288,12 @@ export function resolveMyhomePublishContact(profile: {
   return { phone, ownerName: profile.name?.trim() || "" };
 }
 
-async function uploadImage(
+const IMAGE_UPLOAD_ATTEMPTS = parseInt(
+  process.env.MYHOME_IMAGE_UPLOAD_ATTEMPTS || "3",
+  10
+);
+
+async function uploadImageOnce(
   filePath: string,
   session: MyhomeApiSession
 ): Promise<UploadedImage | null> {
@@ -306,6 +324,35 @@ async function uploadImage(
   };
   if (!json.result || !json.data?.id || !json.data?.url) return null;
   return { id: json.data.id, url: json.data.url };
+}
+
+/**
+ * The upload endpoint returns sporadic 500s; a dropped photo is permanent for the
+ * listing, so retry before giving up on one.
+ */
+async function uploadImage(
+  filePath: string,
+  session: MyhomeApiSession
+): Promise<UploadedImage | null> {
+  for (let attempt = 1; attempt <= IMAGE_UPLOAD_ATTEMPTS; attempt++) {
+    try {
+      const uploaded = await uploadImageOnce(filePath, session);
+      if (uploaded) return uploaded;
+    } catch (err) {
+      console.warn(
+        `[myhome-api] image upload attempt ${attempt} threw: ${
+          err instanceof Error ? err.message : String(err)
+        }`
+      );
+    }
+    if (attempt < IMAGE_UPLOAD_ATTEMPTS) {
+      await new Promise((resolve) => setTimeout(resolve, 500 * attempt));
+    }
+  }
+  console.warn(
+    `[myhome-api] giving up on image after ${IMAGE_UPLOAD_ATTEMPTS} attempts: ${path.basename(filePath)}`
+  );
+  return null;
 }
 
 function appendIf(form: FormData, key: string, value: string | number | undefined) {
@@ -499,10 +546,136 @@ async function createStatement(
   return { uuid: json.data.uuid };
 }
 
-async function payForStatement(
+export interface MyhomeServiceType {
+  id: number;
+  day: number;
+}
+
+/** Catalog key of the statement-publishing fee ("myh-create-statement-fee"). */
+const PUBLISH_FEE_KEY = "add-statement";
+
+interface CatalogServiceType {
+  id?: number;
+  price?: number;
+  /** Fixed period, when the service has one. */
+  day?: number;
+  /** Selectable periods; the fee service has none. */
+  days?: Array<{ value?: number }>;
+}
+
+interface CatalogService {
+  id?: number;
+  key?: string;
+  icon?: string;
+  website_id?: number;
+  types?: CatalogServiceType[];
+}
+
+/** `data` is a list of websites, each holding named groups of services. */
+interface CatalogWebsite {
+  website_id?: number;
+  services?: Record<string, CatalogService[]> | CatalogService[];
+}
+
+function flattenCatalog(websites: CatalogWebsite[]): CatalogService[] {
+  const out: CatalogService[] = [];
+  for (const site of websites) {
+    if (site.website_id !== undefined && site.website_id !== MYHOME_WEBSITE_ID) {
+      continue;
+    }
+    const groups = site.services;
+    if (Array.isArray(groups)) {
+      out.push(...groups);
+    } else {
+      for (const list of Object.values(groups ?? {})) {
+        if (Array.isArray(list)) out.push(...list);
+      }
+    }
+  }
+  return out.filter(
+    (s) => s.website_id === undefined || s.website_id === MYHOME_WEBSITE_ID
+  );
+}
+
+/**
+ * The publishing fee myhome would charge this account for one more statement.
+ *
+ * myhome grants a few free statements a month, and the catalog is what says
+ * which side of that limit the account is on: the "add-statement" service only
+ * appears once the free ones are used up. No fee in the catalog means
+ * `statements/create` alone published the listing, exactly as the site behaves
+ * when nothing is selected at checkout.
+ */
+export async function fetchRequiredServiceTypes(
+  session: MyhomeApiSession
+): Promise<{ types: MyhomeServiceType[]; error?: string }> {
+  const override = serviceTypeIdOverride();
+  if (override) {
+    return { types: [{ id: override, day: defaultServiceDays() }] };
+  }
+
+  const res = await fetchWithTimeout(
+    `${API_BASE}/v2/services?websites=${MYHOME_WEBSITE_ID}`,
+    { method: "GET", headers: apiHeaders(session) }
+  );
+  if (!res.ok) {
+    return { types: [], error: `services catalog failed (HTTP ${res.status})` };
+  }
+
+  const body = (await res.json().catch(() => null)) as {
+    data?: CatalogWebsite[];
+  } | null;
+  if (!Array.isArray(body?.data)) {
+    return { types: [], error: "services catalog returned no websites" };
+  }
+
+  const services = flattenCatalog(body.data);
+  const fee = services.find((s) => (s.key ?? s.icon) === PUBLISH_FEE_KEY);
+
+  if (!fee) {
+    console.log(
+      `[myhome-api] no publish fee in catalog (${
+        services.map((s) => s.key ?? s.icon ?? s.id).join(", ") || "empty"
+      }) — statement is within the free limit`
+    );
+    return { types: [] };
+  }
+
+  const type = fee.types?.[0];
+  if (!type?.id) {
+    return {
+      types: [],
+      error: `"${PUBLISH_FEE_KEY}" service carries no purchasable type`,
+    };
+  }
+
+  // The fee has no period of its own; the site falls back to 30 the same way.
+  const day = type.day ?? type.days?.[0]?.value ?? defaultServiceDays();
+  console.log(
+    `[myhome-api] publish fee due: type #${type.id} ${type.price ?? "?"} GEL (day=${day})`
+  );
+  return { types: [{ id: type.id, day }] };
+}
+
+/**
+ * myhome drops services it will not charge for before validating, so a request
+ * for a fee that does not apply comes back as an empty `service_types`. That is
+ * "nothing to pay", not a failure.
+ */
+function isNothingToPay(status: number, raw: string): boolean {
+  if (status !== 422) return false;
+  return /"field"\s*:\s*"service_types"/.test(raw) && /required/i.test(raw);
+}
+
+/**
+ * Buys `serviceTypes` for a statement out of the account balance. Exported so an
+ * already-created but unpaid statement can be settled without posting it again.
+ */
+export async function payMyhomeStatementFee(
   session: MyhomeApiSession,
-  statementUuid: string
-): Promise<{ success: boolean; error?: string }> {
+  statementUuid: string,
+  serviceTypes: MyhomeServiceType[]
+): Promise<{ success: boolean; error?: string; nothingToPay?: boolean }> {
   const initRes = await fetchWithTimeout(
     `${API_BASE}/v2/payments/init-statement-services`,
     {
@@ -510,7 +683,7 @@ async function payForStatement(
       headers: apiHeaders(session, { "Content-Type": "application/json" }),
       body: JSON.stringify({
         statement_uuids: [statementUuid],
-        service_types: [{ id: DEFAULT_SERVICE_TYPE_ID, day: DEFAULT_SERVICE_DAYS }],
+        service_types: serviceTypes,
       }),
     }
   );
@@ -528,6 +701,9 @@ async function payForStatement(
   }
   const paymentUuid = initJson.data?.payment_uuid;
   if (!initRes.ok || !initJson.result || !paymentUuid) {
+    if (isNothingToPay(initRes.status, initRaw)) {
+      return { success: true, nothingToPay: true };
+    }
     const detail = JSON.stringify(initJson.errors ?? initRaw).slice(0, 400);
     return {
       success: false,
@@ -546,15 +722,23 @@ async function payForStatement(
     }),
   });
 
-  const payJson = (await payRes.json().catch(() => ({}))) as {
-    result?: boolean;
-    data?: { status?: string };
-  };
+  const payRaw = await payRes.text();
+  let payJson: { result?: boolean; data?: { status?: string }; errors?: unknown } =
+    {};
+  try {
+    payJson = JSON.parse(payRaw);
+  } catch {
+    /* non-JSON */
+  }
 
   if (!payRes.ok || !payJson.result || payJson.data?.status !== "success") {
+    // Most often an empty myhome balance, so quote the API rather than guess.
+    const detail = JSON.stringify(payJson.errors ?? payRaw).slice(0, 300);
     return {
       success: false,
-      error: `Balance payment failed (HTTP ${payRes.status}, status=${payJson.data?.status ?? "?"})`,
+      error:
+        `Balance payment failed (HTTP ${payRes.status}, status=` +
+        `${payJson.data?.status ?? "?"}): ${detail} — top up the myhome balance`,
     };
   }
 
@@ -583,7 +767,13 @@ export async function createMyhomePostViaApi(
     sourceUrl?: string | null;
     reporter?: PrefillReporter;
   }
-): Promise<{ success: boolean; postUrl?: string; error?: string }> {
+): Promise<{
+  success: boolean;
+  postUrl?: string;
+  error?: string;
+  /** True once the statement exists on myhome — callers must not retry via browser. */
+  listingCreated?: boolean;
+}> {
   const reporter = options.reporter ?? noopPrefillReporter;
   listing = normalizeListingForMyhomePrefill(listing, {
     sourceUrl: options.sourceUrl,
@@ -592,7 +782,7 @@ export async function createMyhomePostViaApi(
   const autoPublish = process.env.MYHOME_AUTO_PUBLISH === "true";
 
   try {
-    reporter.stepDone("browser", "API mode (no browser)");
+    reporter.setSteps(MYHOME_API_PREFILL_STEPS);
     reporter.step("login");
 
     const auth = await loginMyhomeApi(credentials);
@@ -602,8 +792,6 @@ export async function createMyhomePostViaApi(
     }
     const session = auth.session;
     reporter.stepDone("login");
-
-    reporter.stepDone("form", "Skipped (API)");
 
     reporter.step("fields");
     const location = await resolveMyhomeLocationIds(listing);
@@ -702,18 +890,48 @@ export async function createMyhomePostViaApi(
     }
     reporter.stepDone("publish", `uuid ${created.uuid.slice(0, 8)}…`);
 
+    // From here on the statement exists on myhome.ge. Any later failure must not
+    // hand over to the browser flow — that would publish the same listing twice.
+    const statementsUrl =
+      "https://statements.myhome.ge/ka/user-profile/my-statements?referrer=myhome";
+
     reporter.step("checkout");
-    const paid = await payForStatement(session, created.uuid);
-    if (!paid.success) {
-      reporter.stepDone("checkout", "Payment failed");
-      return { success: false, error: paid.error || "Payment failed" };
+    const required = await fetchRequiredServiceTypes(session);
+    if (required.error) {
+      reporter.stepWarn(
+        "checkout",
+        `Could not read paid services (${required.error}) — publish fee not paid`
+      );
+      return { success: true, postUrl: statementsUrl, listingCreated: true };
     }
-    reporter.stepDone("checkout", "Balance paid");
+
+    if (required.types.length === 0) {
+      reporter.stepDone("checkout", "Free statement — no fee due");
+    } else {
+      const paid = await payMyhomeStatementFee(
+        session,
+        created.uuid,
+        required.types
+      );
+      if (!paid.success) {
+        reporter.stepWarn("checkout", paid.error || "Payment failed");
+        return {
+          success: false,
+          error: paid.error || "Payment failed",
+          postUrl: statementsUrl,
+          listingCreated: true,
+        };
+      }
+      reporter.stepDone(
+        "checkout",
+        paid.nothingToPay ? "Free statement — no fee due" : "Publish fee paid"
+      );
+    }
 
     const postUrl =
       "https://statements.myhome.ge/ka/status/success?referrer=myhome&scenario=payment";
     reporter.success(`Listing published via API (${created.uuid})`);
-    return { success: true, postUrl };
+    return { success: true, postUrl, listingCreated: true };
   } catch (e) {
     const msg = e instanceof Error ? e.message : "API prefill failed";
     reporter.log("error", msg);

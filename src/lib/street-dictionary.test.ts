@@ -82,6 +82,18 @@ test("every entry resolves both directions", () => {
   const sameStreet = (a: string | null, expected: string): boolean =>
     a != null && normalizeStreetForMatch(a) === normalizeStreetForMatch(expected);
 
+  // ss.ge→myhome is one-to-many: several myhome spellings ("ა. მაჭავარიანის ქ.",
+  // "მუხრან მაჭავარიანის ქ.") point at one ss.ge street, so the reverse lookup
+  // can only be expected to land on one of that street's myhome names.
+  const myhomeNamesBySsge = new Map<string, Set<string>>();
+  for (const e of entries) {
+    if (!e.myhome || !e.ssge) continue;
+    const key = normalizeStreetForMatch(e.ssge);
+    const names = myhomeNamesBySsge.get(key) ?? new Set<string>();
+    names.add(normalizeStreetForMatch(e.myhome));
+    myhomeNamesBySsge.set(key, names);
+  }
+
   let checked = 0;
   for (const e of entries) {
     if (!e.myhome || !e.ssge) continue;
@@ -89,9 +101,13 @@ test("every entry resolves both directions", () => {
       sameStreet(resolveStreetForTarget(e.myhome, "ssge"), e.ssge),
       `myhome→ssge failed for "${e.myhome}"`
     );
+    const back = resolveStreetForTarget(e.ssge, "myhome");
     assert.ok(
-      sameStreet(resolveStreetForTarget(e.ssge, "myhome"), e.myhome),
-      `ssge→myhome failed for "${e.ssge}"`
+      back != null &&
+        myhomeNamesBySsge
+          .get(normalizeStreetForMatch(e.ssge))
+          ?.has(normalizeStreetForMatch(back)),
+      `ssge→myhome failed for "${e.ssge}" (got "${back}")`
     );
     assert.ok(
       sameStreet(resolveStreetForTarget(e.ssge, "ssge"), e.ssge),

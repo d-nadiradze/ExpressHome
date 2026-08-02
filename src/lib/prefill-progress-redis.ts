@@ -14,16 +14,20 @@ import IORedis from "ioredis";
 import { redisConnection } from "@/lib/bullmq-queue";
 import {
   defaultPrefillSteps,
+  toPrefillSteps,
   type PrefillPlatform,
   type PrefillStep,
+  type PrefillStepDef,
   type PrefillStepStatus,
 } from "@/lib/prefill-steps";
 import { getPrefillQueue } from "@/lib/bullmq-queue";
 
-export type { PrefillPlatform, PrefillStep, PrefillStepStatus };
+export type { PrefillPlatform, PrefillStep, PrefillStepDef, PrefillStepStatus };
 export {
   MYHOME_PREFILL_STEPS,
   SSGE_PREFILL_STEPS,
+  MYHOME_API_PREFILL_STEPS,
+  SSGE_API_PREFILL_STEPS,
   defaultPrefillSteps,
 } from "@/lib/prefill-steps";
 
@@ -59,6 +63,8 @@ export interface PrefillReporter {
   step(id: string, detail?: string): void;
   stepDone(id: string, detail?: string): void;
   stepWarn(id: string, detail: string): void;
+  /** Swaps in the stages of the path this run committed to (API or browser). */
+  setSteps(steps: PrefillStepDef[]): void;
   log(level: PrefillLogLevel, message: string): void;
   warn(message: string): void;
   info(message: string): void;
@@ -78,6 +84,14 @@ function getRedis(): IORedis {
     globalStore._prefillRedis = new IORedis({
       ...(redisConnection as object),
       lazyConnect: false,
+      // BullMQ needs unlimited retries on its own connection; this one must
+      // not inherit that. An unbounded command would hang the prefill job that
+      // awaits it for as long as Redis stays unreachable.
+      maxRetriesPerRequest: 3,
+      commandTimeout: parseInt(
+        process.env.PREFILL_REDIS_COMMAND_TIMEOUT_MS || "10000",
+        10
+      ),
     });
     globalStore._prefillRedis.on("error", (err: Error) =>
       console.error("[prefill-progress-redis] Redis error:", err.message)
@@ -131,15 +145,42 @@ async function writeState(state: PrefillProgressState): Promise<void> {
   }
 }
 
-async function updateState(
+/**
+ * One in-flight update per job, so the read-modify-write cycles cannot clobber
+ * each other.
+ *
+ * Reporters fire updates without awaiting them, and a fast API prefill emits
+ * several within a single Redis round trip. Unserialised, each of those reads
+ * the same state and the last write wins: finished steps silently revert to
+ * "running" and log lines disappear. Only the owning worker writes a job, so
+ * chaining in-process is enough.
+ */
+const updateChains = new Map<string, Promise<void>>();
+
+function updateState(
   jobId: string,
   mutate: (state: PrefillProgressState) => void
 ): Promise<void> {
-  const state = await readState(jobId);
-  if (!state) return;
-  mutate(state);
-  state.updatedAt = Date.now();
-  await writeState(state);
+  const previous = updateChains.get(jobId) ?? Promise.resolve();
+  // A rejected link must not break the ones queued behind it.
+  const next = previous.catch(() => {}).then(async () => {
+    const state = await readState(jobId);
+    if (!state) return;
+    mutate(state);
+    state.updatedAt = Date.now();
+    await writeState(state);
+  });
+
+  updateChains.set(jobId, next);
+  void next.catch(() => {}).finally(() => {
+    if (updateChains.get(jobId) === next) updateChains.delete(jobId);
+  });
+  return next;
+}
+
+/** Resolves once every update queued for this job has reached Redis. */
+export async function flushPrefillProgress(jobId: string): Promise<void> {
+  await updateChains.get(jobId)?.catch(() => {});
 }
 
 function pushLog(
@@ -216,6 +257,44 @@ export async function failPrefillJob(
     s.error = error;
     pushLog(s, "error", error);
   });
+}
+
+function isTerminal(status: PrefillJobStatus): boolean {
+  return status === "success" || status === "partial" || status === "failed";
+}
+
+/**
+ * Close out a job the worker can no longer account for (deadline exceeded,
+ * stalled, BullMQ failure). Unlike failPrefillJob this ignores the cancel flag,
+ * because a wedged job must reach a terminal state even if it was cancelled —
+ * otherwise the UI polls "queued" forever.
+ */
+export async function markPrefillFailedIfPending(
+  jobId: string,
+  reason: string
+): Promise<void> {
+  await updateState(jobId, (s) => {
+    if (isTerminal(s.status)) return;
+    s.status = "failed";
+    s.error = reason;
+    pushLog(s, "error", reason);
+  });
+}
+
+/**
+ * Raise the cancel flag so a still-running job aborts its browser session and
+ * releases its Chromium slot, then mark it failed.
+ */
+export async function abortPrefillJob(
+  jobId: string,
+  reason: string
+): Promise<void> {
+  try {
+    await getRedis().set(cancelKey(jobId), "1", "EX", TTL_S);
+  } catch (err) {
+    console.error("[prefill-progress-redis] abort flag write failed:", err);
+  }
+  await markPrefillFailedIfPending(jobId, reason);
 }
 
 export async function cancelPrefillJob(
@@ -325,6 +404,11 @@ export function createPrefillReporter(jobId: string): PrefillReporter {
         pushLog(state, "warn", `${findStepLabel(state, id)} — ${detail}`);
       });
     },
+    setSteps(steps) {
+      void updateState(jobId, (state) => {
+        state.steps = toPrefillSteps(steps);
+      });
+    },
     log(level, message) {
       void updateState(jobId, (state) => {
         pushLog(state, level, message);
@@ -342,20 +426,72 @@ export function createPrefillReporter(jobId: string): PrefillReporter {
   };
 }
 
+/** Grace period before a missing BullMQ job counts as lost rather than racing enqueue. */
+const LOST_JOB_GRACE_MS = 15000;
+
+/**
+ * Queue position, plus a reconciliation pass: progress lives in its own Redis
+ * key, so a job that BullMQ failed or dropped (stalled worker, trimmed failure,
+ * manual queue clear) would keep reporting "queued" and the UI would poll a
+ * job nobody is going to run.
+ */
+async function inspectQueuedJob(
+  jobId: string,
+  stateAgeMs: number
+): Promise<{ position: number | null; lostReason?: string }> {
+  let queue;
+  try {
+    queue = getPrefillQueue();
+  } catch {
+    return { position: null };
+  }
+
+  try {
+    const job = await queue.getJob(jobId);
+    if (!job) {
+      return stateAgeMs > LOST_JOB_GRACE_MS
+        ? {
+            position: null,
+            lostReason:
+              "Job is no longer in the queue — it was dropped before it could run",
+          }
+        : { position: null };
+    }
+
+    const jobState = await job.getState();
+    if (jobState === "failed") {
+      return {
+        position: null,
+        lostReason: job.failedReason || "Job failed in the queue",
+      };
+    }
+    if (jobState !== "waiting" && jobState !== "prioritized" && jobState !== "delayed") {
+      return { position: null };
+    }
+
+    const waiting = await queue.getWaiting();
+    const pos = waiting.findIndex((j) => j.id === jobId || j.name === jobId);
+    return { position: pos >= 0 ? pos + 1 : null };
+  } catch {
+    return { position: null };
+  }
+}
+
 export async function getPrefillStatusPayload(jobId: string) {
   const state = await readState(jobId);
   if (!state) return null;
 
-  // Get queue position from BullMQ (works across processes)
   let queuePosition: number | null = null;
-  if (state.status === "queued") {
-    try {
-      const queue = getPrefillQueue();
-      const waiting = await queue.getWaiting();
-      const pos = waiting.findIndex((j) => j.name === jobId);
-      queuePosition = pos >= 0 ? pos + 1 : null;
-    } catch {
-      // non-critical
+  if (!isTerminal(state.status)) {
+    const { position, lostReason } = await inspectQueuedJob(
+      jobId,
+      Date.now() - state.updatedAt
+    );
+    queuePosition = position;
+    if (lostReason) {
+      await markPrefillFailedIfPending(jobId, lostReason);
+      const settled = (await readState(jobId)) ?? state;
+      return { ...settled, queuePosition: null };
     }
   }
 
@@ -409,6 +545,10 @@ export function createCancellablePrefillReporter(
       if (cancelled) return;
       base.stepWarn(id, detail);
     },
+    setSteps(steps) {
+      if (cancelled) return;
+      base.setSteps(steps);
+    },
     log(level, message) {
       if (cancelled) return;
       base.log(level, message);
@@ -435,6 +575,7 @@ export const noopPrefillReporter: PrefillReporter = {
   step() {},
   stepDone() {},
   stepWarn() {},
+  setSteps() {},
   log() {},
   warn() {},
   info() {},

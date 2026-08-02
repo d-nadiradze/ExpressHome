@@ -1,13 +1,21 @@
 import { getPrefillQueuePosition } from "@/lib/prefill-queue";
 import {
   defaultPrefillSteps,
+  toPrefillSteps,
   type PrefillPlatform,
   type PrefillStep,
+  type PrefillStepDef,
   type PrefillStepStatus,
 } from "@/lib/prefill-steps";
 
-export type { PrefillPlatform, PrefillStep, PrefillStepStatus };
-export { MYHOME_PREFILL_STEPS, SSGE_PREFILL_STEPS, defaultPrefillSteps } from "@/lib/prefill-steps";
+export type { PrefillPlatform, PrefillStep, PrefillStepDef, PrefillStepStatus };
+export {
+  MYHOME_PREFILL_STEPS,
+  SSGE_PREFILL_STEPS,
+  MYHOME_API_PREFILL_STEPS,
+  SSGE_API_PREFILL_STEPS,
+  defaultPrefillSteps,
+} from "@/lib/prefill-steps";
 
 export interface PrefillLogEntry {
   id: string;
@@ -33,6 +41,8 @@ export interface PrefillReporter {
   step(id: string, detail?: string): void;
   stepDone(id: string, detail?: string): void;
   stepWarn(id: string, detail: string): void;
+  /** Swaps in the stages of the path this run committed to (API or browser). */
+  setSteps(steps: PrefillStepDef[]): void;
   log(level: PrefillLogLevel, message: string): void;
   warn(message: string): void;
   info(message: string): void;
@@ -173,6 +183,12 @@ export function createPrefillReporter(jobId: string): PrefillReporter {
       pushLog(state, "warn", `${findStepLabel(state, id)} — ${detail}`);
       state.updatedAt = Date.now();
     },
+    setSteps(steps) {
+      const state = getState();
+      if (!state) return;
+      state.steps = toPrefillSteps(steps);
+      state.updatedAt = Date.now();
+    },
     log(level, message) {
       const state = getState();
       if (!state) return;
@@ -199,6 +215,7 @@ export const noopPrefillReporter: PrefillReporter = {
   step() {},
   stepDone() {},
   stepWarn() {},
+  setSteps() {},
   log() {},
   warn() {},
   info() {},
