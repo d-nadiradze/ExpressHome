@@ -34,6 +34,7 @@ import {
   MAX_LISTING_IMAGES,
   resolveImagesForPlaywright,
 } from "@/lib/listing-images";
+import { mapWithConcurrency, parseConcurrency } from "@/lib/parallel-map";
 import {
   MYHOME_API_PREFILL_STEPS,
   noopPrefillReporter,
@@ -292,6 +293,15 @@ const IMAGE_UPLOAD_ATTEMPTS = parseInt(
   process.env.MYHOME_IMAGE_UPLOAD_ATTEMPTS || "3",
   10
 );
+
+/**
+ * Uploads are latency-bound, not bandwidth-bound (15 photos ≈ 1.7MB but ~600ms
+ * each), so parallelism is a ~4x win. The ceiling is memory: every in-flight
+ * photo holds a buffer of up to MAX_IMAGE_BYTES.
+ */
+function imageUploadConcurrency(): number {
+  return parseConcurrency(process.env.MYHOME_IMAGE_UPLOAD_CONCURRENCY, 6);
+}
 
 async function uploadImageOnce(
   filePath: string,
@@ -836,10 +846,18 @@ export async function createMyhomePostViaApi(
         options.userId
       );
       try {
-        for (const p of paths.slice(0, MAX_LISTING_IMAGES)) {
-          const img = await uploadImage(p, session);
-          if (img) uploaded.push(img);
-        }
+        const started = Date.now();
+        const results = await mapWithConcurrency(
+          paths.slice(0, MAX_LISTING_IMAGES),
+          imageUploadConcurrency(),
+          (p) => uploadImage(p, session)
+        );
+        uploaded = results.filter((img): img is UploadedImage => img !== null);
+        console.log(
+          `[myhome-api] uploaded ${uploaded.length}/${results.length} photo(s) in ${
+            Date.now() - started
+          }ms (concurrency ${imageUploadConcurrency()})`
+        );
       } finally {
         await cleanup();
       }

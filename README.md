@@ -74,6 +74,13 @@ SESSION_DURATION=86400
 
 # Optional: directory for user-uploaded listing photos (default data/uploads)
 # UPLOAD_DIR=data/uploads
+
+# Optional: how many photos move at once during prefill. Higher is faster but
+# each in-flight photo holds a buffer, so lower these if the worker runs out of
+# RAM (defaults: 6 / 6 / 4).
+# IMAGE_DOWNLOAD_CONCURRENCY=6
+# MYHOME_IMAGE_UPLOAD_CONCURRENCY=6
+# SSGE_IMAGE_UPLOAD_CONCURRENCY=4
 ```
 
 ### 5. Set up database

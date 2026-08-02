@@ -35,6 +35,7 @@ import {
   type SsgeDraftImage,
 } from "@/lib/ssge-api-form-fields";
 import { resolveSsgeAccountPhones } from "@/lib/ssge-api-account";
+import { mapWithConcurrency, parseConcurrency } from "@/lib/parallel-map";
 import { resolveSsgeProjectChip } from "@/lib/ssge-mappings";
 import { resolveSsgeLocationIds } from "@/lib/ssge-api-location";
 import {
@@ -47,6 +48,18 @@ import {
 } from "@/lib/prefill-progress";
 
 const FETCH_TIMEOUT_MS = parseInt(process.env.PARSE_GOTO_TIMEOUT_MS || "20000", 10);
+const IMAGE_UPLOAD_ATTEMPTS = parseInt(
+  process.env.SSGE_IMAGE_UPLOAD_ATTEMPTS || "3",
+  10
+);
+
+/**
+ * Kept below the myhome cap: ss.ge takes photos as base64 inside JSON, so each
+ * in-flight upload holds roughly three copies of the file in memory.
+ */
+function imageUploadConcurrency(): number {
+  return parseConcurrency(process.env.SSGE_IMAGE_UPLOAD_CONCURRENCY, 4);
+}
 
 export function isSsgeApiPrefillEnabled(): boolean {
   return process.env.SSGE_API_PREFILL === "true";
@@ -148,7 +161,7 @@ interface UploadResult {
   fileName: string;
 }
 
-async function uploadImage(
+async function uploadImageOnce(
   ctx: SsgeApiFetchContext,
   applicationId: number,
   filePath: string
@@ -177,6 +190,34 @@ async function uploadImage(
     };
   }
   return { applicationImageId: json.imageId, fileName: json.fileName };
+}
+
+/**
+ * One rejected photo fails the whole ss.ge draft, so a transient upload error is
+ * worth retrying — especially now that photos go up in parallel.
+ */
+async function uploadImage(
+  ctx: SsgeApiFetchContext,
+  applicationId: number,
+  filePath: string
+): Promise<UploadResult | { error: string }> {
+  let last: { error: string } = { error: "Image upload failed" };
+  for (let attempt = 1; attempt <= IMAGE_UPLOAD_ATTEMPTS; attempt++) {
+    try {
+      const result = await uploadImageOnce(ctx, applicationId, filePath);
+      if (!("error" in result)) return result;
+      last = result;
+    } catch (err) {
+      last = { error: err instanceof Error ? err.message : String(err) };
+    }
+    console.warn(
+      `[ss.ge API prefill] image upload attempt ${attempt} failed: ${last.error}`
+    );
+    if (attempt < IMAGE_UPLOAD_ATTEMPTS) {
+      await new Promise((resolve) => setTimeout(resolve, 500 * attempt));
+    }
+  }
+  return last;
 }
 
 async function saveFullDraft(
@@ -421,23 +462,37 @@ export async function createSsgePostViaApi(
     );
     const imagePaths = resolved.paths;
 
-    const uploaded: SsgeDraftImage[] = [];
+    let uploaded: SsgeDraftImage[] = [];
     try {
-      for (let i = 0; i < imagePaths.length; i++) {
-        const result = await uploadImage(apiCtx, applicationId, imagePaths[i]);
+      const started = Date.now();
+      const results = await mapWithConcurrency(
+        imagePaths,
+        imageUploadConcurrency(),
+        (filePath) => uploadImage(apiCtx, applicationId, filePath)
+      );
+      console.log(
+        `[ss.ge API prefill] uploaded ${results.length} photo(s) in ${
+          Date.now() - started
+        }ms (concurrency ${imageUploadConcurrency()})`
+      );
+
+      const succeeded: UploadResult[] = [];
+      for (const result of results) {
         if ("error" in result) {
           reporter.stepDone("images", result.error);
           return { success: false, error: result.error };
         }
-        uploaded.push({
-          applicationImageId: result.applicationImageId,
-          fileName: result.fileName,
-          isMain: i === 0,
-          is360: false,
-          orderNo: i,
-          imageRotation: 0,
-        });
+        succeeded.push(result);
       }
+
+      uploaded = succeeded.map((result, i) => ({
+        applicationImageId: result.applicationImageId,
+        fileName: result.fileName,
+        isMain: i === 0,
+        is360: false,
+        orderNo: i,
+        imageRotation: 0,
+      }));
     } finally {
       await resolved.cleanup().catch(() => null);
     }

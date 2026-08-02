@@ -3,9 +3,14 @@ import path from "path";
 import { randomUUID } from "crypto";
 import os from "os";
 import { ssgeWatermarkedImageUrl } from "@/lib/ssge-image";
+import { mapWithConcurrency, parseConcurrency } from "@/lib/parallel-map";
 
 export const MAX_LISTING_IMAGES = 16;
 export const MAX_IMAGE_BYTES = 10 * 1024 * 1024;
+
+function downloadConcurrency(): number {
+  return parseConcurrency(process.env.IMAGE_DOWNLOAD_CONCURRENCY, 6);
+}
 
 const ALLOWED_MIME = new Set([
   "image/jpeg",
@@ -208,20 +213,39 @@ export async function resolveImagesForPlaywright(
   listingId: string,
   userId: string
 ): Promise<{ paths: string[]; cleanup: () => Promise<void> }> {
+  const started = Date.now();
+  const urls = images.slice(0, MAX_LISTING_IMAGES);
+
+  const resolved = await mapWithConcurrency(
+    urls,
+    downloadConcurrency(),
+    async (url): Promise<{ path: string; temp: boolean } | null> => {
+      if (isUploadedImageUrl(url)) {
+        const diskPath = await resolveUploadedImagePath(url, userId);
+        return diskPath ? { path: diskPath, temp: false } : null;
+      }
+      if (url.startsWith("http://") || url.startsWith("https://")) {
+        const tempPath = await downloadRemoteImage(url);
+        return tempPath ? { path: tempPath, temp: true } : null;
+      }
+      return null;
+    }
+  );
+
   const tempPaths: string[] = [];
   const paths: string[] = [];
+  for (const item of resolved) {
+    if (!item) continue;
+    paths.push(item.path);
+    if (item.temp) tempPaths.push(item.path);
+  }
 
-  for (const url of images.slice(0, MAX_LISTING_IMAGES)) {
-    if (isUploadedImageUrl(url)) {
-      const diskPath = await resolveUploadedImagePath(url, userId);
-      if (diskPath) paths.push(diskPath);
-    } else if (url.startsWith("http://") || url.startsWith("https://")) {
-      const tempPath = await downloadRemoteImage(url);
-      if (tempPath) {
-        paths.push(tempPath);
-        tempPaths.push(tempPath);
-      }
-    }
+  if (urls.length > 0) {
+    console.log(
+      `[images] resolved ${paths.length}/${urls.length} photo(s) in ${
+        Date.now() - started
+      }ms (${tempPaths.length} downloaded, concurrency ${downloadConcurrency()})`
+    );
   }
 
   return {
