@@ -56,26 +56,35 @@ async function backdateProgress(redis: IORedis, jobId: string): Promise<void> {
 
 async function requireRedis(): Promise<IORedis> {
   const url = process.env.REDIS_URL || "redis://localhost:6379";
-  const redis = new IORedis(url, {
-    maxRetriesPerRequest: 1,
-    connectTimeout: 2000,
-    lazyConnect: true,
-    // Quiet the "Unhandled error event" spam while we probe.
-    showFriendlyErrorStack: false,
-  });
-  redis.on("error", () => {});
-  try {
-    await redis.connect();
-    const pong = await redis.ping();
-    assert.equal(pong, "PONG");
-  } catch (err) {
-    await redis.quit().catch(() => null);
-    throw new Error(
-      `prefill-recovery tests need Redis at ${url} ` +
-        `(npm run redis:up). ${(err as Error).message}`
-    );
+  const deadline = Date.now() + (process.env.CI ? 20_000 : 3_000);
+  let lastError: Error | null = null;
+
+  while (Date.now() < deadline) {
+    const redis = new IORedis(url, {
+      maxRetriesPerRequest: 1,
+      connectTimeout: 1500,
+      lazyConnect: true,
+      enableOfflineQueue: false,
+      showFriendlyErrorStack: false,
+      retryStrategy: () => null,
+    });
+    redis.on("error", () => {});
+    try {
+      await redis.connect();
+      const pong = await redis.ping();
+      assert.equal(pong, "PONG");
+      return redis;
+    } catch (err) {
+      lastError = err as Error;
+      await redis.quit().catch(() => null);
+      await new Promise((r) => setTimeout(r, 500));
+    }
   }
-  return redis;
+
+  throw new Error(
+    `prefill-recovery tests need Redis at ${url} ` +
+      `(npm run redis:up / CI redis service). ${lastError?.message ?? ""}`
+  );
 }
 
 async function main(): Promise<void> {
