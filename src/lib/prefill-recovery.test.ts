@@ -14,11 +14,17 @@ import { closeBrowserSession } from "./browser-lifecycle";
 import { getPrefillQueue, closeAllQueues, redisConnection } from "./bullmq-queue";
 import {
   abortPrefillJob,
+  completePrefillJob,
+  createPrefillReporter,
+  flushPrefillProgress,
   getPrefillProgress,
   getPrefillStatusPayload,
   initPrefillProgress,
   isPrefillCancelled,
   markPrefillFailedIfPending,
+  MYHOME_API_PREFILL_STEPS,
+  MYHOME_PREFILL_STEPS,
+  SSGE_API_PREFILL_STEPS,
 } from "./prefill-progress-redis";
 
 let passed = 0;
@@ -221,6 +227,96 @@ async function main(): Promise<void> {
       await queue.obliterate({ force: true }).catch(() => null);
       await queue.close();
     }
+  });
+
+  await test("a successful myhome API run reports every step done", async () => {
+    const jobId = `progress-race-${Date.now()}`;
+    await initPrefillProgress(jobId, "myhome", "listing-race", "user-race");
+    const reporter = createPrefillReporter(jobId);
+
+    // The real sequence, fired without awaiting as the prefill code does.
+    reporter.setSteps(MYHOME_API_PREFILL_STEPS);
+    reporter.step("login");
+    reporter.stepDone("login");
+    reporter.step("fields");
+    reporter.stepDone("fields", "Ateni Street");
+    reporter.step("amenities", "3 parameter(s)");
+    reporter.stepDone("amenities");
+    reporter.step("images", "15 photo(s)");
+    reporter.stepDone("images", "15 uploaded");
+    reporter.step("publish");
+    reporter.stepDone("publish", "uuid 1cf275f3…");
+    reporter.step("checkout");
+    reporter.stepDone("checkout", "Publish fee paid");
+    await completePrefillJob(jobId, "https://statements.myhome.ge/ka/status/success");
+
+    const state = await getPrefillProgress(jobId);
+    assert.ok(state);
+    assert.equal(state.status, "success");
+    assert.deepEqual(
+      state.steps.filter((s) => s.status !== "done").map((s) => s.id),
+      [],
+      "no step may be left pending or running once the job succeeded"
+    );
+    assert.equal(state.steps.length, MYHOME_API_PREFILL_STEPS.length);
+    assert.ok(
+      state.logs.some((l) => l.message.includes("Publish fee paid")),
+      "the checkout detail should survive the later writes"
+    );
+    await redis.del(`prefill:progress:${jobId}`);
+  });
+
+  await test("the ss.ge API run replaces the browser-only step list", async () => {
+    const jobId = `progress-ssge-${Date.now()}`;
+    await initPrefillProgress(jobId, "ssge", "listing-ssge", "user-ssge");
+    const reporter = createPrefillReporter(jobId);
+
+    reporter.setSteps(SSGE_API_PREFILL_STEPS);
+    for (const id of ["login", "location", "draft", "images", "save", "publish"]) {
+      reporter.step(id);
+      reporter.stepDone(id);
+    }
+    await completePrefillJob(jobId, "https://home.ss.ge/ka/my-statements");
+
+    const state = await getPrefillProgress(jobId);
+    assert.ok(state);
+    assert.equal(state.status, "success");
+    assert.deepEqual(
+      state.steps.map((s) => s.id),
+      SSGE_API_PREFILL_STEPS.map((s) => s.id),
+      "the API stages, not step1..step8, should be on show"
+    );
+    assert.deepEqual(
+      state.steps.filter((s) => s.status !== "done").map((s) => s.id),
+      []
+    );
+    // Raw ids would leak into the log if a reported step were not in the list.
+    assert.ok(state.logs.some((l) => l.message.includes("Resolving location")));
+    await redis.del(`prefill:progress:${jobId}`);
+  });
+
+  await test("a browser fallback restores the browser step list", async () => {
+    const jobId = `progress-fallback-${Date.now()}`;
+    await initPrefillProgress(jobId, "myhome", "listing-fb", "user-fb");
+    const reporter = createPrefillReporter(jobId);
+
+    reporter.setSteps(MYHOME_API_PREFILL_STEPS);
+    reporter.step("login");
+    reporter.stepDone("login", "Failed");
+
+    // What createMyhomePost does when the API attempt hands over.
+    reporter.setSteps(MYHOME_PREFILL_STEPS);
+    reporter.step("browser");
+    await flushPrefillProgress(jobId);
+
+    const state = await getPrefillProgress(jobId);
+    assert.ok(state);
+    assert.deepEqual(
+      state.steps.map((s) => s.id),
+      MYHOME_PREFILL_STEPS.map((s) => s.id)
+    );
+    assert.equal(state.steps.find((s) => s.id === "browser")?.status, "running");
+    await redis.del(`prefill:progress:${jobId}`);
   });
 
   console.log(`\n${passed} passed`);

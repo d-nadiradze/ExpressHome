@@ -1,44 +1,98 @@
 /**
- * Tests for myhome publish-fee resolution and image upload retries.
+ * Tests for myhome publish-fee resolution.
  *
- * The service type id used to be hardcoded (22), which the API rejected with
- * "422 service_types is required" and pushed every prefill onto the browser.
+ * The fixtures below are trimmed copies of real GET /v2/services responses: one
+ * from an account with free statements left, one from an account that has used
+ * them up (which is the only difference — the "add-statement" service appears).
  *
  * Run: npx tsx src/lib/myhome-api-services.test.ts
  */
 import assert from "node:assert/strict";
+import { fetchRequiredServiceTypes } from "./myhome-api-prefill";
 
 const realFetch = globalThis.fetch;
 
-interface StubResponse {
-  status?: number;
-  body?: unknown;
-}
-
-/** Replace fetch with a scripted queue, returning the urls that were called. */
-function stubFetch(responses: StubResponse[]): { urls: string[] } {
-  const urls: string[] = [];
-  let call = 0;
-
-  globalThis.fetch = (async (input: string | URL | Request) => {
-    urls.push(typeof input === "string" ? input : input.toString());
-    const spec = responses[Math.min(call, responses.length - 1)];
-    call++;
-    const status = spec.status ?? 200;
+function stubFetch(status: number, body: unknown): { calls: number } {
+  const state = { calls: 0 };
+  globalThis.fetch = (async () => {
+    state.calls++;
     return {
       ok: status >= 200 && status < 300,
       status,
-      json: async () => spec.body,
-      text: async () => JSON.stringify(spec.body ?? ""),
+      json: async () => body,
+      text: async () => JSON.stringify(body),
     } as unknown as Response;
   }) as typeof globalThis.fetch;
-
-  return { urls };
+  return state;
 }
+
+const vips = [
+  {
+    id: 3,
+    website_id: 2,
+    key: "super-vip",
+    icon: "super-vip",
+    types: [{ id: 9, price: 9, days: [{ value: 1 }, { value: 2 }] }],
+  },
+];
+
+const freeAccountCatalog = {
+  result: true,
+  data: [
+    {
+      website_id: 2,
+      title: "Myhome",
+      services: {
+        vips,
+        additional_services: [
+          {
+            id: 6,
+            website_id: 2,
+            key: "add-color",
+            icon: "add-color",
+            types: [{ id: 18, price: 0.3, days: [{ value: 1 }] }],
+          },
+        ],
+      },
+    },
+  ],
+};
+
+const feeDueCatalog = {
+  result: true,
+  data: [
+    {
+      website_id: 2,
+      title: "Myhome",
+      services: {
+        vips,
+        additional_services: [
+          {
+            id: 6,
+            website_id: 2,
+            key: "add-color",
+            icon: "add-color",
+            types: [{ id: 18, price: 0.3, days: [{ value: 1 }] }],
+          },
+          {
+            id: 5,
+            website_id: 2,
+            key: "add-statement",
+            icon: "add-statement",
+            disabled: true,
+            types: [{ id: 22, price: 0.1 }],
+          },
+        ],
+      },
+    },
+  ],
+};
+
+const session = { accessToken: "token", refreshToken: "refresh" };
 
 let passed = 0;
 
-async function test(name: string, fn: () => Promise<void> | void): Promise<void> {
+async function test(name: string, fn: () => Promise<void>): Promise<void> {
   try {
     await fn();
     passed++;
@@ -51,116 +105,104 @@ async function test(name: string, fn: () => Promise<void> | void): Promise<void>
   }
 }
 
-const session = { accessToken: "token", refreshToken: "refresh" };
-
 async function main(): Promise<void> {
-  // Imported after the env is settled so module-level config picks it up.
   delete process.env.MYHOME_SERVICE_TYPE_ID;
-  const { fetchRequiredServiceTypes } = await import("./myhome-api-prefill");
 
-  await test("mandatory (marked) myhome services become service_types", async () => {
-    stubFetch([
-      {
-        body: [
-          {
-            id: 7,
-            icon: "add-statement",
-            website_id: 2,
-            marked: true,
-            types: [{ id: 41, day: 30, price: 3 }],
-          },
-          {
-            id: 8,
-            icon: "myhome-vip",
-            website_id: 2,
-            marked: false,
-            types: [{ id: 42, day: 7, price: 10 }],
-          },
-        ],
-      },
-    ]);
-
+  await test("an exhausted free limit yields the add-statement fee", async () => {
+    stubFetch(200, feeDueCatalog);
     const result = await fetchRequiredServiceTypes(session);
-    assert.deepEqual(result.types, [{ id: 41, day: 30 }]);
+    // The fee service carries no period of its own; the site sends 30.
+    assert.deepEqual(result.types, [{ id: 22, day: 30 }]);
     assert.equal(result.error, undefined);
   });
 
-  await test("services wrapped in a data envelope are read too", async () => {
-    stubFetch([
-      {
-        body: {
-          data: [
-            {
-              id: 7,
-              icon: "add-statement",
-              website_id: 2,
-              marked: true,
-              types: [{ id: 55, selects: [{ value: 15 }] }],
-            },
-          ],
-        },
-      },
-    ]);
-
-    const result = await fetchRequiredServiceTypes(session);
-    assert.deepEqual(result.types, [{ id: 55, day: 15 }]);
-  });
-
-  await test("no mandatory service means no payment is attempted", async () => {
-    stubFetch([
-      {
-        body: [
-          {
-            id: 8,
-            icon: "myhome-vip",
-            website_id: 2,
-            marked: false,
-            types: [{ id: 42, day: 7 }],
-          },
-        ],
-      },
-    ]);
-
+  await test("free statements left means nothing is charged", async () => {
+    stubFetch(200, freeAccountCatalog);
     const result = await fetchRequiredServiceTypes(session);
     assert.deepEqual(result.types, []);
     assert.equal(result.error, undefined);
   });
 
-  await test("livo-only services are ignored", async () => {
-    stubFetch([
-      {
-        body: [
-          {
-            id: 9,
-            icon: "livo-vip",
-            website_id: 1,
-            marked: true,
-            types: [{ id: 90, day: 30 }],
+  await test("optional promo services are never bought", async () => {
+    stubFetch(200, {
+      result: true,
+      data: [
+        {
+          website_id: 2,
+          services: {
+            vips,
+            additional_services: [
+              {
+                id: 27,
+                website_id: 2,
+                key: "myhome-facebook-boost",
+                types: [{ id: 56, price: 49, days: [{ value: 3 }] }],
+              },
+            ],
           },
-        ],
-      },
-    ]);
-
+        },
+      ],
+    });
     assert.deepEqual((await fetchRequiredServiceTypes(session)).types, []);
   });
 
-  await test("a failing catalog reports an error instead of guessing an id", async () => {
-    stubFetch([{ status: 401, body: { message: "Unauthenticated" } }]);
+  await test("a livo-only website block is ignored", async () => {
+    stubFetch(200, {
+      result: true,
+      data: [
+        {
+          website_id: 1,
+          services: {
+            additional_services: [
+              { id: 5, website_id: 1, key: "add-statement", types: [{ id: 99 }] },
+            ],
+          },
+        },
+      ],
+    });
+    assert.deepEqual((await fetchRequiredServiceTypes(session)).types, []);
+  });
 
+  await test("a fee service with no purchasable type is an error, not a skip", async () => {
+    stubFetch(200, {
+      result: true,
+      data: [
+        {
+          website_id: 2,
+          services: {
+            additional_services: [
+              { id: 5, website_id: 2, key: "add-statement", types: [] },
+            ],
+          },
+        },
+      ],
+    });
+    const result = await fetchRequiredServiceTypes(session);
+    assert.deepEqual(result.types, []);
+    assert.match(result.error ?? "", /no purchasable type/);
+  });
+
+  await test("a failing catalog reports an error instead of guessing", async () => {
+    stubFetch(401, { message: "Unauthenticated" });
     const result = await fetchRequiredServiceTypes(session);
     assert.deepEqual(result.types, []);
     assert.match(result.error ?? "", /services catalog failed \(HTTP 401\)/);
   });
 
-  await test("an explicit MYHOME_SERVICE_TYPE_ID override skips the catalog", async () => {
-    process.env.MYHOME_SERVICE_TYPE_ID = "41";
-    process.env.MYHOME_SERVICE_DAYS = "30";
-    const { urls } = stubFetch([{ body: [] }]);
+  await test("an unexpected body shape is an error, not a silent skip", async () => {
+    stubFetch(200, { result: true, data: null });
+    const result = await fetchRequiredServiceTypes(session);
+    assert.match(result.error ?? "", /no websites/);
+  });
 
+  await test("MYHOME_SERVICE_TYPE_ID overrides without calling the catalog", async () => {
+    process.env.MYHOME_SERVICE_TYPE_ID = "22";
+    process.env.MYHOME_SERVICE_DAYS = "30";
+    const state = stubFetch(200, freeAccountCatalog);
     try {
       const result = await fetchRequiredServiceTypes(session);
-      assert.deepEqual(result.types, [{ id: 41, day: 30 }]);
-      assert.equal(urls.length, 0, "override must not call the catalog");
+      assert.deepEqual(result.types, [{ id: 22, day: 30 }]);
+      assert.equal(state.calls, 0);
     } finally {
       delete process.env.MYHOME_SERVICE_TYPE_ID;
     }
@@ -168,10 +210,11 @@ async function main(): Promise<void> {
 
   await test("a junk override falls back to the catalog", async () => {
     process.env.MYHOME_SERVICE_TYPE_ID = "not-a-number";
-    stubFetch([{ body: [] }]);
-
+    stubFetch(200, feeDueCatalog);
     try {
-      assert.deepEqual((await fetchRequiredServiceTypes(session)).types, []);
+      assert.deepEqual((await fetchRequiredServiceTypes(session)).types, [
+        { id: 22, day: 30 },
+      ]);
     } finally {
       delete process.env.MYHOME_SERVICE_TYPE_ID;
     }

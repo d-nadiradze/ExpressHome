@@ -14,16 +14,20 @@ import IORedis from "ioredis";
 import { redisConnection } from "@/lib/bullmq-queue";
 import {
   defaultPrefillSteps,
+  toPrefillSteps,
   type PrefillPlatform,
   type PrefillStep,
+  type PrefillStepDef,
   type PrefillStepStatus,
 } from "@/lib/prefill-steps";
 import { getPrefillQueue } from "@/lib/bullmq-queue";
 
-export type { PrefillPlatform, PrefillStep, PrefillStepStatus };
+export type { PrefillPlatform, PrefillStep, PrefillStepDef, PrefillStepStatus };
 export {
   MYHOME_PREFILL_STEPS,
   SSGE_PREFILL_STEPS,
+  MYHOME_API_PREFILL_STEPS,
+  SSGE_API_PREFILL_STEPS,
   defaultPrefillSteps,
 } from "@/lib/prefill-steps";
 
@@ -59,6 +63,8 @@ export interface PrefillReporter {
   step(id: string, detail?: string): void;
   stepDone(id: string, detail?: string): void;
   stepWarn(id: string, detail: string): void;
+  /** Swaps in the stages of the path this run committed to (API or browser). */
+  setSteps(steps: PrefillStepDef[]): void;
   log(level: PrefillLogLevel, message: string): void;
   warn(message: string): void;
   info(message: string): void;
@@ -139,15 +145,42 @@ async function writeState(state: PrefillProgressState): Promise<void> {
   }
 }
 
-async function updateState(
+/**
+ * One in-flight update per job, so the read-modify-write cycles cannot clobber
+ * each other.
+ *
+ * Reporters fire updates without awaiting them, and a fast API prefill emits
+ * several within a single Redis round trip. Unserialised, each of those reads
+ * the same state and the last write wins: finished steps silently revert to
+ * "running" and log lines disappear. Only the owning worker writes a job, so
+ * chaining in-process is enough.
+ */
+const updateChains = new Map<string, Promise<void>>();
+
+function updateState(
   jobId: string,
   mutate: (state: PrefillProgressState) => void
 ): Promise<void> {
-  const state = await readState(jobId);
-  if (!state) return;
-  mutate(state);
-  state.updatedAt = Date.now();
-  await writeState(state);
+  const previous = updateChains.get(jobId) ?? Promise.resolve();
+  // A rejected link must not break the ones queued behind it.
+  const next = previous.catch(() => {}).then(async () => {
+    const state = await readState(jobId);
+    if (!state) return;
+    mutate(state);
+    state.updatedAt = Date.now();
+    await writeState(state);
+  });
+
+  updateChains.set(jobId, next);
+  void next.catch(() => {}).finally(() => {
+    if (updateChains.get(jobId) === next) updateChains.delete(jobId);
+  });
+  return next;
+}
+
+/** Resolves once every update queued for this job has reached Redis. */
+export async function flushPrefillProgress(jobId: string): Promise<void> {
+  await updateChains.get(jobId)?.catch(() => {});
 }
 
 function pushLog(
@@ -371,6 +404,11 @@ export function createPrefillReporter(jobId: string): PrefillReporter {
         pushLog(state, "warn", `${findStepLabel(state, id)} — ${detail}`);
       });
     },
+    setSteps(steps) {
+      void updateState(jobId, (state) => {
+        state.steps = toPrefillSteps(steps);
+      });
+    },
     log(level, message) {
       void updateState(jobId, (state) => {
         pushLog(state, level, message);
@@ -507,6 +545,10 @@ export function createCancellablePrefillReporter(
       if (cancelled) return;
       base.stepWarn(id, detail);
     },
+    setSteps(steps) {
+      if (cancelled) return;
+      base.setSteps(steps);
+    },
     log(level, message) {
       if (cancelled) return;
       base.log(level, message);
@@ -533,6 +575,7 @@ export const noopPrefillReporter: PrefillReporter = {
   step() {},
   stepDone() {},
   stepWarn() {},
+  setSteps() {},
   log() {},
   warn() {},
   info() {},

@@ -51,6 +51,7 @@ import {
 import { cityForPrefill } from "@/lib/location-prefill";
 import {
   noopPrefillReporter,
+  SSGE_PREFILL_STEPS,
   type PrefillReporter,
 } from "@/lib/prefill-progress";
 
@@ -2651,6 +2652,8 @@ export async function createSsgePost(
   }
 ): Promise<{ success: boolean; postUrl?: string; error?: string }> {
   const reporter = options.reporter ?? noopPrefillReporter;
+  // Restores the browser stages, which an API attempt before this one replaced.
+  reporter.setSteps(SSGE_PREFILL_STEPS);
   listing = normalizeListingForSsgePrefill(listing, {
     sourceUrl: options.sourceUrl,
   });

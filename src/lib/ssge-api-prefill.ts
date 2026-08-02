@@ -42,6 +42,7 @@ import {
 } from "@/lib/listing-images";
 import {
   noopPrefillReporter,
+  SSGE_API_PREFILL_STEPS,
   type PrefillReporter,
 } from "@/lib/prefill-progress";
 
@@ -337,6 +338,7 @@ export async function createSsgePostViaApi(
   let session: SsgeApiSession | undefined;
 
   try {
+    reporter.setSteps(SSGE_API_PREFILL_STEPS);
     reporter.step("login");
     const login = await loginSsgeApi(credentials, { userId: options.userId });
     if (!login.success || !login.session) {

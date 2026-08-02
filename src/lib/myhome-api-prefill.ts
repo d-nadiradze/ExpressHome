@@ -35,6 +35,7 @@ import {
   resolveImagesForPlaywright,
 } from "@/lib/listing-images";
 import {
+  MYHOME_API_PREFILL_STEPS,
   noopPrefillReporter,
   type PrefillReporter,
 } from "@/lib/prefill-progress";
@@ -550,38 +551,60 @@ export interface MyhomeServiceType {
   day: number;
 }
 
+/** Catalog key of the statement-publishing fee ("myh-create-statement-fee"). */
+const PUBLISH_FEE_KEY = "add-statement";
+
 interface CatalogServiceType {
   id?: number;
+  price?: number;
+  /** Fixed period, when the service has one. */
   day?: number;
-  value?: number;
-  selects?: Array<{ value?: number }>;
+  /** Selectable periods; the fee service has none. */
+  days?: Array<{ value?: number }>;
 }
 
 interface CatalogService {
   id?: number;
+  key?: string;
   icon?: string;
   website_id?: number;
-  /** The site preselects "marked" services and disables deselecting them. */
-  marked?: boolean;
   types?: CatalogServiceType[];
 }
 
-function firstServiceType(service: CatalogService): MyhomeServiceType | null {
-  const type = service.types?.[0];
-  if (!type?.id) return null;
-  const day =
-    type.day ?? type.selects?.[0]?.value ?? type.value ?? defaultServiceDays();
-  return { id: type.id, day };
+/** `data` is a list of websites, each holding named groups of services. */
+interface CatalogWebsite {
+  website_id?: number;
+  services?: Record<string, CatalogService[]> | CatalogService[];
+}
+
+function flattenCatalog(websites: CatalogWebsite[]): CatalogService[] {
+  const out: CatalogService[] = [];
+  for (const site of websites) {
+    if (site.website_id !== undefined && site.website_id !== MYHOME_WEBSITE_ID) {
+      continue;
+    }
+    const groups = site.services;
+    if (Array.isArray(groups)) {
+      out.push(...groups);
+    } else {
+      for (const list of Object.values(groups ?? {})) {
+        if (Array.isArray(list)) out.push(...list);
+      }
+    }
+  }
+  return out.filter(
+    (s) => s.website_id === undefined || s.website_id === MYHOME_WEBSITE_ID
+  );
 }
 
 /**
- * The services the site would preselect for this account at checkout.
+ * The publishing fee myhome would charge this account for one more statement.
  *
- * A hardcoded service type id does not survive catalog changes — it comes back
- * as `422 service_types is required` and every prefill then falls through to the
- * browser. An empty list is a valid answer: nothing is owed, so the statement is
- * already published by `statements/create` alone (the site skips payment init
- * entirely in that case).
+ * myhome grants a few free statements a month, and the catalog is what says
+ * which side of that limit the account is on: the "add-statement" service only
+ * appears once the free ones are used up. No fee in the catalog means
+ * `statements/create` alone published the listing, exactly as the site behaves
+ * when nothing is selected at checkout.
  */
 export async function fetchRequiredServiceTypes(
   session: MyhomeApiSession
@@ -599,49 +622,60 @@ export async function fetchRequiredServiceTypes(
     return { types: [], error: `services catalog failed (HTTP ${res.status})` };
   }
 
-  const body = (await res.json().catch(() => null)) as
-    | CatalogService[]
-    | { data?: CatalogService[] }
-    | null;
-  const catalog = Array.isArray(body) ? body : body?.data;
-  if (!Array.isArray(catalog)) {
-    return { types: [], error: "services catalog returned no list" };
+  const body = (await res.json().catch(() => null)) as {
+    data?: CatalogWebsite[];
+  } | null;
+  if (!Array.isArray(body?.data)) {
+    return { types: [], error: "services catalog returned no websites" };
   }
 
-  const required = catalog.filter(
-    (service) =>
-      service.marked === true &&
-      (service.website_id === undefined ||
-        service.website_id === MYHOME_WEBSITE_ID)
-  );
+  const services = flattenCatalog(body.data);
+  const fee = services.find((s) => (s.key ?? s.icon) === PUBLISH_FEE_KEY);
 
-  const types: MyhomeServiceType[] = [];
-  for (const service of required) {
-    const type = firstServiceType(service);
-    if (type) types.push(type);
+  if (!fee) {
+    console.log(
+      `[myhome-api] no publish fee in catalog (${
+        services.map((s) => s.key ?? s.icon ?? s.id).join(", ") || "empty"
+      }) — statement is within the free limit`
+    );
+    return { types: [] };
   }
 
-  // Logged in full: if a fee turns out to be due that we did not detect, this
-  // line is the whole catalog needed to fix it without another spike.
+  const type = fee.types?.[0];
+  if (!type?.id) {
+    return {
+      types: [],
+      error: `"${PUBLISH_FEE_KEY}" service carries no purchasable type`,
+    };
+  }
+
+  // The fee has no period of its own; the site falls back to 30 the same way.
+  const day = type.day ?? type.days?.[0]?.value ?? defaultServiceDays();
   console.log(
-    `[myhome-api] services catalog (${catalog.length}): ` +
-      catalog
-        .map(
-          (s) =>
-            `${s.icon || s.id}#${s.types?.[0]?.id ?? "?"}${s.marked ? "*" : ""}`
-        )
-        .join(" ") +
-      ` → ${types.length} required`
+    `[myhome-api] publish fee due: type #${type.id} ${type.price ?? "?"} GEL (day=${day})`
   );
-
-  return { types };
+  return { types: [{ id: type.id, day }] };
 }
 
-async function payForStatement(
+/**
+ * myhome drops services it will not charge for before validating, so a request
+ * for a fee that does not apply comes back as an empty `service_types`. That is
+ * "nothing to pay", not a failure.
+ */
+function isNothingToPay(status: number, raw: string): boolean {
+  if (status !== 422) return false;
+  return /"field"\s*:\s*"service_types"/.test(raw) && /required/i.test(raw);
+}
+
+/**
+ * Buys `serviceTypes` for a statement out of the account balance. Exported so an
+ * already-created but unpaid statement can be settled without posting it again.
+ */
+export async function payMyhomeStatementFee(
   session: MyhomeApiSession,
   statementUuid: string,
   serviceTypes: MyhomeServiceType[]
-): Promise<{ success: boolean; error?: string }> {
+): Promise<{ success: boolean; error?: string; nothingToPay?: boolean }> {
   const initRes = await fetchWithTimeout(
     `${API_BASE}/v2/payments/init-statement-services`,
     {
@@ -667,6 +701,9 @@ async function payForStatement(
   }
   const paymentUuid = initJson.data?.payment_uuid;
   if (!initRes.ok || !initJson.result || !paymentUuid) {
+    if (isNothingToPay(initRes.status, initRaw)) {
+      return { success: true, nothingToPay: true };
+    }
     const detail = JSON.stringify(initJson.errors ?? initRaw).slice(0, 400);
     return {
       success: false,
@@ -685,15 +722,23 @@ async function payForStatement(
     }),
   });
 
-  const payJson = (await payRes.json().catch(() => ({}))) as {
-    result?: boolean;
-    data?: { status?: string };
-  };
+  const payRaw = await payRes.text();
+  let payJson: { result?: boolean; data?: { status?: string }; errors?: unknown } =
+    {};
+  try {
+    payJson = JSON.parse(payRaw);
+  } catch {
+    /* non-JSON */
+  }
 
   if (!payRes.ok || !payJson.result || payJson.data?.status !== "success") {
+    // Most often an empty myhome balance, so quote the API rather than guess.
+    const detail = JSON.stringify(payJson.errors ?? payRaw).slice(0, 300);
     return {
       success: false,
-      error: `Balance payment failed (HTTP ${payRes.status}, status=${payJson.data?.status ?? "?"})`,
+      error:
+        `Balance payment failed (HTTP ${payRes.status}, status=` +
+        `${payJson.data?.status ?? "?"}): ${detail} — top up the myhome balance`,
     };
   }
 
@@ -737,7 +782,7 @@ export async function createMyhomePostViaApi(
   const autoPublish = process.env.MYHOME_AUTO_PUBLISH === "true";
 
   try {
-    reporter.stepDone("browser", "API mode (no browser)");
+    reporter.setSteps(MYHOME_API_PREFILL_STEPS);
     reporter.step("login");
 
     const auth = await loginMyhomeApi(credentials);
@@ -747,8 +792,6 @@ export async function createMyhomePostViaApi(
     }
     const session = auth.session;
     reporter.stepDone("login");
-
-    reporter.stepDone("form", "Skipped (API)");
 
     reporter.step("fields");
     const location = await resolveMyhomeLocationIds(listing);
@@ -863,9 +906,13 @@ export async function createMyhomePostViaApi(
     }
 
     if (required.types.length === 0) {
-      reporter.stepDone("checkout", "No publish fee due");
+      reporter.stepDone("checkout", "Free statement — no fee due");
     } else {
-      const paid = await payForStatement(session, created.uuid, required.types);
+      const paid = await payMyhomeStatementFee(
+        session,
+        created.uuid,
+        required.types
+      );
       if (!paid.success) {
         reporter.stepWarn("checkout", paid.error || "Payment failed");
         return {
@@ -875,7 +922,10 @@ export async function createMyhomePostViaApi(
           listingCreated: true,
         };
       }
-      reporter.stepDone("checkout", "Balance paid");
+      reporter.stepDone(
+        "checkout",
+        paid.nothingToPay ? "Free statement — no fee due" : "Publish fee paid"
+      );
     }
 
     const postUrl =
