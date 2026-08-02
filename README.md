@@ -129,8 +129,9 @@ npm test        # every src/**/*.test.ts, each in its own process
 npm run typecheck
 ```
 
-No database or network is needed — the suites stub what they call. CI runs both
-on every push.
+Most suites stub what they call. `prefill-recovery.test.ts` needs Redis
+(`npm run redis:up`); CI starts a Redis service for it. CI runs both on every
+push.
 
 ---
 

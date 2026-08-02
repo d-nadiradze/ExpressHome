@@ -54,8 +54,32 @@ async function backdateProgress(redis: IORedis, jobId: string): Promise<void> {
   await redis.set(key, JSON.stringify(state), "EX", 300);
 }
 
+async function requireRedis(): Promise<IORedis> {
+  const url = process.env.REDIS_URL || "redis://localhost:6379";
+  const redis = new IORedis(url, {
+    maxRetriesPerRequest: 1,
+    connectTimeout: 2000,
+    lazyConnect: true,
+    // Quiet the "Unhandled error event" spam while we probe.
+    showFriendlyErrorStack: false,
+  });
+  redis.on("error", () => {});
+  try {
+    await redis.connect();
+    const pong = await redis.ping();
+    assert.equal(pong, "PONG");
+  } catch (err) {
+    await redis.quit().catch(() => null);
+    throw new Error(
+      `prefill-recovery tests need Redis at ${url} ` +
+        `(npm run redis:up). ${(err as Error).message}`
+    );
+  }
+  return redis;
+}
+
 async function main(): Promise<void> {
-  const redis = new IORedis(process.env.REDIS_URL || "redis://localhost:6379");
+  const redis = await requireRedis();
 
   await test("leaked browser slot fails fast instead of waiting forever", async () => {
     const limiter = createLimiter({ maxConcurrent: 1, maxQueueWaitMs: 150 });
