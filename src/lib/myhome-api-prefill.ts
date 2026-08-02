@@ -51,8 +51,20 @@ const FETCH_TIMEOUT_MS = parseInt(process.env.PARSE_GOTO_TIMEOUT_MS || "20000", 
 const UA =
   "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36";
 
-const DEFAULT_SERVICE_TYPE_ID = parseInt(process.env.MYHOME_SERVICE_TYPE_ID || "22", 10);
-const DEFAULT_SERVICE_DAYS = parseInt(process.env.MYHOME_SERVICE_DAYS || "30", 10);
+/** Optional operator override; normally the fee is resolved from the live catalog. */
+function serviceTypeIdOverride(): number | null {
+  const raw = process.env.MYHOME_SERVICE_TYPE_ID;
+  if (!raw) return null;
+  const id = parseInt(raw, 10);
+  return Number.isFinite(id) && id > 0 ? id : null;
+}
+
+function defaultServiceDays(): number {
+  return parseInt(process.env.MYHOME_SERVICE_DAYS || "30", 10);
+}
+
+/** statements.tnet.ge website ids (WEBSITES = { LIVO: 1, MYHOME: 2 }). */
+const MYHOME_WEBSITE_ID = 2;
 
 export function isMyhomeApiPrefillEnabled(): boolean {
   return process.env.MYHOME_API_PREFILL === "true";
@@ -275,7 +287,12 @@ export function resolveMyhomePublishContact(profile: {
   return { phone, ownerName: profile.name?.trim() || "" };
 }
 
-async function uploadImage(
+const IMAGE_UPLOAD_ATTEMPTS = parseInt(
+  process.env.MYHOME_IMAGE_UPLOAD_ATTEMPTS || "3",
+  10
+);
+
+async function uploadImageOnce(
   filePath: string,
   session: MyhomeApiSession
 ): Promise<UploadedImage | null> {
@@ -306,6 +323,35 @@ async function uploadImage(
   };
   if (!json.result || !json.data?.id || !json.data?.url) return null;
   return { id: json.data.id, url: json.data.url };
+}
+
+/**
+ * The upload endpoint returns sporadic 500s; a dropped photo is permanent for the
+ * listing, so retry before giving up on one.
+ */
+async function uploadImage(
+  filePath: string,
+  session: MyhomeApiSession
+): Promise<UploadedImage | null> {
+  for (let attempt = 1; attempt <= IMAGE_UPLOAD_ATTEMPTS; attempt++) {
+    try {
+      const uploaded = await uploadImageOnce(filePath, session);
+      if (uploaded) return uploaded;
+    } catch (err) {
+      console.warn(
+        `[myhome-api] image upload attempt ${attempt} threw: ${
+          err instanceof Error ? err.message : String(err)
+        }`
+      );
+    }
+    if (attempt < IMAGE_UPLOAD_ATTEMPTS) {
+      await new Promise((resolve) => setTimeout(resolve, 500 * attempt));
+    }
+  }
+  console.warn(
+    `[myhome-api] giving up on image after ${IMAGE_UPLOAD_ATTEMPTS} attempts: ${path.basename(filePath)}`
+  );
+  return null;
 }
 
 function appendIf(form: FormData, key: string, value: string | number | undefined) {
@@ -499,9 +545,102 @@ async function createStatement(
   return { uuid: json.data.uuid };
 }
 
+export interface MyhomeServiceType {
+  id: number;
+  day: number;
+}
+
+interface CatalogServiceType {
+  id?: number;
+  day?: number;
+  value?: number;
+  selects?: Array<{ value?: number }>;
+}
+
+interface CatalogService {
+  id?: number;
+  icon?: string;
+  website_id?: number;
+  /** The site preselects "marked" services and disables deselecting them. */
+  marked?: boolean;
+  types?: CatalogServiceType[];
+}
+
+function firstServiceType(service: CatalogService): MyhomeServiceType | null {
+  const type = service.types?.[0];
+  if (!type?.id) return null;
+  const day =
+    type.day ?? type.selects?.[0]?.value ?? type.value ?? defaultServiceDays();
+  return { id: type.id, day };
+}
+
+/**
+ * The services the site would preselect for this account at checkout.
+ *
+ * A hardcoded service type id does not survive catalog changes — it comes back
+ * as `422 service_types is required` and every prefill then falls through to the
+ * browser. An empty list is a valid answer: nothing is owed, so the statement is
+ * already published by `statements/create` alone (the site skips payment init
+ * entirely in that case).
+ */
+export async function fetchRequiredServiceTypes(
+  session: MyhomeApiSession
+): Promise<{ types: MyhomeServiceType[]; error?: string }> {
+  const override = serviceTypeIdOverride();
+  if (override) {
+    return { types: [{ id: override, day: defaultServiceDays() }] };
+  }
+
+  const res = await fetchWithTimeout(
+    `${API_BASE}/v2/services?websites=${MYHOME_WEBSITE_ID}`,
+    { method: "GET", headers: apiHeaders(session) }
+  );
+  if (!res.ok) {
+    return { types: [], error: `services catalog failed (HTTP ${res.status})` };
+  }
+
+  const body = (await res.json().catch(() => null)) as
+    | CatalogService[]
+    | { data?: CatalogService[] }
+    | null;
+  const catalog = Array.isArray(body) ? body : body?.data;
+  if (!Array.isArray(catalog)) {
+    return { types: [], error: "services catalog returned no list" };
+  }
+
+  const required = catalog.filter(
+    (service) =>
+      service.marked === true &&
+      (service.website_id === undefined ||
+        service.website_id === MYHOME_WEBSITE_ID)
+  );
+
+  const types: MyhomeServiceType[] = [];
+  for (const service of required) {
+    const type = firstServiceType(service);
+    if (type) types.push(type);
+  }
+
+  // Logged in full: if a fee turns out to be due that we did not detect, this
+  // line is the whole catalog needed to fix it without another spike.
+  console.log(
+    `[myhome-api] services catalog (${catalog.length}): ` +
+      catalog
+        .map(
+          (s) =>
+            `${s.icon || s.id}#${s.types?.[0]?.id ?? "?"}${s.marked ? "*" : ""}`
+        )
+        .join(" ") +
+      ` → ${types.length} required`
+  );
+
+  return { types };
+}
+
 async function payForStatement(
   session: MyhomeApiSession,
-  statementUuid: string
+  statementUuid: string,
+  serviceTypes: MyhomeServiceType[]
 ): Promise<{ success: boolean; error?: string }> {
   const initRes = await fetchWithTimeout(
     `${API_BASE}/v2/payments/init-statement-services`,
@@ -510,7 +649,7 @@ async function payForStatement(
       headers: apiHeaders(session, { "Content-Type": "application/json" }),
       body: JSON.stringify({
         statement_uuids: [statementUuid],
-        service_types: [{ id: DEFAULT_SERVICE_TYPE_ID, day: DEFAULT_SERVICE_DAYS }],
+        service_types: serviceTypes,
       }),
     }
   );
@@ -583,7 +722,13 @@ export async function createMyhomePostViaApi(
     sourceUrl?: string | null;
     reporter?: PrefillReporter;
   }
-): Promise<{ success: boolean; postUrl?: string; error?: string }> {
+): Promise<{
+  success: boolean;
+  postUrl?: string;
+  error?: string;
+  /** True once the statement exists on myhome — callers must not retry via browser. */
+  listingCreated?: boolean;
+}> {
   const reporter = options.reporter ?? noopPrefillReporter;
   listing = normalizeListingForMyhomePrefill(listing, {
     sourceUrl: options.sourceUrl,
@@ -702,18 +847,41 @@ export async function createMyhomePostViaApi(
     }
     reporter.stepDone("publish", `uuid ${created.uuid.slice(0, 8)}…`);
 
+    // From here on the statement exists on myhome.ge. Any later failure must not
+    // hand over to the browser flow — that would publish the same listing twice.
+    const statementsUrl =
+      "https://statements.myhome.ge/ka/user-profile/my-statements?referrer=myhome";
+
     reporter.step("checkout");
-    const paid = await payForStatement(session, created.uuid);
-    if (!paid.success) {
-      reporter.stepDone("checkout", "Payment failed");
-      return { success: false, error: paid.error || "Payment failed" };
+    const required = await fetchRequiredServiceTypes(session);
+    if (required.error) {
+      reporter.stepWarn(
+        "checkout",
+        `Could not read paid services (${required.error}) — publish fee not paid`
+      );
+      return { success: true, postUrl: statementsUrl, listingCreated: true };
     }
-    reporter.stepDone("checkout", "Balance paid");
+
+    if (required.types.length === 0) {
+      reporter.stepDone("checkout", "No publish fee due");
+    } else {
+      const paid = await payForStatement(session, created.uuid, required.types);
+      if (!paid.success) {
+        reporter.stepWarn("checkout", paid.error || "Payment failed");
+        return {
+          success: false,
+          error: paid.error || "Payment failed",
+          postUrl: statementsUrl,
+          listingCreated: true,
+        };
+      }
+      reporter.stepDone("checkout", "Balance paid");
+    }
 
     const postUrl =
       "https://statements.myhome.ge/ka/status/success?referrer=myhome&scenario=payment";
     reporter.success(`Listing published via API (${created.uuid})`);
-    return { success: true, postUrl };
+    return { success: true, postUrl, listingCreated: true };
   } catch (e) {
     const msg = e instanceof Error ? e.message : "API prefill failed";
     reporter.log("error", msg);
