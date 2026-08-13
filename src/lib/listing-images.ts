@@ -2,6 +2,7 @@ import fs from "fs/promises";
 import path from "path";
 import { randomUUID } from "crypto";
 import os from "os";
+import { request as playwrightRequest } from "playwright";
 import { ssgeWatermarkedImageUrl } from "@/lib/ssge-image";
 import { mapWithConcurrency, parseConcurrency } from "@/lib/parallel-map";
 
@@ -28,6 +29,9 @@ const EXT_BY_MIME: Record<string, string> = {
 
 const FETCH_USER_AGENT =
   "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36";
+
+const IMAGE_DOWNLOAD_FALLBACK_TO_PLAYWRIGHT =
+  process.env.IMAGE_DOWNLOAD_FALLBACK_TO_PLAYWRIGHT !== "false";
 
 export function getUploadDir(): string {
   return process.env.UPLOAD_DIR || path.join(process.cwd(), "data", "uploads");
@@ -149,8 +153,20 @@ function extFromUrl(url: string): string {
 }
 
 async function downloadImageCandidate(url: string): Promise<string | null> {
+  let referer: string | undefined;
+  try {
+    referer = `${new URL(url).origin}/`;
+  } catch {
+    referer = undefined;
+  }
+
   const res = await fetch(url, {
-    headers: { "User-Agent": FETCH_USER_AGENT },
+    headers: {
+      "User-Agent": FETCH_USER_AGENT,
+      Accept: "image/avif,image/webp,image/apng,image/*,*/*;q=0.8",
+      "Accept-Language": "ka-GE,ka;q=0.9,en;q=0.8",
+      ...(referer ? { Referer: referer } : {}),
+    },
     signal: AbortSignal.timeout(30000),
   });
   if (!res.ok) {
@@ -188,6 +204,56 @@ async function downloadRemoteImage(url: string): Promise<string | null> {
     }
   }
   return null;
+}
+
+async function downloadImageCandidateViaPlaywright(
+  url: string
+): Promise<string | null> {
+  if (!IMAGE_DOWNLOAD_FALLBACK_TO_PLAYWRIGHT) return null;
+
+  let referer: string | undefined;
+  try {
+    referer = `${new URL(url).origin}/`;
+  } catch {
+    referer = undefined;
+  }
+
+  // Playwright's request client is more "browser-like" and can bypass
+  // bot-protection that blocks plain Node fetch (e.g. myhome image hosts).
+  const ctx = await playwrightRequest.newContext({
+    userAgent: FETCH_USER_AGENT,
+    extraHTTPHeaders: {
+      Accept: "image/avif,image/webp,image/apng,image/*,*/*;q=0.8",
+      "Accept-Language": "ka-GE,ka;q=0.9,en;q=0.8",
+      ...(referer ? { Referer: referer } : {}),
+    },
+    timeout: 30000,
+  });
+
+  try {
+    const res = await ctx.get(url);
+    if (!res.ok()) {
+      console.warn(`Playwright image download failed ${url}: ${res.status()}`);
+      return null;
+    }
+
+    const buf = Buffer.from(await res.body());
+    if (buf.length > MAX_IMAGE_BYTES) {
+      console.warn(`Playwright image too large, skipping: ${url}`);
+      return null;
+    }
+
+    const contentType = res.headers()["content-type"] ?? null;
+    const ext = extFromContentType(contentType) || extFromUrl(url);
+    const tempPath = path.join(os.tmpdir(), `myhome-img-${randomUUID()}.${ext}`);
+    await fs.writeFile(tempPath, buf);
+    return tempPath;
+  } catch (e) {
+    console.warn(`Playwright download threw for ${url}:`, e);
+    return null;
+  } finally {
+    await ctx.dispose();
+  }
 }
 
 async function resolveUploadedImagePath(
@@ -234,6 +300,22 @@ export async function resolveImagesForPlaywright(
 
   const tempPaths: string[] = [];
   const paths: string[] = [];
+
+  // Optionally retry any failed HTTP downloads via Playwright request client.
+  if (IMAGE_DOWNLOAD_FALLBACK_TO_PLAYWRIGHT) {
+    for (let i = 0; i < urls.length; i++) {
+      if (resolved[i]) continue;
+      const url = urls[i];
+      if (!(url.startsWith("http://") || url.startsWith("https://"))) continue;
+
+      const tempPath = await downloadImageCandidateViaPlaywright(url);
+      if (!tempPath) continue;
+
+      resolved[i] = { path: tempPath, temp: true };
+    }
+  }
+
+  // Rebuild paths in original order (index 0 is always the main photo).
   for (const item of resolved) {
     if (!item) continue;
     paths.push(item.path);

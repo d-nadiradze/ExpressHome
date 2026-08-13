@@ -38,6 +38,7 @@ export const redisConnection = getRedisConnection();
 
 export const PREFILL_QUEUE_NAME = "prefill";
 export const PARSE_QUEUE_NAME = "parse";
+export const MARKET_QUEUE_NAME = "market";
 
 // ---- Prefill job data types ------------------------------------------------
 
@@ -66,10 +67,15 @@ export interface ParseJobData {
   userId: string;
 }
 
+export interface MarketPollJobData {
+  reason?: string;
+}
+
 // ---- Queue singletons (lazy) -----------------------------------------------
 
 let _prefillQueue: Queue<PrefillJobData> | null = null;
 let _parseQueue: Queue<ParseJobData> | null = null;
+let _marketQueue: Queue<MarketPollJobData> | null = null;
 
 export function getPrefillQueue(): Queue<PrefillJobData> {
   if (!_prefillQueue) {
@@ -99,10 +105,25 @@ export function getParseQueue(): Queue<ParseJobData> {
   return _parseQueue;
 }
 
+export function getMarketQueue(): Queue<MarketPollJobData> {
+  if (!_marketQueue) {
+    _marketQueue = new Queue<MarketPollJobData>(MARKET_QUEUE_NAME, {
+      connection: redisConnection,
+      defaultJobOptions: {
+        attempts: 2,
+        removeOnComplete: 50,
+        removeOnFail: 50,
+      },
+    });
+  }
+  return _marketQueue;
+}
+
 /** Call once on app shutdown to close queues gracefully. */
 export async function closeAllQueues(): Promise<void> {
   await Promise.all([
     _prefillQueue?.close().finally(() => { _prefillQueue = null; }),
     _parseQueue?.close().finally(() => { _parseQueue = null; }),
+    _marketQueue?.close().finally(() => { _marketQueue = null; }),
   ]);
 }
