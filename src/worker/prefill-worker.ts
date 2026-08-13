@@ -21,9 +21,12 @@ import { Worker, type Job } from "bullmq";
 import {
   PREFILL_QUEUE_NAME,
   PARSE_QUEUE_NAME,
+  MARKET_QUEUE_NAME,
   redisConnection,
+  getMarketQueue,
   type PrefillJobData,
   type ParseJobData,
+  type MarketPollJobData,
 } from "@/lib/bullmq-queue";
 import { runMyhomePrefillJob, runSsgePrefillJob } from "@/lib/prefill-runner";
 import {
@@ -35,6 +38,8 @@ import { closeAllBrowsers, registerBrowserShutdownHooks } from "@/lib/browser-li
 import { db } from "@/lib/db";
 import { parseSsgeListingViaFetch } from "@/lib/ssge-fetch-parser";
 import { isValidSsgeUrl } from "@/lib/utils";
+import { isMarketPollEnabled, marketPollIntervalMs } from "@/lib/market-constants";
+import { runMarketPoll } from "@/lib/market-poller";
 
 const PARSE_CONCURRENCY = parseInt(process.env.PARSE_MAX_CONCURRENT || "3", 10);
 const PREFILL_CONCURRENCY = parseInt(process.env.PREFILL_MAX_CONCURRENT || "2", 10);
@@ -252,12 +257,70 @@ async function recoverStuckParseJobs() {
 
 void recoverStuckParseJobs();
 
+// ---- Market listing poll (owner / special statements cache) ----------------
+
+const MARKET_POLL_TIMEOUT_MS = parseInt(
+  process.env.MARKET_POLL_TIMEOUT_MS || "540000",
+  10
+);
+
+let marketWorker: Worker<MarketPollJobData> | null = null;
+
+async function processMarketPollJob(job: Job<MarketPollJobData>): Promise<void> {
+  return withDeadline(`Market poll ${job.id}`, MARKET_POLL_TIMEOUT_MS, runMarketPoll());
+}
+
+async function startMarketPoller(): Promise<void> {
+  if (!isMarketPollEnabled()) {
+    console.log("[worker] Market poll disabled (MARKET_POLL_ENABLED=false)");
+    return;
+  }
+
+  const interval = marketPollIntervalMs();
+  const queue = getMarketQueue();
+
+  const existing = await queue.getRepeatableJobs();
+  for (const job of existing) {
+    await queue.removeRepeatableByKey(job.key);
+  }
+  await queue.add(
+    "poll",
+    { reason: "repeat" },
+    { repeat: { every: interval } }
+  );
+
+  await queue.add("poll", { reason: "startup" }, { jobId: "market-poll-startup" }).catch(() => {
+    // A leftover startup job from a previous boot is still in the queue.
+  });
+
+  marketWorker = new Worker<MarketPollJobData>(MARKET_QUEUE_NAME, processMarketPollJob, {
+    connection: redisConnection,
+    concurrency: 1,
+    lockDuration: Math.max(MARKET_POLL_TIMEOUT_MS, 600_000),
+  });
+  marketWorker.on("completed", (job) =>
+    console.log(`[worker:market] Job ${job.id} completed`)
+  );
+  marketWorker.on("failed", (job, err) =>
+    console.error(`[worker:market] Job ${job?.id} failed:`, err.message)
+  );
+  marketWorker.on("error", (err) => console.error("[worker:market] error:", err));
+
+  console.log(`[worker] Market poll every ${interval}ms`);
+}
+
+void startMarketPoller();
+
 // ---- Graceful shutdown -----------------------------------------------------
 
 registerBrowserShutdownHooks(async () => {
   console.log("[worker] Shutting down...");
-  await Promise.all([parseWorker.close(), prefillWorker.close()]);
+  await Promise.all([
+    parseWorker.close(),
+    prefillWorker.close(),
+    marketWorker?.close() ?? Promise.resolve(),
+  ]);
   await closeAllBrowsers();
 });
 
-console.log("[worker] Ready — listening for parse and prefill jobs.");
+console.log("[worker] Ready — listening for parse, prefill, and market jobs.");

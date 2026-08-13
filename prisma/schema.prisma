@@ -179,3 +179,78 @@ model AiTokenUsage {
   @@index([userId, createdAt])
   @@map("ai_token_usage")
 }
+
+enum MarketPlatform {
+  MYHOME
+  SSGE
+}
+
+enum MarketSellerType {
+  OWNER
+  AGENCY
+  AGENT
+  UNKNOWN
+}
+
+model MarketListing {
+  id             String           @id @default(cuid())
+  platform       MarketPlatform
+  externalId     String
+  url            String           @db.VarChar(1024)
+  sellerType     MarketSellerType
+  propertyType   String
+  dealType       String
+  city           String?
+  district       String?
+  street         String?
+  streetNumber   String?
+  area           String?
+  rooms          String?
+  floor          String?
+  cadastralCode  String?
+  price          String?
+  currency       String?
+  title          String?
+  imageUrl       String?          @db.VarChar(1024)
+  sourcePostedAt DateTime?
+  firstSeenAt    DateTime         @default(now())
+  lastSeenAt     DateTime         @default(now())
+  isSpecial      Boolean          @default(false)
+  createdAt      DateTime         @default(now())
+  updatedAt      DateTime         @updatedAt
+
+  matchesAsOwner MarketListingMatch[] @relation("OwnerListing")
+  matchesAsCopy  MarketListingMatch[] @relation("AgencyListing")
+
+  @@unique([platform, externalId])
+  @@index([sellerType, sourcePostedAt])
+  @@index([sellerType, firstSeenAt])
+  @@index([isSpecial, lastSeenAt])
+  @@index([cadastralCode])
+  @@index([propertyType, city])
+  @@map("market_listings")
+}
+
+model MarketListingMatch {
+  id              String   @id @default(cuid())
+  ownerListingId  String
+  agencyListingId String
+  reason          String
+  createdAt       DateTime @default(now())
+
+  ownerListing  MarketListing @relation("OwnerListing", fields: [ownerListingId], references: [id], onDelete: Cascade)
+  agencyListing MarketListing @relation("AgencyListing", fields: [agencyListingId], references: [id], onDelete: Cascade)
+
+  @@unique([ownerListingId, agencyListingId])
+  @@index([ownerListingId])
+  @@map("market_listing_matches")
+}
+
+model MarketSyncState {
+  id           String    @id @default("singleton")
+  lastPolledAt DateTime?
+  lastError    String?   @db.Text
+  updatedAt    DateTime  @updatedAt
+
+  @@map("market_sync_state")
+}
