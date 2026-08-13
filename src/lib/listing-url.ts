@@ -7,8 +7,13 @@ export function extractMyhomeListingIdFromUrl(url: string): string | null {
   const pr = url.match(/\/pr\/(\d+)/i);
   if (pr) return pr[1];
 
-  const seo = url.match(/\/udzravi-qoneba\/(\d+)/i);
-  if (seo) return seo[1];
+  // Older SEO: /udzravi-qoneba/{id}/slug/
+  const seoIdFirst = url.match(/\/udzravi-qoneba\/(\d+)(?:\/|$|\?|#)/i);
+  if (seoIdFirst) return seoIdFirst[1];
+
+  // Current SEO: /udzravi-qoneba/{slug}-{id}/  e.g. iyideba-3-otaxiani-bina-…-25495762
+  const seoIdLast = url.match(/\/udzravi-qoneba\/[^/?#]*?-(\d{5,})(?:\/|$|\?|#)/i);
+  if (seoIdLast) return seoIdLast[1];
 
   const statement = url.match(/\/statement[s]?\/(\d+)/i);
   if (statement) return statement[1];
@@ -48,6 +53,8 @@ export async function findExistingParsedListing(userId: string, url: string) {
         OR: [
           { sourceUrl: { contains: `/pr/${listingId}/` } },
           { sourceUrl: { contains: `/udzravi-qoneba/${listingId}/` } },
+          { sourceUrl: { contains: `-${listingId}/` } },
+          { sourceUrl: { contains: `-${listingId}` } },
         ],
       },
       orderBy: { updatedAt: "desc" },
