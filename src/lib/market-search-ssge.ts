@@ -256,8 +256,11 @@ export async function searchSsgeMarket(
 export async function fetchSsgeMarketDetail(
   externalId: string
 ): Promise<Partial<Pick<MarketCard, "cadastralCode" | "street" | "streetNumber" | "sourcePostedAt" | "floor" | "area">>> {
+  // api-gateway only exposes this as PUT with the id in the query string;
+  // GET/POST answer 405 and a body-only id returns a card without the address.
   const json = await ssgeJson(
-    `/RealEstate/details?applicationId=${encodeURIComponent(externalId)}`
+    `/RealEstate/details?applicationId=${encodeURIComponent(externalId)}`,
+    { method: "PUT" }
   );
   const root = asRecord(json);
   const data = asRecord(root?.data) ?? root;
