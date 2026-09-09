@@ -24,7 +24,26 @@ import {
   isPrefillCancelled,
   markPrefillRunning,
   PrefillCancelledError,
+  type PrefillReporter,
 } from "@/lib/prefill-progress-redis";
+
+/**
+ * Shown as the headline whenever a prefill attempt fails. The operator cannot
+ * act on the technical reason, so that goes to the log list underneath. Setup
+ * problems the operator *can* fix (no linked account, missing listing) keep
+ * their own message instead.
+ */
+export const PREFILL_FAILURE_MESSAGE =
+  "განცხადებას პრობლემა აქვს ჩაუგდეთ შოთის და გაასწორებს !";
+
+async function failWithOperatorMessage(
+  jobId: string,
+  reporter: PrefillReporter,
+  reason: string
+): Promise<void> {
+  reporter.log("error", reason);
+  await failPrefillJob(jobId, PREFILL_FAILURE_MESSAGE);
+}
 
 function listingPayload(listing: {
   title: string | null;
@@ -168,7 +187,11 @@ export async function runMyhomePrefillJob(jobId: string, listingId: string, user
         where: { id: listingId },
         data: { postStatus: "FAILED" },
       });
-      await failPrefillJob(jobId, result.error || "Failed to pre-fill form");
+      await failWithOperatorMessage(
+        jobId,
+        reporter,
+        result.error || "Failed to pre-fill form"
+      );
       return;
     }
 
@@ -191,8 +214,9 @@ export async function runMyhomePrefillJob(jobId: string, listingId: string, user
         data: { postStatus: "FAILED" },
       })
       .catch(() => null);
-    await failPrefillJob(
+    await failWithOperatorMessage(
       jobId,
+      reporter,
       error instanceof Error ? error.message : "Prefill failed unexpectedly"
     );
   } finally {
@@ -301,7 +325,11 @@ export async function runSsgePrefillJob(jobId: string, listingId: string, userId
         where: { id: listingId },
         data: { ssgePostStatus: "FAILED" },
       });
-      await failPrefillJob(jobId, result.error || "Failed to pre-fill form");
+      await failWithOperatorMessage(
+        jobId,
+        reporter,
+        result.error || "Failed to pre-fill form"
+      );
       return;
     }
 
@@ -324,8 +352,9 @@ export async function runSsgePrefillJob(jobId: string, listingId: string, userId
         data: { ssgePostStatus: "FAILED" },
       })
       .catch(() => null);
-    await failPrefillJob(
+    await failWithOperatorMessage(
       jobId,
+      reporter,
       error instanceof Error ? error.message : "Prefill failed unexpectedly"
     );
   } finally {

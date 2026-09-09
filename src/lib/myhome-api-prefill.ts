@@ -8,8 +8,8 @@
  *   4. POST /v2/payments/init-statement-services
  *   5. POST /v2/payments/pay (balance)
  *
- * Enable with MYHOME_API_PREFILL=true (falls back to browser prefill on failure
- * when MYHOME_API_PREFILL_FALLBACK=true, the default).
+ * Enable with MYHOME_API_PREFILL=true. A failure fails the job outright unless
+ * MYHOME_API_PREFILL_FALLBACK=true opts back into the slow browser wizard.
  */
 import { readFile } from "fs/promises";
 import path from "path";
@@ -72,8 +72,13 @@ export function isMyhomeApiPrefillEnabled(): boolean {
   return process.env.MYHOME_API_PREFILL === "true";
 }
 
+/**
+ * Off unless explicitly asked for: the wizard holds the single Chromium slot for
+ * minutes, so one failing listing stalls every other prefill behind it. Failing
+ * fast keeps the queue moving.
+ */
 export function shouldFallbackToBrowserPrefill(): boolean {
-  return process.env.MYHOME_API_PREFILL_FALLBACK !== "false";
+  return process.env.MYHOME_API_PREFILL_FALLBACK === "true";
 }
 
 interface MyhomeApiSession {

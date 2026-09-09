@@ -65,8 +65,13 @@ export function isSsgeApiPrefillEnabled(): boolean {
   return process.env.SSGE_API_PREFILL === "true";
 }
 
+/**
+ * Off unless explicitly asked for: the wizard holds the single Chromium slot for
+ * minutes, so one failing listing stalls every other prefill behind it. Failing
+ * fast keeps the queue moving.
+ */
 export function shouldFallbackToBrowserPrefill(): boolean {
-  return process.env.SSGE_API_PREFILL_FALLBACK !== "false";
+  return process.env.SSGE_API_PREFILL_FALLBACK === "true";
 }
 
 interface SsgeApiFetchContext {
