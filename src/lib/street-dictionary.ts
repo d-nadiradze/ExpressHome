@@ -65,6 +65,28 @@ function nfc(value: string): string {
   return typeof value.normalize === "function" ? value.normalize("NFC") : value;
 }
 
+/** A lone Georgian letter, i.e. an initial standing in for a given name. */
+function isInitialToken(token: string): boolean {
+  return [...token].length === 1 && /\p{Script=Georgian}/u.test(token);
+}
+
+/**
+ * Move a trailing given-name initial to the front, because the two sites order
+ * it differently: myhome writes „ანდრონიკაშვილი ლ." where ss.ge writes
+ * „ლ. ანდრონიკაშვილის". Applied only to an unambiguous single initial following
+ * a full word, so structural markers built from lone letters („მ/რ", „კ." for
+ * micro-district and quarter) are left alone.
+ */
+function leadWithInitial(tokens: string[]): string[] {
+  const initials = tokens.filter(isInitialToken);
+  if (initials.length !== 1) return tokens;
+
+  const at = tokens.findIndex(isInitialToken);
+  if (at < 1 || [...tokens[at - 1]].length < 4) return tokens;
+
+  return [tokens[at], ...tokens.filter((_, i) => i !== at)];
+}
+
 /**
  * Reduce a street name to a comparable key: lower-cased, punctuation/hyphen
  * flattened, street-type abbreviations expanded, trailing house numbers and
@@ -121,6 +143,8 @@ export function normalizeStreetForMatch(raw: string | null | undefined): string 
     .map((t) => STREET_TYPE_CANONICAL[t] ?? t)
     .filter((t) => t.length > 0);
 
+  tokens = leadWithInitial(tokens);
+
   let joined = tokens.join(" ");
   for (const [re, replacement] of STREET_SPELLING_VARIANTS) {
     joined = joined.replace(re, replacement);
@@ -162,13 +186,31 @@ export function splitStreetName(raw: string | null | undefined): SplitStreetName
   return { base: norm, type: "", norm };
 }
 
+/**
+ * Same name token up to the genitive „ს" the sites disagree on („ანდრონიკაშვილი"
+ * vs „ანდრონიკაშვილის"). Deliberately narrow: a longer ending or a shorter stem
+ * lets generic nouns („ხევი" ≈ „ხევის") and given names („რამაზ" ≈ „რამაზის")
+ * stand in for the token that actually identifies the street.
+ */
+function tokensEquivalent(a: string, b: string): boolean {
+  if (a === b) return true;
+  const [short, long] = a.length <= b.length ? [a, b] : [b, a];
+  return (
+    short.length >= 6 &&
+    long.startsWith(short) &&
+    long.length - short.length <= 1
+  );
+}
+
 /** One token array is a leading- or trailing-aligned subsequence of the other. */
 function tokenPrefixOrSuffix(a: string[], b: string[]): boolean {
   const [short, long] = a.length <= b.length ? [a, b] : [b, a];
   if (short.length === 0) return false;
-  const startsAligned = short.every((t, i) => long[i] === t);
+  const startsAligned = short.every((t, i) => tokensEquivalent(long[i], t));
   const endOffset = long.length - short.length;
-  const endsAligned = short.every((t, i) => long[endOffset + i] === t);
+  const endsAligned = short.every((t, i) =>
+    tokensEquivalent(long[endOffset + i], t)
+  );
   return startsAligned || endsAligned;
 }
 

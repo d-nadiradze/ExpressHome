@@ -6,6 +6,7 @@ import crosswalk from "@/data/tbilisi-street-crosswalk.json";
 import {
   normalizeStreetForMatch,
   resolveStreetForTarget,
+  scoreStreetNameMatch,
   splitStreetHouseNumber,
   streetMatchKeyWithoutLead,
   type StreetCrosswalkEntry,
@@ -68,6 +69,43 @@ test("keeps leading numeric tokens that are part of the name", () => {
 test("lead-stripped key drops the first token", () => {
   assert.equal(streetMatchKeyWithoutLead("ი. აბაშიძის ქ."), "აბაშიძის ქუჩა");
   assert.equal(streetMatchKeyWithoutLead("ილია აბაშიძის ქუჩა"), "აბაშიძის ქუჩა");
+});
+
+test("moves a trailing given-name initial to the front", () => {
+  // myhome writes „ანდრონიკაშვილი ლ." where ss.ge writes „ლ. ანდრონიკაშვილის".
+  assert.equal(
+    normalizeStreetForMatch("ანდრონიკაშვილი ლ. ქ."),
+    "ლ ანდრონიკაშვილი ქუჩა"
+  );
+  assert.equal(
+    normalizeStreetForMatch("ლ. ანდრონიკაშვილის ქ."),
+    "ლ ანდრონიკაშვილის ქუჩა"
+  );
+});
+
+test("leaves lone-letter structural markers in place", () => {
+  // „მ/რ" (micro-district) and „კ." (quarter) are not given-name initials.
+  assert.equal(
+    normalizeStreetForMatch("ვაზისუბანი II მ/რ კ. 5"),
+    "ვაზისუბანი ii მ რ კ"
+  );
+  // A street-type token is never treated as an initial.
+  assert.equal(normalizeStreetForMatch("ბოდავი II-ქ"), "ბოდავი ii ქუჩა");
+});
+
+test("scores across the sites' differing genitive endings", () => {
+  // „ანდრონიკაშვილი" (myhome) and „ანდრონიკაშვილის" (ss.ge) are one street.
+  assert.ok(
+    scoreStreetNameMatch("ანდრონიკაშვილი ლ. ქ.", "ანდრონიკაშვილის ქ.") >= 300
+  );
+  // A different honoree's initial must not match, however close the surname.
+  for (const other of ["ა.ანდრონიკაშვილის ქ.", "ე. ანდრონიკაშვილის ქ."]) {
+    assert.equal(scoreStreetNameMatch("ანდრონიკაშვილი ლ. ქ.", other), 0);
+  }
+  // Short stems stay distinct so generic nouns and given names cannot stand in
+  // for the token that identifies the street.
+  assert.equal(scoreStreetNameMatch("კოჯრის ხევი", "ხევის ქ."), 0);
+  assert.equal(scoreStreetNameMatch("რამაზ ჩხიკვაძის ქ.", "რამაზის ქ."), 0);
 });
 
 // —— Resolution (data-driven over the generated crosswalk) ——
