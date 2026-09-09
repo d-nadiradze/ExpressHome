@@ -87,6 +87,10 @@ jobs:
           username: ${{ secrets.DEPLOY_USER }}
           key: ${{ secrets.DEPLOY_SSH_KEY }}
           script_stop: true
+          # Default is 10m, which the VPS overruns just unpacking the images:
+          # the worker ships the whole builder stage (dev deps, sources, .next)
+          # plus Chromium, and extraction is disk-bound on a box this size.
+          command_timeout: 40m
           envs: GHCR_USER,GHCR_TOKEN,GIT_BRANCH
           script: |
             set -e
