@@ -58,6 +58,10 @@ services:
     command: ["node", "node_modules/tsx/dist/cli.mjs", "src/worker/prefill-worker.ts"]
     environment:
       - HOME=/app
+      # Keep the JS heap under mem_limit so V8 collects instead of the kernel
+      # OOM-killing this container mid-publish (a killed prefill is never
+      # retried, so the listing would be lost). Photo buffers are off-heap.
+      - NODE_OPTIONS=${WORKER_NODE_OPTIONS:---max-old-space-size=224}
       - DATABASE_URL=mysql://myhome:${MYSQL_PASSWORD}@mysql:3306/myhome_parser
       - ENCRYPTION_KEY=${ENCRYPTION_KEY}
       - REDIS_URL=redis://redis:6379

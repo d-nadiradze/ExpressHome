@@ -109,3 +109,83 @@ export function findAgencyDuplicate<T extends DuplicateListingFields>(
   }
   return null;
 }
+
+/**
+ * Bucket key for address matching. Area is excluded because it matches with a
+ * ±2 m² tolerance, so it is compared inside the bucket instead of keyed on.
+ * Returns null when the row lacks the fields address matching requires.
+ */
+export function addressBucketKey(
+  listing: DuplicateListingFields
+): string | null {
+  const street = normalizeStreetForMatch(listing.street);
+  const number = normalizeHouseNumber(listing.streetNumber);
+  const floor = normalizeFloor(listing.floor);
+  if (!street || !number || !floor) return null;
+  if (parseAreaM2(listing.area) == null) return null;
+  return [
+    (listing.propertyType || "").trim(),
+    cityKey(listing.city),
+    street,
+    number,
+    floor,
+  ].join("|");
+}
+
+export type AgencyIndex<T extends DuplicateListingFields> = {
+  byCadastral: Map<string, T>;
+  byAddress: Map<string, T[]>;
+};
+
+/**
+ * Pre-groups agency/agent rows so each owner is checked against a handful of
+ * candidates instead of every agency row (the poll was O(owners × agencies)).
+ */
+export function buildAgencyIndex<T extends DuplicateListingFields>(
+  agencies: Iterable<T>
+): AgencyIndex<T> {
+  const byCadastral = new Map<string, T>();
+  const byAddress = new Map<string, T[]>();
+
+  for (const agency of agencies) {
+    const cadastral = normalizeCadastral(agency.cadastralCode);
+    if (cadastral && !byCadastral.has(cadastral)) {
+      byCadastral.set(cadastral, agency);
+    }
+
+    const key = addressBucketKey(agency);
+    if (key) {
+      const bucket = byAddress.get(key);
+      if (bucket) bucket.push(agency);
+      else byAddress.set(key, [agency]);
+    }
+  }
+
+  return { byCadastral, byAddress };
+}
+
+/** Same verdict as findAgencyDuplicate, but cadastral-first and index-backed. */
+export function findAgencyDuplicateIndexed<T extends DuplicateListingFields>(
+  owner: T,
+  index: AgencyIndex<T>
+): { listing: T; reason: DuplicateMatchReason } | null {
+  const cadastral = normalizeCadastral(owner.cadastralCode);
+  if (cadastral) {
+    const hit = index.byCadastral.get(cadastral);
+    if (hit && !(owner.id && hit.id === owner.id)) {
+      return { listing: hit, reason: "cadastral" };
+    }
+  }
+
+  const key = addressBucketKey(owner);
+  if (key) {
+    for (const candidate of index.byAddress.get(key) ?? []) {
+      if (owner.id && candidate.id === owner.id) continue;
+      if (addressDuplicate(owner, candidate)) {
+        return { listing: candidate, reason: "address" };
+      }
+    }
+  }
+
+  return null;
+}

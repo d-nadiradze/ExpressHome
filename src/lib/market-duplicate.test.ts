@@ -3,9 +3,12 @@
  */
 import assert from "node:assert/strict";
 import {
+  addressBucketKey,
   addressDuplicate,
+  buildAgencyIndex,
   cadastralDuplicate,
   findAgencyDuplicate,
+  findAgencyDuplicateIndexed,
   listingsAreDuplicates,
   normalizeCadastral,
   normalizeFloor,
@@ -132,6 +135,111 @@ test("findAgencyDuplicate skips self and non-matches", () => {
 test("house number and floor helpers", () => {
   assert.equal(normalizeHouseNumber("№ 12 ა"), "12ა");
   assert.equal(normalizeFloor("სართული 7"), "7");
+});
+
+test("addressBucketKey is null without street, number, floor or area", () => {
+  const full = {
+    sellerType: "OWNER",
+    propertyType: "ბინა",
+    city: "თბილისი",
+    street: "პეკინის გამზირი",
+    streetNumber: "12",
+    floor: "5",
+    area: "64",
+  };
+  assert.ok(addressBucketKey(full));
+  assert.equal(addressBucketKey({ ...full, streetNumber: "" }), null);
+  assert.equal(addressBucketKey({ ...full, floor: "" }), null);
+  assert.equal(addressBucketKey({ ...full, area: "" }), null);
+  assert.equal(addressBucketKey({ ...full, street: "" }), null);
+});
+
+test("bucket key ignores spelling and city variants so copies land together", () => {
+  const owner = {
+    sellerType: "OWNER",
+    propertyType: "ბინა",
+    city: "თბილისი",
+    street: "პეკინის გამზ.",
+    streetNumber: "12ა",
+    floor: "5",
+    area: "64.5",
+  };
+  const agency = {
+    sellerType: "AGENCY",
+    propertyType: "ბინა",
+    city: "Tbilisi",
+    street: "პეკინის გამზირი",
+    streetNumber: "12ა",
+    floor: "5",
+    area: "66",
+  };
+  assert.equal(addressBucketKey(owner), addressBucketKey(agency));
+});
+
+test("indexed matcher agrees with the linear one", () => {
+  const agencies = [
+    { id: "a1", sellerType: "AGENCY", propertyType: "ბინა", cadastralCode: "01.10.01.001" },
+    {
+      id: "a2",
+      sellerType: "AGENT",
+      propertyType: "ბინა",
+      city: "თბილისი",
+      street: "პეკინის გამზირი",
+      streetNumber: "12ა",
+      floor: "5",
+      area: "66",
+      cadastralCode: "",
+    },
+  ];
+  const index = buildAgencyIndex(agencies);
+
+  const byCadastral = {
+    id: "o1",
+    sellerType: "OWNER",
+    propertyType: "ბინა",
+    cadastralCode: "01.10.01.001",
+  };
+  const byAddress = {
+    id: "o2",
+    sellerType: "OWNER",
+    propertyType: "ბინა",
+    city: "Tbilisi",
+    street: "პეკინის გამზ.",
+    streetNumber: "12ა",
+    floor: "5",
+    area: "64.5",
+    cadastralCode: "",
+  };
+  const original = {
+    id: "o3",
+    sellerType: "OWNER",
+    propertyType: "ბინა",
+    city: "თბილისი",
+    street: "ირინა შტენბერგის ქ.",
+    streetNumber: "4",
+    floor: "2",
+    area: "77",
+    cadastralCode: "",
+  };
+
+  for (const owner of [byCadastral, byAddress, original]) {
+    const linear = findAgencyDuplicate(owner, agencies);
+    const indexed = findAgencyDuplicateIndexed(owner, index);
+    assert.equal(Boolean(indexed), Boolean(linear), `verdict for ${owner.id}`);
+    assert.equal(indexed?.reason, linear?.reason, `reason for ${owner.id}`);
+  }
+
+  assert.equal(findAgencyDuplicateIndexed(original, index), null);
+});
+
+test("indexed matcher never matches a listing against itself", () => {
+  const row = {
+    id: "same",
+    sellerType: "AGENCY",
+    propertyType: "ბინა",
+    cadastralCode: "01.02.03",
+  };
+  assert.equal(findAgencyDuplicateIndexed(row, buildAgencyIndex([row])), null);
 });
 
 console.log("market-duplicate tests passed");

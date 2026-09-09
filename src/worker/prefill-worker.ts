@@ -24,6 +24,8 @@ import {
   MARKET_QUEUE_NAME,
   redisConnection,
   getMarketQueue,
+  getPrefillQueue,
+  getParseQueue,
   type PrefillJobData,
   type ParseJobData,
   type MarketPollJobData,
@@ -266,7 +268,33 @@ const MARKET_POLL_TIMEOUT_MS = parseInt(
 
 let marketWorker: Worker<MarketPollJobData> | null = null;
 
+/**
+ * The poll shares this process (and its container memory limit) with prefills,
+ * which hold photo buffers and a Chromium. Running both at once has OOM-killed
+ * the worker mid-publish, and a killed prefill is never retried
+ * (maxStalledCount: 0), so the upload is simply lost. Yield to user work.
+ */
+async function prefillsInFlight(): Promise<number> {
+  try {
+    const [prefillActive, parseActive] = await Promise.all([
+      getPrefillQueue().getActiveCount(),
+      getParseQueue().getActiveCount(),
+    ]);
+    return prefillActive + parseActive;
+  } catch (err) {
+    console.warn("[worker:market] could not read queue depth:", err);
+    return 0;
+  }
+}
+
 async function processMarketPollJob(job: Job<MarketPollJobData>): Promise<void> {
+  const busy = await prefillsInFlight();
+  if (busy > 0) {
+    console.log(
+      `[worker:market] Skipping poll — ${busy} parse/prefill job(s) active; next tick will retry`
+    );
+    return;
+  }
   return withDeadline(`Market poll ${job.id}`, MARKET_POLL_TIMEOUT_MS, runMarketPoll());
 }
 

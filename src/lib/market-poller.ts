@@ -15,7 +15,7 @@ import {
   marketPageSize,
   type MarketPropertyType,
 } from "@/lib/market-constants";
-import { findAgencyDuplicate, isAgencyLike } from "@/lib/market-duplicate";
+import { buildAgencyIndex, findAgencyDuplicateIndexed } from "@/lib/market-duplicate";
 import { fetchMyhomeMarketDetail, searchMyhomeMarket } from "@/lib/market-search-myhome";
 import { fetchSsgeMarketDetail, searchSsgeMarket } from "@/lib/market-search-ssge";
 import type { MarketCard, MarketSellerSlice } from "@/lib/market-types";
@@ -34,40 +34,48 @@ function uniqueCards(cards: MarketCard[]): MarketCard[] {
   return out;
 }
 
+/**
+ * Collects one seller slice, deduplicating as it goes. Keyed by platform+id in
+ * a Map rather than re-scanning the accumulated array per card, which on a
+ * 1 GB host was both the CPU cost and a second copy of every card in memory.
+ */
 async function searchSlice(
   slice: MarketSellerSlice,
   pages: number,
   pageSize: number
 ): Promise<MarketCard[]> {
-  const cards: MarketCard[] = [];
+  const byKey = new Map<string, MarketCard>();
+
+  const addPage = (page: MarketCard[]): number => {
+    let added = 0;
+    for (const card of page) {
+      const key = `${card.platform}:${card.externalId}`;
+      if (byKey.has(key)) continue;
+      byKey.set(key, card);
+      added++;
+    }
+    return added;
+  };
 
   for (const propertyType of MARKET_PROPERTY_TYPES) {
     for (let page = 1; page <= pages; page++) {
       try {
         const myhome = await searchMyhomeMarket(propertyType, slice, page, pageSize);
         if (myhome.length === 0) break;
-        const newIds = myhome.filter(
-          (c) => !cards.some((x) => x.platform === "MYHOME" && x.externalId === c.externalId)
-        );
-        cards.push(...myhome);
-        if (newIds.length === 0) break;
+        // Same ids again means the API ignored our paging — stop paging this type.
+        if (addPage(myhome) === 0) break;
       } catch (err) {
         console.warn(`[market] myhome ${slice} ${propertyType} p${page}:`, err);
         break;
       }
     }
 
-    const typeIds = SSGE_MARKET_TYPE_IDS[propertyType];
-    for (const typeId of typeIds) {
+    for (const typeId of SSGE_MARKET_TYPE_IDS[propertyType]) {
       for (let page = 1; page <= pages; page++) {
         try {
           const ssge = await searchSsgeMarket(propertyType, slice, page, pageSize, typeId);
           if (ssge.length === 0) break;
-          const newIds = ssge.filter(
-            (c) => !cards.some((x) => x.platform === "SSGE" && x.externalId === c.externalId)
-          );
-          cards.push(...ssge);
-          if (newIds.length === 0) break;
+          if (addPage(ssge) === 0) break;
         } catch (err) {
           console.warn(`[market] ss.ge ${slice} ${propertyType}/${typeId} p${page}:`, err);
           break;
@@ -76,7 +84,7 @@ async function searchSlice(
     }
   }
 
-  return uniqueCards(cards);
+  return [...byKey.values()];
 }
 
 async function existingKeys(
@@ -208,62 +216,106 @@ type MatchRow = {
   cadastralCode: string | null;
 };
 
-async function recomputeSpecial(): Promise<{ owners: number; special: number }> {
-  const rows: MatchRow[] = await db.marketListing.findMany({
-    where: {
-      dealType: MARKET_DEAL_TYPE_KA,
-      city: { in: [MARKET_CITY_KA, "Tbilisi", "tbilisi"] },
-      propertyType: { in: [...MARKET_PROPERTY_TYPES] },
-    },
-    select: {
-      id: true,
-      sellerType: true,
-      platform: true,
-      propertyType: true,
-      city: true,
-      street: true,
-      streetNumber: true,
-      area: true,
-      floor: true,
-      cadastralCode: true,
-    },
-  });
+const MATCH_SELECT = {
+  id: true,
+  sellerType: true,
+  platform: true,
+  propertyType: true,
+  city: true,
+  street: true,
+  streetNumber: true,
+  area: true,
+  floor: true,
+  cadastralCode: true,
+} as const;
 
-  const agencies = rows.filter((r) => isAgencyLike(r.sellerType));
-  const owners = rows.filter((r) => r.sellerType === "OWNER");
+const RECOMPUTE_PAGE_SIZE = 500;
+const UPDATE_CHUNK = 500;
+
+const MARKET_SCOPE: Prisma.MarketListingWhereInput = {
+  dealType: MARKET_DEAL_TYPE_KA,
+  city: { in: [MARKET_CITY_KA, "Tbilisi", "tbilisi"] },
+  propertyType: { in: [...MARKET_PROPERTY_TYPES] },
+};
+
+/** Page through a slice so the worker never holds the whole table at once. */
+async function forEachPage(
+  sellerType: Prisma.MarketListingWhereInput["sellerType"],
+  onPage: (rows: MatchRow[]) => void | Promise<void>
+): Promise<number> {
+  let cursor: string | undefined;
+  let seen = 0;
+
+  for (;;) {
+    const rows: MatchRow[] = await db.marketListing.findMany({
+      where: { ...MARKET_SCOPE, sellerType },
+      select: MATCH_SELECT,
+      orderBy: { id: "asc" },
+      take: RECOMPUTE_PAGE_SIZE,
+      ...(cursor ? { cursor: { id: cursor }, skip: 1 } : {}),
+    });
+    if (rows.length === 0) break;
+
+    seen += rows.length;
+    await onPage(rows);
+    if (rows.length < RECOMPUTE_PAGE_SIZE) break;
+    cursor = rows[rows.length - 1].id;
+  }
+
+  return seen;
+}
+
+function chunk<T>(items: T[], size: number): T[][] {
+  const out: T[][] = [];
+  for (let i = 0; i < items.length; i += size) {
+    out.push(items.slice(i, i + size));
+  }
+  return out;
+}
+
+async function recomputeSpecial(): Promise<{ owners: number; special: number }> {
+  // Only agency/agent rows are indexed; owners are streamed against the index.
+  const agencyRows: MatchRow[] = [];
+  await forEachPage({ in: ["AGENCY", "AGENT"] }, (rows) => {
+    agencyRows.push(...rows);
+  });
+  const index = buildAgencyIndex(agencyRows);
+  agencyRows.length = 0;
 
   const specialIds: string[] = [];
   const notSpecialIds: string[] = [];
   const matchCreates: { ownerListingId: string; agencyListingId: string; reason: string }[] = [];
 
-  for (const owner of owners) {
-    const hit = findAgencyDuplicate(owner, agencies);
-    if (hit) {
-      notSpecialIds.push(owner.id);
-      matchCreates.push({
-        ownerListingId: owner.id,
-        agencyListingId: hit.listing.id,
-        reason: hit.reason,
-      });
-    } else {
-      specialIds.push(owner.id);
+  const owners = await forEachPage("OWNER", (rows) => {
+    for (const owner of rows) {
+      const hit = findAgencyDuplicateIndexed(owner, index);
+      if (hit) {
+        notSpecialIds.push(owner.id);
+        matchCreates.push({
+          ownerListingId: owner.id,
+          agencyListingId: hit.listing.id,
+          reason: hit.reason,
+        });
+      } else {
+        specialIds.push(owner.id);
+      }
     }
-  }
+  });
 
   await db.$transaction(async (tx) => {
     await tx.marketListingMatch.deleteMany({});
-    if (matchCreates.length > 0) {
-      await tx.marketListingMatch.createMany({ data: matchCreates, skipDuplicates: true });
+    for (const batch of chunk(matchCreates, UPDATE_CHUNK)) {
+      await tx.marketListingMatch.createMany({ data: batch, skipDuplicates: true });
     }
-    if (specialIds.length > 0) {
+    for (const batch of chunk(specialIds, UPDATE_CHUNK)) {
       await tx.marketListing.updateMany({
-        where: { id: { in: specialIds } },
+        where: { id: { in: batch } },
         data: { isSpecial: true },
       });
     }
-    if (notSpecialIds.length > 0) {
+    for (const batch of chunk(notSpecialIds, UPDATE_CHUNK)) {
       await tx.marketListing.updateMany({
-        where: { id: { in: notSpecialIds } },
+        where: { id: { in: batch } },
         data: { isSpecial: false },
       });
     }
@@ -273,7 +325,7 @@ async function recomputeSpecial(): Promise<{ owners: number; special: number }> 
     });
   });
 
-  return { owners: owners.length, special: specialIds.length };
+  return { owners, special: specialIds.length };
 }
 
 async function writeSyncState(lastPolledAt: Date, lastError: string | null): Promise<void> {
