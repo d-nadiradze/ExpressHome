@@ -48,7 +48,7 @@ import {
 
 const AUTH_URL = "https://accounts.tnet.ge/api/ka/user/auth";
 const API_BASE = "https://api-statements.tnet.ge";
-const STATIC_BASE = "https://static-statements.tnet.ge";
+const STATIC_BASE = "https://static-api-statements.tnet.ge";
 const FETCH_TIMEOUT_MS = parseInt(process.env.PARSE_GOTO_TIMEOUT_MS || "20000", 10);
 const UA =
   "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36";
@@ -81,12 +81,12 @@ export function shouldFallbackToBrowserPrefill(): boolean {
   return process.env.MYHOME_API_PREFILL_FALLBACK === "true";
 }
 
-interface MyhomeApiSession {
+export interface MyhomeApiSession {
   accessToken: string;
   refreshToken: string;
 }
 
-interface UploadedImage {
+export interface UploadedImage {
   id: number;
   url: string;
 }
@@ -108,10 +108,11 @@ function apiHeaders(session: MyhomeApiSession, extra?: Record<string, string>) {
 
 async function fetchWithTimeout(
   url: string,
-  init: RequestInit
+  init: RequestInit,
+  timeoutMs = FETCH_TIMEOUT_MS
 ): Promise<Response> {
   const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), FETCH_TIMEOUT_MS);
+  const timer = setTimeout(() => controller.abort(), timeoutMs);
   try {
     return await fetch(url, { ...init, signal: controller.signal });
   } finally {
@@ -294,14 +295,23 @@ export function resolveMyhomePublishContact(profile: {
   return { phone, ownerName: profile.name?.trim() || "" };
 }
 
+/**
+ * static-api-statements answers uploads in 1–10s and occasionally slower; aborting
+ * a slow upload only restarts it from zero, so give it far longer than other calls.
+ */
+const IMAGE_UPLOAD_TIMEOUT_MS = parseInt(
+  process.env.MYHOME_IMAGE_UPLOAD_TIMEOUT_MS || "60000",
+  10
+);
+
 const IMAGE_UPLOAD_ATTEMPTS = parseInt(
   process.env.MYHOME_IMAGE_UPLOAD_ATTEMPTS || "3",
   10
 );
 
 /**
- * Uploads are latency-bound, not bandwidth-bound (15 photos ≈ 1.7MB but ~600ms
- * each), so parallelism is a ~4x win. The ceiling is memory: every in-flight
+ * Uploads are latency-bound, not bandwidth-bound (a 20KB photo still takes
+ * 1–10s), so parallelism is the main win. The ceiling is memory: every in-flight
  * photo holds a buffer of up to MAX_IMAGE_BYTES.
  */
 function imageUploadConcurrency(): number {
@@ -322,11 +332,15 @@ async function uploadImageOnce(
   form.append("image", new Blob([buf], { type: mime }), filename);
   form.append("type", "1");
 
-  const res = await fetchWithTimeout(`${STATIC_BASE}/v1/files/upload-image`, {
-    method: "POST",
-    headers: apiHeaders(session),
-    body: form,
-  });
+  const res = await fetchWithTimeout(
+    `${STATIC_BASE}/v1/files/upload-image`,
+    {
+      method: "POST",
+      headers: apiHeaders(session),
+      body: form,
+    },
+    IMAGE_UPLOAD_TIMEOUT_MS
+  );
 
   if (!res.ok) {
     console.warn(`[myhome-api] image upload failed: HTTP ${res.status}`);
@@ -781,6 +795,8 @@ export async function createMyhomePostViaApi(
     userId: string;
     sourceUrl?: string | null;
     reporter?: PrefillReporter;
+    /** Photos already on myhome for this exact image set (see myhome-image-cache). */
+    preuploadedImages?: UploadedImage[] | null;
   }
 ): Promise<{
   success: boolean;
@@ -795,6 +811,17 @@ export async function createMyhomePostViaApi(
   });
 
   const autoPublish = process.env.MYHOME_AUTO_PUBLISH === "true";
+  const preuploaded = options.preuploadedImages?.length ? options.preuploadedImages : null;
+
+  // Photos are the slow part (myhome takes seconds per upload), so they start
+  // first and run alongside login and form resolution instead of after them.
+  const downloads =
+    listing.images.length > 0 && !preuploaded
+      ? resolveImagesForPlaywright(listing.images, options.listingId, options.userId)
+      : null;
+  // Handled now: it may reject while login is still in flight.
+  downloads?.catch(() => undefined);
+  let uploadTask: Promise<UploadedImage[]> | null = null;
 
   try {
     reporter.setSteps(MYHOME_API_PREFILL_STEPS);
@@ -807,6 +834,17 @@ export async function createMyhomePostViaApi(
     }
     const session = auth.session;
     reporter.stepDone("login");
+
+    if (downloads) {
+      uploadTask = downloads
+        .then(({ paths }) => uploadListingImages(paths, session))
+        .catch((err) => {
+          console.warn(
+            `[myhome-api] photo pipeline failed: ${err instanceof Error ? err.message : String(err)}`
+          );
+          return [];
+        });
+    }
 
     reporter.step("fields");
     const location = await resolveMyhomeLocationIds(listing);
@@ -843,28 +881,22 @@ export async function createMyhomePostViaApi(
     reporter.stepDone("amenities");
 
     let uploaded: UploadedImage[] = [];
-    if (listing.images.length > 0) {
+    if (preuploaded) {
+      uploaded = preuploaded;
+      reporter.stepDone("images", `${uploaded.length} pre-uploaded`);
+    } else if (uploadTask) {
       reporter.step("images", `${listing.images.length} photo(s)`);
-      const { paths, cleanup } = await resolveImagesForPlaywright(
-        listing.images,
-        options.listingId,
-        options.userId
+      const waitStarted = Date.now();
+      uploaded = await uploadTask;
+      console.log(
+        `[myhome-api] waited ${Date.now() - waitStarted}ms for photos after form was ready`
       );
-      try {
-        const started = Date.now();
-        const results = await mapWithConcurrency(
-          paths.slice(0, MAX_LISTING_IMAGES),
-          imageUploadConcurrency(),
-          (p) => uploadImage(p, session)
-        );
-        uploaded = results.filter((img): img is UploadedImage => img !== null);
-        console.log(
-          `[myhome-api] uploaded ${uploaded.length}/${results.length} photo(s) in ${
-            Date.now() - started
-          }ms (concurrency ${imageUploadConcurrency()})`
-        );
-      } finally {
-        await cleanup();
+      if (uploaded.length === 0) {
+        reporter.stepDone("images", "Failed");
+        return {
+          success: false,
+          error: `No photos uploaded to myhome (0/${listing.images.length}) — myhome requires at least one`,
+        };
       }
       reporter.stepDone("images", `${uploaded.length} uploaded`);
     } else {
@@ -959,5 +991,35 @@ export async function createMyhomePostViaApi(
     const msg = e instanceof Error ? e.message : "API prefill failed";
     reporter.log("error", msg);
     return { success: false, error: msg };
+  } finally {
+    // Temp photos may still be uploading after an early return; delete them once
+    // the uploads settle without holding the job result back.
+    if (downloads) {
+      const settled = uploadTask ?? Promise.resolve();
+      void settled
+        .catch(() => undefined)
+        .then(() => downloads)
+        .then(({ cleanup }) => cleanup())
+        .catch(() => undefined);
+    }
   }
+}
+
+export async function uploadListingImages(
+  paths: string[],
+  session: MyhomeApiSession
+): Promise<UploadedImage[]> {
+  const started = Date.now();
+  const results = await mapWithConcurrency(
+    paths.slice(0, MAX_LISTING_IMAGES),
+    imageUploadConcurrency(),
+    (p) => uploadImage(p, session)
+  );
+  const uploaded = results.filter((img): img is UploadedImage => img !== null);
+  console.log(
+    `[myhome-api] uploaded ${uploaded.length}/${results.length} photo(s) in ${
+      Date.now() - started
+    }ms (concurrency ${imageUploadConcurrency()})`
+  );
+  return uploaded;
 }

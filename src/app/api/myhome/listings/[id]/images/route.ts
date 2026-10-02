@@ -102,6 +102,9 @@ export async function POST(request: NextRequest, context: RouteContext) {
     data: { images },
   });
 
+  const { enqueueMyhomePreupload } = await import("@/lib/myhome-image-cache");
+  void enqueueMyhomePreupload(listingId, userId, updated.images);
+
   return NextResponse.json({
     success: true,
     urls: newUrls,

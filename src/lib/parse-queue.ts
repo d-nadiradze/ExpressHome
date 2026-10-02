@@ -91,6 +91,8 @@ async function runMyhomeParseInProcess(job: ParseJob): Promise<void> {
       },
     });
     console.log(`[parse] myhome OK: ${job.listingId} — "${d.title}"`);
+    const { enqueueMyhomePreupload } = await import("@/lib/myhome-image-cache");
+    void enqueueMyhomePreupload(job.listingId, job.userId, d.images);
   } catch (err) {
     console.error(`[parse] myhome failed for ${job.listingId}:`, err);
     try {

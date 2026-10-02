@@ -11,6 +11,7 @@ import {
   shouldRetryInBrowser,
   type PrefillAttemptResult,
 } from "@/lib/prefill-fallback";
+import { resolvePreuploadedImages } from "@/lib/myhome-image-cache";
 import { closeSsgePostSession, createSsgePost } from "@/lib/ssge-parser";
 import {
   createSsgePostViaApi,
@@ -154,7 +155,18 @@ export async function runMyhomePrefillJob(jobId: string, listingId: string, user
 
     if (isMyhomeApiPrefillEnabled()) {
       reporter.info("Using myhome API prefill (no browser)");
-      result = await createMyhomePostViaApi(credentials, payload, runOptions);
+      const preuploadedImages = await resolvePreuploadedImages(
+        listingId,
+        payload.images,
+        (msg) => reporter.info(msg)
+      );
+      if (preuploadedImages) {
+        reporter.info(`${preuploadedImages.length} photo(s) already on myhome — skipping upload`);
+      }
+      result = await createMyhomePostViaApi(credentials, payload, {
+        ...runOptions,
+        preuploadedImages,
+      });
       if (isPartialSuccess(result)) {
         console.warn(
           `[myhome API prefill] listing already created — not retrying in a browser: ${result.error}`

@@ -22,14 +22,22 @@ import {
   PREFILL_QUEUE_NAME,
   PARSE_QUEUE_NAME,
   MARKET_QUEUE_NAME,
+  MYHOME_PREUPLOAD_QUEUE_NAME,
   redisConnection,
   getMarketQueue,
+  getMyhomePreuploadQueue,
   getPrefillQueue,
   getParseQueue,
   type PrefillJobData,
   type ParseJobData,
   type MarketPollJobData,
+  type MyhomePreuploadJobData,
 } from "@/lib/bullmq-queue";
+import {
+  enqueueMyhomePreupload,
+  isMyhomePreuploadEnabled,
+  runMyhomePreuploadJob,
+} from "@/lib/myhome-image-cache";
 import { runMyhomePrefillJob, runSsgePrefillJob } from "@/lib/prefill-runner";
 import {
   abortPrefillJob,
@@ -45,6 +53,11 @@ import { runMarketPoll } from "@/lib/market-poller";
 
 const PARSE_CONCURRENCY = parseInt(process.env.PARSE_MAX_CONCURRENT || "3", 10);
 const PREFILL_CONCURRENCY = parseInt(process.env.PREFILL_MAX_CONCURRENT || "2", 10);
+const PREUPLOAD_CONCURRENCY = parseInt(process.env.MYHOME_PREUPLOAD_MAX_CONCURRENT || "2", 10);
+const PREUPLOAD_JOB_TIMEOUT_MS = parseInt(
+  process.env.MYHOME_PREUPLOAD_JOB_TIMEOUT_MS || "600000",
+  10
+);
 const REDIS_URL = process.env.REDIS_URL || "redis://localhost:6379";
 
 const PREFILL_JOB_TIMEOUT_MS = parseInt(
@@ -132,6 +145,7 @@ async function runParseJob(job: Job<ParseJobData>): Promise<void> {
       },
     });
     console.log(`[worker] Parse OK for ${listingId} — "${d.title}"`);
+    void enqueueMyhomePreupload(listingId, userId, d.images);
   } catch (error) {
     console.error(`[worker] Parse exception for ${listingId}:`, error);
     await db.parsedListing
@@ -140,7 +154,6 @@ async function runParseJob(job: Job<ParseJobData>): Promise<void> {
     throw error; // let BullMQ mark the job as failed (triggers retry if attempts > 1)
   }
 
-  void userId; // used for future scoping if needed
 }
 
 // ---- Prefill job processor -------------------------------------------------
@@ -219,7 +232,32 @@ const prefillWorker = new Worker<PrefillJobData>(
   }
 );
 
-for (const [name, w] of [["parse", parseWorker], ["prefill", prefillWorker]] as const) {
+// Photos go to myhome right after parse so prefills do not wait on myhome's
+// slow upload server. Its own queue, so it never takes a prefill slot.
+const preuploadWorker = isMyhomePreuploadEnabled()
+  ? new Worker<MyhomePreuploadJobData>(
+      MYHOME_PREUPLOAD_QUEUE_NAME,
+      (job) =>
+        withDeadline(
+          `Pre-upload ${job.id}`,
+          PREUPLOAD_JOB_TIMEOUT_MS,
+          runMyhomePreuploadJob(job.data.listingId, job.data.userId)
+        ),
+      {
+        connection: redisConnection,
+        concurrency: PREUPLOAD_CONCURRENCY,
+        lockDuration: PREUPLOAD_JOB_TIMEOUT_MS,
+      }
+    )
+  : null;
+
+const workers = [
+  ["parse", parseWorker],
+  ["prefill", prefillWorker],
+  ...(preuploadWorker ? [["preupload", preuploadWorker] as const] : []),
+] as const;
+
+for (const [name, w] of workers) {
   w.on("completed", (job) => console.log(`[worker:${name}] Job ${job.id} completed`));
   w.on("failed", (job, err) => console.error(`[worker:${name}] Job ${job?.id} failed:`, err.message));
   w.on("error", (err) => console.error(`[worker:${name}] error:`, err));
@@ -276,11 +314,12 @@ let marketWorker: Worker<MarketPollJobData> | null = null;
  */
 async function prefillsInFlight(): Promise<number> {
   try {
-    const [prefillActive, parseActive] = await Promise.all([
+    const [prefillActive, parseActive, preuploadActive] = await Promise.all([
       getPrefillQueue().getActiveCount(),
       getParseQueue().getActiveCount(),
+      preuploadWorker ? getMyhomePreuploadQueue().getActiveCount() : 0,
     ]);
-    return prefillActive + parseActive;
+    return prefillActive + parseActive + preuploadActive;
   } catch (err) {
     console.warn("[worker:market] could not read queue depth:", err);
     return 0;
@@ -346,6 +385,7 @@ registerBrowserShutdownHooks(async () => {
   await Promise.all([
     parseWorker.close(),
     prefillWorker.close(),
+    preuploadWorker?.close() ?? Promise.resolve(),
     marketWorker?.close() ?? Promise.resolve(),
   ]);
   await closeAllBrowsers();

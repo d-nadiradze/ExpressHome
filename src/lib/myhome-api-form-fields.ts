@@ -247,6 +247,13 @@ function balconyArea(raw: Record<string, string>, listing: MyhomeListing): strin
   return "";
 }
 
+function balconyCount(raw: Record<string, string>): string {
+  const direct = raw["აივნის რაოდენობა"]?.replace(/[^\d]/g, "");
+  if (direct && Number(direct) > 0) return direct;
+  const slash = raw["აივანი"]?.trim().match(/^(\d+)\s*\//);
+  return slash && Number(slash[1]) > 0 ? slash[1] : "1";
+}
+
 function livingRoomFields(
   raw: Record<string, string>,
   metadata: StatementMetadata
@@ -308,7 +315,7 @@ export function appendExtendedCreateFields(
     append("living_room_area", area);
 
     const ceiling = raw["ჭერის სიმაღლე"]?.trim();
-    if (ceiling) append("ceiling_height", normalizeCeilingHeight(ceiling));
+    if (ceiling) append("height", normalizeCeilingHeight(ceiling));
 
     const yard = raw["ეზოს ფართი"]?.trim();
     if (yard) append("yard_area", normalizeArea(yard));
@@ -316,8 +323,12 @@ export function appendExtendedCreateFields(
     const kitchen = raw["სამზარეულოს ფართი"]?.trim();
     if (kitchen) append("kitchen_area", normalizeArea(kitchen));
 
+    // myhome rejects a balcony count without an area, so the count only rides along with one.
     const balcony = balconyArea(raw, listing);
-    if (balcony) append("balcony_area", balcony);
+    if (balcony) {
+      append("balcony_area", balcony);
+      append("balconies", balconyCount(raw));
+    }
 
     const loggia = raw["ლოჯიის ფართი"]?.trim() || listing.loggiaArea?.trim();
     if (loggia) append("loggia_area", normalizeArea(loggia));

@@ -123,7 +123,7 @@ export async function parseMyhomeViaApi(
 
     // ---- Images --------------------------------------------------------------
     const images: string[] = (s.images ?? [])
-      .map((img: { thumb?: string }) => img.thumb ?? "")
+      .map((img: { large?: string; thumb?: string }) => img.large || img.thumb || "")
       .filter(Boolean)
       .slice(0, 16);
 
@@ -139,6 +139,8 @@ export async function parseMyhomeViaApi(
     if (projectType)     rawData["პროექტი"] = projectType;
     if (projectType)     rawData["პროექტის ტიპი"] = projectType;
     if (balconyArea)     rawData["აივნის ფართი"] = balconyArea;
+    if (s.balconies)     rawData["აივნის რაოდენობა"] = String(s.balconies);
+    if (s.height)        rawData["ჭერის სიმაღლე"] = String(s.height);
     if (verandaArea)     rawData["ვერანდის ფართი"] = verandaArea;
     if (loggiaArea)      rawData["ლოჯიის ფართი"] = loggiaArea;
     if (ownerName)       rawData["მესაკუთრე"] = ownerName;

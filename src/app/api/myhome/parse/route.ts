@@ -186,6 +186,11 @@ export async function PUT(request: NextRequest) {
       data,
     });
 
+    if (body.images !== undefined) {
+      const { enqueueMyhomePreupload } = await import("@/lib/myhome-image-cache");
+      void enqueueMyhomePreupload(id, userId, listing.images);
+    }
+
     return NextResponse.json({ success: true, listing });
   } catch (error) {
     console.error("Update listing error:", error);
