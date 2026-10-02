@@ -101,7 +101,29 @@ jobs:
             git checkout "$GIT_BRANCH"
             git pull origin "$GIT_BRANCH"
             echo "$GHCR_TOKEN" | sudo docker login ghcr.io -u "$GHCR_USER" --password-stdin
-            sudo docker compose pull app worker
-            sudo docker compose up -d app worker
+
+            # Reclaim disk BEFORE pulling. A failed/interrupted pull leaves
+            # partial layers behind, and superseded images are never used again
+            # (containers are always on :latest), so remove everything that is
+            # not backing a container right now.
+            sudo docker container prune -f
+            sudo docker image prune -af
+            sudo docker builder prune -af
+            echo "Disk before pull:" && df -h / | tail -1
+
+            # Roll the images one at a time so only one new image has to fit
+            # next to its running predecessor. The worker image is the big one
+            # (builder stage + Chromium), so free its old image first: the
+            # queue just holds jobs until the new worker comes up.
+            sudo docker compose pull app
+            sudo docker compose up -d app
+            sudo docker image prune -af
+
+            sudo docker compose rm -sf worker
+            sudo docker image prune -af
+            sudo docker compose pull worker
+            sudo docker compose up -d worker
+
             sudo docker logout ghcr.io
-            sudo docker image prune -f
+            sudo docker image prune -af
+            echo "Disk after deploy:" && df -h / | tail -1
