@@ -179,6 +179,22 @@ function resolveBuildingStatusForMyhome(
   return status;
 }
 
+/**
+ * Georgian mobile numbers as sellers type them: 599222352, 599 22 23 52,
+ * 599-222-352, +995 599…. A trailing currency marks a price, not a phone.
+ */
+const DESCRIPTION_PHONE_RE =
+  /(?<![\d+])(?:\+?995[\s-]?)?5\d{2}(?:[\s-]?\d{3}[\s-]?\d{3}|(?:[\s-]?\d{2}){3})(?!\d)(?!\s*(?:\$|₾|€|ლარ|დოლარ|usd|gel))/giu;
+
+export function stripPhoneNumbersFromDescription(description: string): string {
+  if (!description) return description;
+  return description
+    .replace(DESCRIPTION_PHONE_RE, "")
+    .replace(/[ \t]{2,}/g, " ")
+    .replace(/[ \t]+$/gm, "")
+    .trim();
+}
+
 /** Parsed seller contact must never flow into publish — use logged-in account instead. */
 function stripParsedSellerContact(listing: MyhomeListing): MyhomeListing {
   const rawData = { ...(listing.rawData || {}) };
@@ -186,6 +202,7 @@ function stripParsedSellerContact(listing: MyhomeListing): MyhomeListing {
   delete rawData["მესაკუთრე"];
   return {
     ...listing,
+    description: stripPhoneNumbersFromDescription(listing.description || ""),
     ownerName: undefined,
     mobileNumber: undefined,
     rawData,

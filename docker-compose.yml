@@ -28,6 +28,8 @@ services:
       - BROWSER_LOGIN_MAX_WAIT_MS=${BROWSER_LOGIN_MAX_WAIT_MS:-45000}
       - BROWSER_MAX_CONCURRENT=${BROWSER_MAX_CONCURRENT:-1}
       - MYHOME_PARSE_MAX_CONCURRENT=${MYHOME_PARSE_MAX_CONCURRENT:-3}
+      # The app enqueues myhome photo pre-uploads after a parse / photo edit.
+      - MYHOME_PREUPLOAD=${MYHOME_PREUPLOAD:-true}
       - OPENAI_API_KEY=${OPENAI_API_KEY:-}
       - OPENAI_MODEL=${OPENAI_MODEL:-gpt-4o-mini}
       - UPLOAD_DIR=/app/data/uploads
@@ -95,6 +97,15 @@ services:
       - IMAGE_DOWNLOAD_CONCURRENCY=${IMAGE_DOWNLOAD_CONCURRENCY:-6}
       - MYHOME_IMAGE_UPLOAD_CONCURRENCY=${MYHOME_IMAGE_UPLOAD_CONCURRENCY:-6}
       - SSGE_IMAGE_UPLOAD_CONCURRENCY=${SSGE_IMAGE_UPLOAD_CONCURRENCY:-4}
+      # myhome's upload server is slow (1-17 s per photo); give each photo room.
+      - MYHOME_IMAGE_UPLOAD_TIMEOUT_MS=${MYHOME_IMAGE_UPLOAD_TIMEOUT_MS:-60000}
+      # Pre-upload photos to myhome right after a parse so the prefill itself
+      # skips the upload step. Set MYHOME_PREUPLOAD=false to disable.
+      - MYHOME_PREUPLOAD=${MYHOME_PREUPLOAD:-true}
+      - MYHOME_PREUPLOAD_MAX_CONCURRENT=${MYHOME_PREUPLOAD_MAX_CONCURRENT:-2}
+      - MYHOME_PREUPLOAD_JOB_TIMEOUT_MS=${MYHOME_PREUPLOAD_JOB_TIMEOUT_MS:-600000}
+      - MYHOME_PREUPLOAD_WAIT_MS=${MYHOME_PREUPLOAD_WAIT_MS:-120000}
+      - MYHOME_PREUPLOAD_LOCK_TTL_S=${MYHOME_PREUPLOAD_LOCK_TTL_S:-600}
       # Empty = resolve the publish fee from myhome's own services catalog.
       - MYHOME_SERVICE_TYPE_ID=${MYHOME_SERVICE_TYPE_ID:-}
       - MYHOME_SERVICE_DAYS=${MYHOME_SERVICE_DAYS:-30}

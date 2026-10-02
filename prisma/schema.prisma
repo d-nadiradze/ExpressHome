@@ -141,6 +141,10 @@ model ParsedListing {
   description    String?  @db.LongText
   images         Json?    // array of image URLs
   rawData        Json?    // full scraped data object
+  // Photos already uploaded to myhome for the current `images` set, so a
+  // prefill can publish without waiting on myhome's slow upload server.
+  // Shape: { key: string, images: [{ id: number, url: string }], uploadedAt: string }
+  myhomeImageCache Json?
 
   postStatus     PostStatus @default(PENDING)
   postUrl        String?  // URL of created post on myhome.ge

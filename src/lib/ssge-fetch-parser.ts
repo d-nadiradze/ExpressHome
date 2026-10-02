@@ -118,15 +118,28 @@ function getApp(nextData: Record<string, unknown>): any {
  *   - an array of strings / objects
  *   - an object with a text/value/body key
  */
+/** Like `norm`, but keeps paragraph breaks so the description layout survives. */
+function normMultiline(s: string): string {
+  return s
+    .replace(/\r\n?/g, "\n")
+    .split("\n")
+    .map((line) => line.replace(/[ \t\f\v\u00a0]+/g, " ").trim())
+    .join("\n")
+    .replace(/\n{3,}/g, "\n\n")
+    .trim();
+}
+
 function extractDescription(raw: unknown): string {
   if (!raw) return "";
-  if (typeof raw === "string") return norm(raw);
+  if (typeof raw === "string") return normMultiline(raw);
   if (Array.isArray(raw)) {
     return raw
       .map((item) =>
         typeof item === "string"
           ? item
-          : norm(item?.text ?? item?.value ?? item?.body ?? item?.description ?? "")
+          : normMultiline(
+              String(item?.text ?? item?.value ?? item?.body ?? item?.description ?? "")
+            )
       )
       .filter(Boolean)
       .join("\n");
@@ -136,7 +149,7 @@ function extractDescription(raw: unknown): string {
     const val = obj.text ?? obj.value ?? obj.body ?? obj.description ?? obj.content ?? "";
     return extractDescription(val);
   }
-  return norm(String(raw));
+  return normMultiline(String(raw));
 }
 
 function extractArea(s: unknown): string {
@@ -144,16 +157,13 @@ function extractArea(s: unknown): string {
   return m ? m[1].replace(",", ".") : "";
 }
 
-export async function parseSsgeListingViaFetch(url: string): Promise<{
-  success: boolean;
-  data?: MyhomeListing;
-  error?: string;
-}> {
-  let html: string;
+const PAGE_FETCH_ATTEMPTS = 3;
+
+async function fetchListingHtml(url: string): Promise<Response> {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), FETCH_TIMEOUT_MS);
   try {
-    const controller = new AbortController();
-    const timer = setTimeout(() => controller.abort(), FETCH_TIMEOUT_MS);
-    const res = await fetch(url, {
+    return await fetch(url, {
       headers: {
         "User-Agent": USER_AGENT,
         Accept: "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
@@ -162,17 +172,37 @@ export async function parseSsgeListingViaFetch(url: string): Promise<{
       },
       signal: controller.signal,
     });
+  } finally {
     clearTimeout(timer);
+  }
+}
 
-    if (!res.ok) {
-      return { success: false, error: `HTTP ${res.status} from ss.ge` };
+export async function parseSsgeListingViaFetch(url: string): Promise<{
+  success: boolean;
+  data?: MyhomeListing;
+  error?: string;
+}> {
+  let html = "";
+  // ss.ge sporadically answers a healthy listing with an empty 500.
+  for (let attempt = 1; ; attempt++) {
+    try {
+      const res = await fetchListingHtml(url);
+      if (res.ok) {
+        html = await res.text();
+        break;
+      }
+      if (res.status < 500 || attempt >= PAGE_FETCH_ATTEMPTS) {
+        return { success: false, error: `HTTP ${res.status} from ss.ge` };
+      }
+    } catch (err) {
+      if (attempt >= PAGE_FETCH_ATTEMPTS) {
+        return {
+          success: false,
+          error: err instanceof Error ? err.message : "Fetch failed",
+        };
+      }
     }
-    html = await res.text();
-  } catch (err) {
-    return {
-      success: false,
-      error: err instanceof Error ? err.message : "Fetch failed",
-    };
+    await new Promise((resolve) => setTimeout(resolve, 700 * attempt));
   }
 
   const nextData = extractNextData(html);

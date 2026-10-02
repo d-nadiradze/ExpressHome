@@ -39,6 +39,7 @@ export const redisConnection = getRedisConnection();
 export const PREFILL_QUEUE_NAME = "prefill";
 export const PARSE_QUEUE_NAME = "parse";
 export const MARKET_QUEUE_NAME = "market";
+export const MYHOME_PREUPLOAD_QUEUE_NAME = "myhome-preupload";
 
 // ---- Prefill job data types ------------------------------------------------
 
@@ -71,11 +72,18 @@ export interface MarketPollJobData {
   reason?: string;
 }
 
+/** Upload a listing's photos to myhome ahead of any prefill. */
+export interface MyhomePreuploadJobData {
+  listingId: string;
+  userId: string;
+}
+
 // ---- Queue singletons (lazy) -----------------------------------------------
 
 let _prefillQueue: Queue<PrefillJobData> | null = null;
 let _parseQueue: Queue<ParseJobData> | null = null;
 let _marketQueue: Queue<MarketPollJobData> | null = null;
+let _preuploadQueue: Queue<MyhomePreuploadJobData> | null = null;
 
 export function getPrefillQueue(): Queue<PrefillJobData> {
   if (!_prefillQueue) {
@@ -119,11 +127,27 @@ export function getMarketQueue(): Queue<MarketPollJobData> {
   return _marketQueue;
 }
 
+export function getMyhomePreuploadQueue(): Queue<MyhomePreuploadJobData> {
+  if (!_preuploadQueue) {
+    _preuploadQueue = new Queue<MyhomePreuploadJobData>(MYHOME_PREUPLOAD_QUEUE_NAME, {
+      connection: redisConnection,
+      defaultJobOptions: {
+        attempts: 2,
+        backoff: { type: "fixed", delay: 15_000 },
+        removeOnComplete: 200,
+        removeOnFail: 200,
+      },
+    });
+  }
+  return _preuploadQueue;
+}
+
 /** Call once on app shutdown to close queues gracefully. */
 export async function closeAllQueues(): Promise<void> {
   await Promise.all([
     _prefillQueue?.close().finally(() => { _prefillQueue = null; }),
     _parseQueue?.close().finally(() => { _parseQueue = null; }),
     _marketQueue?.close().finally(() => { _marketQueue = null; }),
+    _preuploadQueue?.close().finally(() => { _preuploadQueue = null; }),
   ]);
 }
