@@ -51,6 +51,29 @@ function stripHtml(s: string): string {
     .trim();
 }
 
+export interface MyhomeApiImage {
+  large?: string;
+  thumb?: string;
+  blur?: string;
+  is_main?: boolean;
+}
+
+const MAX_IMAGES = 16;
+
+/**
+ * Pick the photo URLs to store for a parsed listing.
+ *
+ * `thumb` (770px) is the largest rendition WITHOUT the "myhome.ge" watermark;
+ * `large` is watermarked and `blur` is a 1 KB placeholder. Never fall back to
+ * `large` — that would re-post branded photos on the other portal.
+ */
+export function selectMyhomeImageUrls(images: MyhomeApiImage[] | undefined | null): string[] {
+  return (images ?? [])
+    .map((img) => img.thumb || "")
+    .filter(Boolean)
+    .slice(0, MAX_IMAGES);
+}
+
 function fail(message: string): { success: false; error: string } {
   console.log(`[myhome-api] ${message}`);
   return { success: false, error: message };
@@ -122,10 +145,7 @@ export async function parseMyhomeViaApi(
     const description = s.comment ? stripHtml(s.comment) : "";
 
     // ---- Images --------------------------------------------------------------
-    const images: string[] = (s.images ?? [])
-      .map((img: { large?: string; thumb?: string }) => img.large || img.thumb || "")
-      .filter(Boolean)
-      .slice(0, 16);
+    const images = selectMyhomeImageUrls(s.images);
 
     // ---- Owner ---------------------------------------------------------------
     const ownerName = norm(s.owner_name ?? "");
