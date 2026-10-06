@@ -304,8 +304,22 @@ const IMAGE_UPLOAD_TIMEOUT_MS = parseInt(
   10
 );
 
+/** Max copies of one photo we will send (first try + retries/hedges). */
 const IMAGE_UPLOAD_ATTEMPTS = parseInt(
-  process.env.MYHOME_IMAGE_UPLOAD_ATTEMPTS || "3",
+  process.env.MYHOME_IMAGE_UPLOAD_ATTEMPTS || "4",
+  10
+);
+
+/**
+ * Hedging: the upload server's latency is erratic rather than bandwidth-bound
+ * (the same photo takes 1 s one moment and hangs the next), so when a copy has
+ * not answered after this long we send another copy in parallel and keep
+ * whichever finishes first. A hung connection then costs ~10 s instead of the
+ * full timeout. The losing copy is aborted; if it already landed it is just an
+ * unattached upload on myhome's side.
+ */
+const IMAGE_UPLOAD_HEDGE_MS = parseInt(
+  process.env.MYHOME_IMAGE_UPLOAD_HEDGE_MS || "10000",
   10
 );
 
@@ -318,29 +332,38 @@ function imageUploadConcurrency(): number {
   return parseConcurrency(process.env.MYHOME_IMAGE_UPLOAD_CONCURRENCY, 6);
 }
 
-async function uploadImageOnce(
-  filePath: string,
-  session: MyhomeApiSession
-): Promise<UploadedImage | null> {
-  const buf = await readFile(filePath);
-  const ext = path.extname(filePath).toLowerCase();
-  const mime =
-    ext === ".png" ? "image/png" : ext === ".webp" ? "image/webp" : "image/jpeg";
-  const filename = path.basename(filePath);
+interface ImagePayload {
+  /** Non-shared buffer so it is a valid BlobPart. */
+  buf: Buffer<ArrayBuffer>;
+  mime: string;
+  filename: string;
+}
 
+async function readImagePayload(filePath: string): Promise<ImagePayload> {
+  const ext = path.extname(filePath).toLowerCase();
+  return {
+    buf: await readFile(filePath),
+    mime: ext === ".png" ? "image/png" : ext === ".webp" ? "image/webp" : "image/jpeg",
+    filename: path.basename(filePath),
+  };
+}
+
+/** One upload request. Resolves null on a non-OK / malformed answer; throws on abort or network error. */
+async function uploadImageOnce(
+  image: ImagePayload,
+  session: MyhomeApiSession,
+  signal: AbortSignal
+): Promise<UploadedImage | null> {
   const form = new FormData();
-  form.append("image", new Blob([buf], { type: mime }), filename);
+  form.append("image", new Blob([image.buf], { type: image.mime }), image.filename);
   form.append("type", "1");
 
-  const res = await fetchWithTimeout(
-    `${STATIC_BASE}/v1/files/upload-image`,
-    {
-      method: "POST",
-      headers: apiHeaders(session),
-      body: form,
-    },
-    IMAGE_UPLOAD_TIMEOUT_MS
-  );
+  const res = await fetch(`${STATIC_BASE}/v1/files/upload-image`, {
+    method: "POST",
+    headers: apiHeaders(session),
+    body: form,
+    signal,
+  });
 
   if (!res.ok) {
     console.warn(`[myhome-api] image upload failed: HTTP ${res.status}`);
@@ -356,32 +379,86 @@ async function uploadImageOnce(
 }
 
 /**
- * The upload endpoint returns sporadic 500s; a dropped photo is permanent for the
- * listing, so retry before giving up on one.
+ * Upload one photo with hedging (see IMAGE_UPLOAD_HEDGE_MS): copies of the same
+ * request are started while none has answered — a new one every hedge interval,
+ * and immediately when one fails (the endpoint also returns sporadic 500s) — up
+ * to IMAGE_UPLOAD_ATTEMPTS copies. The first success wins and aborts the rest;
+ * null only when every copy failed. A dropped photo is permanent for the
+ * listing, so this errs on the side of sending more.
  */
 async function uploadImage(
   filePath: string,
   session: MyhomeApiSession
 ): Promise<UploadedImage | null> {
-  for (let attempt = 1; attempt <= IMAGE_UPLOAD_ATTEMPTS; attempt++) {
-    try {
-      const uploaded = await uploadImageOnce(filePath, session);
-      if (uploaded) return uploaded;
-    } catch (err) {
-      console.warn(
-        `[myhome-api] image upload attempt ${attempt} threw: ${
-          err instanceof Error ? err.message : String(err)
-        }`
-      );
-    }
-    if (attempt < IMAGE_UPLOAD_ATTEMPTS) {
-      await new Promise((resolve) => setTimeout(resolve, 500 * attempt));
-    }
-  }
-  console.warn(
-    `[myhome-api] giving up on image after ${IMAGE_UPLOAD_ATTEMPTS} attempts: ${path.basename(filePath)}`
-  );
-  return null;
+  const image = await readImagePayload(filePath);
+  const started = Date.now();
+
+  return new Promise<UploadedImage | null>((resolve) => {
+    const controllers: AbortController[] = [];
+    let copiesStarted = 0;
+    let copiesInFlight = 0;
+    let settled = false;
+    let hedgeTimer: NodeJS.Timeout | null = null;
+
+    const finish = (result: UploadedImage | null) => {
+      if (settled) return;
+      settled = true;
+      if (hedgeTimer) clearInterval(hedgeTimer);
+      for (const c of controllers) c.abort();
+      if (result && copiesStarted > 1) {
+        console.log(
+          `[myhome-api] ${image.filename}: copy #${copiesStarted} race won after ${Date.now() - started}ms`
+        );
+      } else if (!result) {
+        console.warn(
+          `[myhome-api] giving up on image after ${copiesStarted} copies: ${image.filename}`
+        );
+      }
+      resolve(result);
+    };
+
+    const launch = () => {
+      if (settled || copiesStarted >= IMAGE_UPLOAD_ATTEMPTS) return;
+      const copy = ++copiesStarted;
+      copiesInFlight++;
+      const controller = new AbortController();
+      controllers.push(controller);
+      const timeout = setTimeout(() => controller.abort(), IMAGE_UPLOAD_TIMEOUT_MS);
+
+      uploadImageOnce(image, session, controller.signal)
+        .then(
+          (uploaded) => {
+            if (uploaded) return finish(uploaded);
+            onCopyFailed(copy, "rejected by server");
+          },
+          (err: unknown) => {
+            if (settled) return;
+            onCopyFailed(copy, err instanceof Error ? err.message : String(err));
+          }
+        )
+        .finally(() => clearTimeout(timeout));
+    };
+
+    const onCopyFailed = (copy: number, reason: string) => {
+      copiesInFlight--;
+      if (settled) return;
+      console.warn(`[myhome-api] ${image.filename}: copy #${copy} failed (${reason})`);
+      if (copiesStarted < IMAGE_UPLOAD_ATTEMPTS) {
+        setTimeout(launch, 500);
+      } else if (copiesInFlight === 0) {
+        finish(null);
+      }
+    };
+
+    launch();
+    hedgeTimer = setInterval(() => {
+      if (settled || copiesStarted >= IMAGE_UPLOAD_ATTEMPTS) {
+        if (hedgeTimer) clearInterval(hedgeTimer);
+        return;
+      }
+      launch();
+    }, IMAGE_UPLOAD_HEDGE_MS);
+  });
 }
 
 function appendIf(form: FormData, key: string, value: string | number | undefined) {

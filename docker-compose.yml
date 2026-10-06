@@ -90,7 +90,8 @@ services:
       - SSGE_API_FETCH_TIMEOUT_MS=${SSGE_API_FETCH_TIMEOUT_MS:-20000}
       - MARKET_POLL_ENABLED=${MARKET_POLL_ENABLED:-true}
       - MARKET_POLL_INTERVAL_MS=${MARKET_POLL_INTERVAL_MS:-720000}
-      - MYHOME_IMAGE_UPLOAD_ATTEMPTS=${MYHOME_IMAGE_UPLOAD_ATTEMPTS:-3}
+      # Max copies of one photo (first try + retries/hedges), see HEDGE_MS below.
+      - MYHOME_IMAGE_UPLOAD_ATTEMPTS=${MYHOME_IMAGE_UPLOAD_ATTEMPTS:-4}
       - SSGE_IMAGE_UPLOAD_ATTEMPTS=${SSGE_IMAGE_UPLOAD_ATTEMPTS:-3}
       # Photos move in parallel; raise for speed, lower if RAM gets tight since
       # each in-flight photo holds a buffer.
@@ -99,6 +100,9 @@ services:
       - SSGE_IMAGE_UPLOAD_CONCURRENCY=${SSGE_IMAGE_UPLOAD_CONCURRENCY:-4}
       # myhome's upload server is slow (1-17 s per photo); give each photo room.
       - MYHOME_IMAGE_UPLOAD_TIMEOUT_MS=${MYHOME_IMAGE_UPLOAD_TIMEOUT_MS:-60000}
+      # ...but its latency is erratic, so if a copy has not answered after this
+      # long, send another copy in parallel and keep whichever lands first.
+      - MYHOME_IMAGE_UPLOAD_HEDGE_MS=${MYHOME_IMAGE_UPLOAD_HEDGE_MS:-10000}
       # Pre-upload photos to myhome right after a parse so the prefill itself
       # skips the upload step. Set MYHOME_PREUPLOAD=false to disable.
       - MYHOME_PREUPLOAD=${MYHOME_PREUPLOAD:-true}
