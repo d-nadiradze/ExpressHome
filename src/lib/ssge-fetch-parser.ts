@@ -228,15 +228,12 @@ export async function parseSsgeListingViaFetch(
       console.warn(
         `[ss.ge fetch-parse] ${why} — trying api-gateway for ${applicationId}`
       );
-      let accessToken: string | undefined;
-      if (options?.userId) {
-        const { resolveSsgeBearerForUser } = await import(
-          "@/lib/ssge-server-bearer"
-        );
-        accessToken =
-          (await resolveSsgeBearerForUser(options.userId)) ?? undefined;
-      }
-      app = await fetchSsgeApplicationDetails(applicationId, { accessToken });
+      // Token order inside: cached guest token (cheap, shared with the market
+      // poll; obtained via curl/Chromium if fetch is challenged) → a linked
+      // account's JWT. `userId` is only a hint for which account to prefer.
+      app = await fetchSsgeApplicationDetails(applicationId, {
+        preferUserId: options?.userId,
+      });
       viaApi = true;
     } catch (err) {
       return {

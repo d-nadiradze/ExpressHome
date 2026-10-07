@@ -3,14 +3,15 @@
  *
  * Search: POST https://api-gateway.ss.ge/v1/RealEstate/LegendSearch
  * Detail: GET  https://api-gateway.ss.ge/v1/RealEstate/details?applicationId=
- * Auth:   anonymous credentialsToken from home.ss.ge SSR (cached in memory).
+ * Auth:   anonymous credentialsToken from home.ss.ge SSR (cached in memory;
+ *         fetched via curl/Chromium when Cloudflare challenges plain fetch),
+ *         else a linked account's JWT.
  * Owner:  advancedSearch.individualEntityOnly = true
  */
 import { decodeJwtExpiryMs } from "@/lib/ssge-api-token-cache";
 import {
   MARKET_CITY_KA,
   MARKET_DEAL_TYPE_KA,
-  MARKET_USER_AGENT,
   SSGE_MARKET_TYPE_IDS,
   SSGE_SALE_DEAL_TYPE_ID,
   SSGE_TBILISI_CITY_ID,
@@ -19,6 +20,7 @@ import {
 import { asArray, asRecord, marketFetch, numStr, str } from "@/lib/market-http";
 import type { MarketCard, MarketSellerSlice } from "@/lib/market-types";
 import { SSGE_API_BASE, SSGE_HOME_ORIGIN } from "@/lib/ssge-api-constants";
+import { fetchSsgeHtmlResilient } from "@/lib/ssge-challenge-fetch";
 import type { MarketSellerType } from "@prisma/client";
 
 const TOKEN_SKEW_MS = 120_000;
@@ -153,28 +155,34 @@ function extractItems(json: unknown): unknown[] {
   return [];
 }
 
+/**
+ * One token fetch at a time: a market tick fires ~10 API calls at once, and
+ * when the cache is cold each would otherwise escalate to curl/Chromium.
+ */
+let guestTokenInflight: Promise<string> | null = null;
+
 async function fetchGuestToken(force = false): Promise<string> {
   if (!force && cachedToken && cachedToken.expiresAt - TOKEN_SKEW_MS > Date.now()) {
     return cachedToken.value;
   }
-
-  const res = await marketFetch(TOKEN_PAGE, {
-    headers: {
-      Accept: "text/html,application/xhtml+xml",
-      "Accept-Language": "ka-GE,ka;q=0.9",
-      "User-Agent": MARKET_USER_AGENT,
-    },
-  });
-  if (!res.ok) {
-    throw new Error(`ss.ge token page HTTP ${res.status}`);
+  if (!guestTokenInflight) {
+    guestTokenInflight = fetchGuestTokenUncached().finally(() => {
+      guestTokenInflight = null;
+    });
   }
-  const html = await res.text();
+  return guestTokenInflight;
+}
+
+async function fetchGuestTokenUncached(): Promise<string> {
+  // Escalates fetch → curl → Chromium when Cloudflare challenges this host's
+  // TLS fingerprint (the case on the VPS); plain fetch elsewhere.
+  const { html, via } = await fetchSsgeHtmlResilient(TOKEN_PAGE);
   const match =
     html.match(/"credentialsToken"\s*:\s*"([^"]+)"/) ??
     html.match(/credentialsToken\\":\\"([^\\"]+)/);
   const token = match?.[1];
   if (!token) {
-    throw new Error("ss.ge guest credentialsToken not found in SSR");
+    throw new Error(`ss.ge guest credentialsToken not found in SSR (via ${via})`);
   }
 
   const exp = decodeJwtExpiryMs(token);
@@ -182,24 +190,40 @@ async function fetchGuestToken(force = false): Promise<string> {
     value: token,
     expiresAt: exp ?? Date.now() + 50 * 60 * 1000,
   };
+  if (via !== "fetch") {
+    console.log(
+      `[ss.ge market] guest token obtained via ${via}; cached until ${new Date(cachedToken.expiresAt).toISOString()}`
+    );
+  }
   return token;
 }
 
+interface ApiTokenOptions {
+  /** Use this JWT as-is (e.g. a prefill session). */
+  accessToken?: string;
+  /** When falling back to a linked account, try this user's first. */
+  preferUserId?: string;
+}
+
 async function resolveApiToken(
-  accessToken?: string,
+  options: ApiTokenOptions,
   forceGuestRefresh = false
 ): Promise<{ token: string; source: "provided" | "guest" | "account" }> {
-  if (accessToken) return { token: accessToken, source: "provided" };
+  if (options.accessToken) return { token: options.accessToken, source: "provided" };
   try {
     return { token: await fetchGuestToken(forceGuestRefresh), source: "guest" };
   } catch (guestErr) {
-    // Datacenter IPs often get HTTP 403 on the HTML token page; fall back to a
-    // linked account JWT (or SSGE_API_BEARER) so market/parse keep working.
-    const { resolveSsgeBearerAny } = await import("@/lib/ssge-server-bearer");
-    const accountToken = await resolveSsgeBearerAny();
+    // Even curl/Chromium could not get a guest token; last resort is a linked
+    // account's JWT (cached, else a login) or SSGE_API_BEARER.
+    const { resolveSsgeBearerAny, resolveSsgeBearerForUser } = await import(
+      "@/lib/ssge-server-bearer"
+    );
+    const accountToken =
+      (options.preferUserId ? await resolveSsgeBearerForUser(options.preferUserId) : null) ??
+      (await resolveSsgeBearerAny());
     if (accountToken) {
       console.warn(
-        `[ss.ge market] guest token page failed (${guestErr instanceof Error ? guestErr.message : String(guestErr)}) — using linked-account bearer`
+        `[ss.ge market] guest token unavailable (${guestErr instanceof Error ? guestErr.message : String(guestErr)}) — using linked-account bearer`
       );
       return { token: accountToken, source: "account" };
     }
@@ -210,10 +234,10 @@ async function resolveApiToken(
 async function ssgeJson(
   path: string,
   init?: RequestInit,
-  options?: { accessToken?: string; retried?: boolean }
+  options?: ApiTokenOptions & { retried?: boolean }
 ): Promise<unknown> {
   const retried = options?.retried ?? false;
-  const { token, source } = await resolveApiToken(options?.accessToken, retried);
+  const { token, source } = await resolveApiToken(options ?? {}, retried);
   const url = path.startsWith("http") ? path : `${SSGE_API_BASE}${path}`;
   const res = await marketFetch(url, {
     ...init,
@@ -230,7 +254,7 @@ async function ssgeJson(
 
   if (res.status === 401 && !retried) {
     if (source === "guest") cachedToken = null;
-    return ssgeJson(path, init, { accessToken: options?.accessToken, retried: true });
+    return ssgeJson(path, init, { ...options, retried: true });
   }
   if (!res.ok) {
     throw new Error(`ss.ge ${init?.method ?? "GET"} ${path} HTTP ${res.status}`);
@@ -282,13 +306,13 @@ export async function searchSsgeMarket(
  */
 export async function fetchSsgeApplicationDetails(
   applicationId: string,
-  options?: { accessToken?: string }
+  options?: ApiTokenOptions
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
 ): Promise<any | null> {
   const json = await ssgeJson(
     `/RealEstate/details?applicationId=${encodeURIComponent(applicationId)}`,
     { method: "PUT" },
-    { accessToken: options?.accessToken }
+    options
   );
   const root = asRecord(json);
   if (!root) return null;
