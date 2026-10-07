@@ -29,11 +29,13 @@ RUN addgroup --system --gid 1001 nodejs && \
     libxkbcommon0 libxcomposite1 libxdamage1 libxfixes3 libxrandr2 \
     libgbm1 libpango-1.0-0 libcairo2 libasound2 libatspi2.0-0 \
     libwayland-client0 fonts-noto \
-    curl \
+    ca-certificates curl \
     && rm -rf /var/lib/apt/lists/*
 # curl: Cloudflare challenges Node's TLS fingerprint on home.ss.ge from
 # datacenter IPs but lets curl through — used as the cheap fallback for
 # fetching the ss.ge guest token (see src/lib/ssge-challenge-fetch.ts).
+# ca-certificates: node:*-slim ships without a CA bundle; curl cannot do
+# TLS without it ("curl: (77) error setting certificate file").
 
 # Standalone output: only the minimal server + needed node_modules
 COPY --from=builder --chown=nextjs:nodejs /app/.next/standalone ./
@@ -94,9 +96,10 @@ RUN addgroup --system --gid 1001 nodejs && \
     libxkbcommon0 libxcomposite1 libxdamage1 libxfixes3 libxrandr2 \
     libgbm1 libpango-1.0-0 libcairo2 libasound2 libatspi2.0-0 \
     libwayland-client0 fonts-noto \
-    curl \
+    ca-certificates curl \
     && rm -rf /var/lib/apt/lists/*
-# curl: see runner stage — fallback for the Cloudflare-challenged ss.ge token page.
+# ca-certificates + curl: see runner stage — fallback for the
+# Cloudflare-challenged ss.ge token page.
 
 COPY --from=worker-deps --chown=nextjs:nodejs /app/package.json /app/package-lock.json ./
 COPY --from=worker-deps --chown=nextjs:nodejs /app/node_modules ./node_modules

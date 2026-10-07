@@ -83,24 +83,23 @@ async function viaFetch(url: string): Promise<SsgeHtmlResult> {
 }
 
 async function viaCurl(url: string): Promise<SsgeHtmlResult> {
-  const { stdout } = await execFileAsync(
-    "curl",
-    [
-      "-sS",
-      "-L",
-      "--max-time",
-      String(CURL_TIMEOUT_S),
-      "--compressed",
-      "-A",
-      USER_AGENT,
-      "-H",
-      "Accept: text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
-      "-H",
-      "Accept-Language: ka-GE,ka;q=0.9,en;q=0.8",
-      url,
-    ],
-    { maxBuffer: 16 * 1024 * 1024, timeout: (CURL_TIMEOUT_S + 2) * 1000 }
-  );
+  // Deliberately *not* impersonating Chrome here: Cloudflare scores the
+  // User-Agent against the TLS fingerprint, and plain `curl/8.x` with curl's
+  // own TLS stack is exactly what was verified to pass from the VPS.
+  let stdout: string;
+  try {
+    ({ stdout } = await execFileAsync(
+      "curl",
+      ["-sS", "-L", "--max-time", String(CURL_TIMEOUT_S), "--compressed", url],
+      { maxBuffer: 16 * 1024 * 1024, timeout: (CURL_TIMEOUT_S + 2) * 1000 }
+    ));
+  } catch (err) {
+    const e = err as NodeJS.ErrnoException & { stderr?: string; code?: string | number };
+    if (e.code === "ENOENT") throw new Error("not installed");
+    // e.g. "curl: (77) error setting certificate file" / "(28) Operation timed out"
+    const detail = (e.stderr ?? "").trim().split("\n")[0] || e.message.split("\n")[0];
+    throw new Error(`exit ${e.code ?? "?"}: ${detail}`);
+  }
   if (looksLikeCloudflareChallenge(stdout)) {
     throw new Error("Cloudflare challenge via curl");
   }
@@ -172,9 +171,7 @@ export async function fetchSsgeHtmlResilient(url: string): Promise<SsgeHtmlResul
       console.log(`[ss.ge html] fetch was challenged — curl succeeded for ${new URL(url).pathname}`);
       return result;
     } catch (err) {
-      const msg = err instanceof Error ? err.message : String(err);
-      // ENOENT = curl not installed in this image; say so plainly.
-      failures.push(`curl: ${/ENOENT/.test(msg) ? "not installed" : msg}`);
+      failures.push(`curl: ${err instanceof Error ? err.message : String(err)}`);
     }
   }
 
