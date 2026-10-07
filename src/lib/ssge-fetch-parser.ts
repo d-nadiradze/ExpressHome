@@ -10,10 +10,12 @@
 import type { MyhomeListing } from "@/lib/myhome-parser";
 import { sanitizeBuildingStatusValue } from "@/lib/building-status-sanitize";
 import { resolveListingDisplayArea } from "@/lib/listing-area";
+import { extractSsgeListingIdFromUrl } from "@/lib/listing-url";
 import {
   extractDescriptionLocation,
 } from "@/lib/ssge-description-location";
 import { ssgeOriginalImageUrl } from "@/lib/ssge-image";
+import { fetchSsgeApplicationDetails } from "@/lib/market-search-ssge";
 
 const USER_AGENT =
   "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36";
@@ -177,42 +179,79 @@ async function fetchListingHtml(url: string): Promise<Response> {
   }
 }
 
-export async function parseSsgeListingViaFetch(url: string): Promise<{
+export async function parseSsgeListingViaFetch(
+  url: string,
+  options?: { userId?: string }
+): Promise<{
   success: boolean;
   data?: MyhomeListing;
   error?: string;
 }> {
   let html = "";
-  // ss.ge sporadically answers a healthy listing with an empty 500.
+  let htmlError: string | null = null;
+  // ss.ge sporadically answers a healthy listing with an empty 500. Datacenter
+  // IPs often get HTTP 403 — treat that as "try the API fallback", not fatal.
   for (let attempt = 1; ; attempt++) {
     try {
       const res = await fetchListingHtml(url);
       if (res.ok) {
         html = await res.text();
+        htmlError = null;
         break;
       }
-      if (res.status < 500 || attempt >= PAGE_FETCH_ATTEMPTS) {
-        return { success: false, error: `HTTP ${res.status} from ss.ge` };
-      }
+      htmlError = `HTTP ${res.status} from ss.ge`;
+      // 403/404 won't improve on retry; 5xx might.
+      if (res.status < 500 || attempt >= PAGE_FETCH_ATTEMPTS) break;
     } catch (err) {
-      if (attempt >= PAGE_FETCH_ATTEMPTS) {
-        return {
-          success: false,
-          error: err instanceof Error ? err.message : "Fetch failed",
-        };
-      }
+      htmlError = err instanceof Error ? err.message : "Fetch failed";
+      if (attempt >= PAGE_FETCH_ATTEMPTS) break;
     }
     await new Promise((resolve) => setTimeout(resolve, 700 * attempt));
   }
 
-  const nextData = extractNextData(html);
-  if (!nextData) {
-    return { success: false, error: "No __NEXT_DATA__ in ss.ge page" };
-  }
-
-  const app = getApp(nextData);
+  // Prefer SSR HTML (fast, full). On block pages / 403, fall back to
+  // api-gateway details — guest token first, then the user's linked ss.ge JWT.
+  let app = html ? getApp(extractNextData(html) ?? {}) : null;
+  let viaApi = false;
   if (!app) {
-    return { success: false, error: "No applicationData in ss.ge __NEXT_DATA__" };
+    const applicationId = extractSsgeListingIdFromUrl(url);
+    if (!applicationId) {
+      return {
+        success: false,
+        error:
+          htmlError ??
+          `No __NEXT_DATA__ in ss.ge page (${html.length} bytes) and no listing id in URL`,
+      };
+    }
+    const why = htmlError ?? `HTML missing __NEXT_DATA__ (${html.length} bytes)`;
+    try {
+      console.warn(
+        `[ss.ge fetch-parse] ${why} — trying api-gateway for ${applicationId}`
+      );
+      let accessToken: string | undefined;
+      if (options?.userId) {
+        const { resolveSsgeBearerForUser } = await import(
+          "@/lib/ssge-server-bearer"
+        );
+        accessToken =
+          (await resolveSsgeBearerForUser(options.userId)) ?? undefined;
+      }
+      app = await fetchSsgeApplicationDetails(applicationId, { accessToken });
+      viaApi = true;
+    } catch (err) {
+      return {
+        success: false,
+        error:
+          `${why}; api-gateway fallback failed: ` +
+          `${err instanceof Error ? err.message : String(err)}`,
+      };
+    }
+    if (!app) {
+      return {
+        success: false,
+        error: `${why}; api-gateway returned empty`,
+      };
+    }
   }
 
   // ---- Title ---------------------------------------------------------------
@@ -380,7 +419,7 @@ export async function parseSsgeListingViaFetch(url: string): Promise<{
   }
 
   console.log(
-    `[ss.ge fetch-parse] OK: "${title}" — ${price} ${currency}, ${rooms} rooms, ${area} m², floor ${floor}/${totalFloors}`
+    `[ss.ge fetch-parse] OK${viaApi ? " (api)" : ""}: "${title}" — ${price} ${currency}, ${rooms} rooms, ${area} m², floor ${floor}/${totalFloors}`
   );
 
   return {

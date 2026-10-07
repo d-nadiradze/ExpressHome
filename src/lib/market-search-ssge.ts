@@ -185,12 +185,35 @@ async function fetchGuestToken(force = false): Promise<string> {
   return token;
 }
 
+async function resolveApiToken(
+  accessToken?: string,
+  forceGuestRefresh = false
+): Promise<{ token: string; source: "provided" | "guest" | "account" }> {
+  if (accessToken) return { token: accessToken, source: "provided" };
+  try {
+    return { token: await fetchGuestToken(forceGuestRefresh), source: "guest" };
+  } catch (guestErr) {
+    // Datacenter IPs often get HTTP 403 on the HTML token page; fall back to a
+    // linked account JWT (or SSGE_API_BEARER) so market/parse keep working.
+    const { resolveSsgeBearerAny } = await import("@/lib/ssge-server-bearer");
+    const accountToken = await resolveSsgeBearerAny();
+    if (accountToken) {
+      console.warn(
+        `[ss.ge market] guest token page failed (${guestErr instanceof Error ? guestErr.message : String(guestErr)}) — using linked-account bearer`
+      );
+      return { token: accountToken, source: "account" };
+    }
+    throw guestErr;
+  }
+}
+
 async function ssgeJson(
   path: string,
   init?: RequestInit,
-  retried = false
+  options?: { accessToken?: string; retried?: boolean }
 ): Promise<unknown> {
-  const token = await fetchGuestToken(retried);
+  const retried = options?.retried ?? false;
+  const { token, source } = await resolveApiToken(options?.accessToken, retried);
   const url = path.startsWith("http") ? path : `${SSGE_API_BASE}${path}`;
   const res = await marketFetch(url, {
     ...init,
@@ -206,8 +229,8 @@ async function ssgeJson(
   });
 
   if (res.status === 401 && !retried) {
-    cachedToken = null;
-    return ssgeJson(path, init, true);
+    if (source === "guest") cachedToken = null;
+    return ssgeJson(path, init, { accessToken: options?.accessToken, retried: true });
   }
   if (!res.ok) {
     throw new Error(`ss.ge ${init?.method ?? "GET"} ${path} HTTP ${res.status}`);
@@ -253,22 +276,37 @@ export async function searchSsgeMarket(
   return cards.filter((c) => c.sellerType === "AGENCY" || c.sellerType === "AGENT");
 }
 
+/**
+ * Full listing payload from api-gateway (same shape as __NEXT_DATA__ applicationData).
+ * Used as a parse fallback when home.ss.ge HTML is blocked for datacenter IPs.
+ */
+export async function fetchSsgeApplicationDetails(
+  applicationId: string,
+  options?: { accessToken?: string }
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+): Promise<any | null> {
+  const json = await ssgeJson(
+    `/RealEstate/details?applicationId=${encodeURIComponent(applicationId)}`,
+    { method: "PUT" },
+    { accessToken: options?.accessToken }
+  );
+  const root = asRecord(json);
+  if (!root) return null;
+  const data = asRecord(root.data) ?? root;
+  return (
+    asRecord(data?.applicationData) ??
+    asRecord(data?.application) ??
+    asRecord(data?.realEstate) ??
+    data
+  );
+}
+
 export async function fetchSsgeMarketDetail(
   externalId: string
 ): Promise<Partial<Pick<MarketCard, "cadastralCode" | "street" | "streetNumber" | "sourcePostedAt" | "floor" | "area">>> {
   // api-gateway only exposes this as PUT with the id in the query string;
   // GET/POST answer 405 and a body-only id returns a card without the address.
-  const json = await ssgeJson(
-    `/RealEstate/details?applicationId=${encodeURIComponent(externalId)}`,
-    { method: "PUT" }
-  );
-  const root = asRecord(json);
-  const data = asRecord(root?.data) ?? root;
-  const app =
-    asRecord(data?.applicationData) ??
-    asRecord(data?.application) ??
-    asRecord(data?.realEstate) ??
-    data;
+  const app = await fetchSsgeApplicationDetails(externalId);
   if (!app) return {};
 
   const address = asRecord(app.address) ?? app;
