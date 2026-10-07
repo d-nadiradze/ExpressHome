@@ -1,5 +1,16 @@
 import { db } from "@/lib/db";
 
+/** Numeric application id from an ss.ge listing URL (…-{id} or …/{id}/). */
+export function extractSsgeListingIdFromUrl(url: string): string | null {
+  if (!/ss\.ge/i.test(url)) return null;
+  const trailing = url.match(/\/(?:udzravi-qoneba|ka)\/[^/?#]*?-(\d{5,})(?:\/|$|\?|#)/i);
+  if (trailing) return trailing[1];
+  const bare = url.match(/\/(?:application|detail|bina)[^/?#]*\/(\d{5,})(?:\/|$|\?|#)/i);
+  if (bare) return bare[1];
+  const query = url.match(/[?&](?:id|applicationId|application_id)=(\d{5,})/i);
+  return query?.[1] ?? null;
+}
+
 /** Numeric listing id from any myhome.ge URL shape (/pr/, /udzravi-qoneba/, statement, query). */
 export function extractMyhomeListingIdFromUrl(url: string): string | null {
   if (!/myhome\.ge/i.test(url)) return null;

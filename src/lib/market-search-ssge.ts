@@ -253,22 +253,35 @@ export async function searchSsgeMarket(
   return cards.filter((c) => c.sellerType === "AGENCY" || c.sellerType === "AGENT");
 }
 
+/**
+ * Full listing payload from api-gateway (same shape as __NEXT_DATA__ applicationData).
+ * Used as a parse fallback when home.ss.ge HTML is blocked for datacenter IPs.
+ */
+export async function fetchSsgeApplicationDetails(
+  applicationId: string
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+): Promise<any | null> {
+  const json = await ssgeJson(
+    `/RealEstate/details?applicationId=${encodeURIComponent(applicationId)}`,
+    { method: "PUT" }
+  );
+  const root = asRecord(json);
+  if (!root) return null;
+  const data = asRecord(root.data) ?? root;
+  return (
+    asRecord(data?.applicationData) ??
+    asRecord(data?.application) ??
+    asRecord(data?.realEstate) ??
+    data
+  );
+}
+
 export async function fetchSsgeMarketDetail(
   externalId: string
 ): Promise<Partial<Pick<MarketCard, "cadastralCode" | "street" | "streetNumber" | "sourcePostedAt" | "floor" | "area">>> {
   // api-gateway only exposes this as PUT with the id in the query string;
   // GET/POST answer 405 and a body-only id returns a card without the address.
-  const json = await ssgeJson(
-    `/RealEstate/details?applicationId=${encodeURIComponent(externalId)}`,
-    { method: "PUT" }
-  );
-  const root = asRecord(json);
-  const data = asRecord(root?.data) ?? root;
-  const app =
-    asRecord(data?.applicationData) ??
-    asRecord(data?.application) ??
-    asRecord(data?.realEstate) ??
-    data;
+  const app = await fetchSsgeApplicationDetails(externalId);
   if (!app) return {};
 
   const address = asRecord(app.address) ?? app;

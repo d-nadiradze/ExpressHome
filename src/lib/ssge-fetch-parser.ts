@@ -10,10 +10,12 @@
 import type { MyhomeListing } from "@/lib/myhome-parser";
 import { sanitizeBuildingStatusValue } from "@/lib/building-status-sanitize";
 import { resolveListingDisplayArea } from "@/lib/listing-area";
+import { extractSsgeListingIdFromUrl } from "@/lib/listing-url";
 import {
   extractDescriptionLocation,
 } from "@/lib/ssge-description-location";
 import { ssgeOriginalImageUrl } from "@/lib/ssge-image";
+import { fetchSsgeApplicationDetails } from "@/lib/market-search-ssge";
 
 const USER_AGENT =
   "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36";
@@ -205,14 +207,38 @@ export async function parseSsgeListingViaFetch(url: string): Promise<{
     await new Promise((resolve) => setTimeout(resolve, 700 * attempt));
   }
 
-  const nextData = extractNextData(html);
-  if (!nextData) {
-    return { success: false, error: "No __NEXT_DATA__ in ss.ge page" };
-  }
-
-  const app = getApp(nextData);
+  // Prefer SSR HTML (fast, full). Datacenter IPs often get a tiny block page
+  // without __NEXT_DATA__; fall back to api-gateway details (guest token).
+  let app = getApp(extractNextData(html) ?? {});
+  let viaApi = false;
   if (!app) {
-    return { success: false, error: "No applicationData in ss.ge __NEXT_DATA__" };
+    const applicationId = extractSsgeListingIdFromUrl(url);
+    if (!applicationId) {
+      return {
+        success: false,
+        error: `No __NEXT_DATA__ in ss.ge page (${html.length} bytes) and no listing id in URL`,
+      };
+    }
+    try {
+      console.warn(
+        `[ss.ge fetch-parse] HTML missing __NEXT_DATA__ (${html.length} bytes) — trying api-gateway for ${applicationId}`
+      );
+      app = await fetchSsgeApplicationDetails(applicationId);
+      viaApi = true;
+    } catch (err) {
+      return {
+        success: false,
+        error:
+          `No __NEXT_DATA__ in ss.ge page (${html.length} bytes); ` +
+          `api-gateway fallback failed: ${err instanceof Error ? err.message : String(err)}`,
+      };
+    }
+    if (!app) {
+      return {
+        success: false,
+        error: `No __NEXT_DATA__ in ss.ge page (${html.length} bytes) and api-gateway returned empty`,
+      };
+    }
   }
 
   // ---- Title ---------------------------------------------------------------
@@ -380,7 +406,7 @@ export async function parseSsgeListingViaFetch(url: string): Promise<{
   }
 
   console.log(
-    `[ss.ge fetch-parse] OK: "${title}" — ${price} ${currency}, ${rooms} rooms, ${area} m², floor ${floor}/${totalFloors}`
+    `[ss.ge fetch-parse] OK${viaApi ? " (api)" : ""}: "${title}" — ${price} ${currency}, ${rooms} rooms, ${area} m², floor ${floor}/${totalFloors}`
   );
 
   return {
