@@ -18,7 +18,10 @@ export async function resolveSsgeBearerForUser(
   userId: string
 ): Promise<string | null> {
   const cached = await getCachedSsgeApiAccessToken(userId);
-  if (cached) return cached;
+  if (cached) {
+    console.log("[ss.ge bearer] using cached account token");
+    return cached;
+  }
 
   const account = await db.ssgeAccount.findUnique({
     where: { userId },
@@ -28,26 +31,46 @@ export async function resolveSsgeBearerForUser(
       isVerified: true,
     },
   });
-  if (!account?.isVerified) return null;
+  if (!account) {
+    console.warn("[ss.ge bearer] no ss.ge account linked for this user");
+    return null;
+  }
+  if (!account.isVerified) {
+    console.warn("[ss.ge bearer] linked ss.ge account is not verified");
+    return null;
+  }
 
   let password: string;
   try {
     password = decrypt(account.ssgePassword);
   } catch {
+    console.warn("[ss.ge bearer] could not decrypt ss.ge password (ENCRYPTION_KEY mismatch?)");
     return null;
   }
   if (!password) return null;
 
+  console.log("[ss.ge bearer] no cached token — logging in with linked account…");
+  const started = Date.now();
   const auth = await loginSsgeApi(
     { email: account.ssgeEmail, password },
     { userId }
   );
-  return auth.session?.accessToken ?? null;
+  if (!auth.success || !auth.session) {
+    console.warn(
+      `[ss.ge bearer] account login failed after ${Date.now() - started}ms: ${auth.error ?? "unknown"}`
+    );
+    return null;
+  }
+  console.log(`[ss.ge bearer] account login ok (${auth.authMethod}) in ${Date.now() - started}ms`);
+  return auth.session.accessToken;
 }
 
 export async function resolveSsgeBearerAny(): Promise<string | null> {
   const fromEnv = process.env.SSGE_API_BEARER?.trim();
-  if (fromEnv) return fromEnv;
+  if (fromEnv) {
+    console.log("[ss.ge bearer] using SSGE_API_BEARER from env");
+    return fromEnv;
+  }
 
   if (isSsgeTokenCacheEnabled()) {
     const withToken = await db.ssgeAccount.findMany({
@@ -71,6 +94,9 @@ export async function resolveSsgeBearerAny(): Promise<string | null> {
     select: { userId: true },
     orderBy: { lastLoginAt: "desc" },
   });
-  if (!anyVerified) return null;
+  if (!anyVerified) {
+    console.warn("[ss.ge bearer] no verified ss.ge account exists to borrow a token from");
+    return null;
+  }
   return resolveSsgeBearerForUser(anyVerified.userId);
 }
