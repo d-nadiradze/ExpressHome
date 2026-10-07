@@ -100,7 +100,7 @@ async function runParseJob(job: Job<ParseJobData>): Promise<void> {
       console.warn(`[worker] Unexpected non-ssge parse job for ${url} — skipping`);
       return;
     }
-    const result = await parseSsgeListingViaFetch(url);
+    const result = await parseSsgeListingViaFetch(url, { userId });
 
     if (!result.success || !result.data) {
       await db.parsedListing.update({
