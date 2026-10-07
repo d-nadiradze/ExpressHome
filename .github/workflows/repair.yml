@@ -1,0 +1,59 @@
+name: Repair server
+
+# Use this when the site is 502 or SSH/Termius cannot open a shell.
+# It reuses the same DEPLOY_* secrets as Deploy. It does NOT pull new
+# images (that is what fills the disk). It only prunes junk and restarts
+# the existing containers.
+on:
+  workflow_dispatch:
+
+jobs:
+  repair:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Diagnose, prune, restart
+        uses: appleboy/ssh-action@v1.2.5
+        with:
+          host: ${{ secrets.DEPLOY_HOST }}
+          username: ${{ secrets.DEPLOY_USER }}
+          key: ${{ secrets.DEPLOY_SSH_KEY }}
+          command_timeout: 15m
+          script: |
+            set -e
+            APP_DIR='${{ vars.DEPLOY_APP_DIR }}'
+            [ -z "$APP_DIR" ] && APP_DIR=/opt/myhome-parser
+            cd "$APP_DIR"
+
+            echo "=== disk ==="
+            df -h /
+            echo "=== memory ==="
+            free -h
+            echo "=== docker ps -a ==="
+            sudo docker ps -a
+            echo "=== compose ps ==="
+            sudo docker compose ps || true
+
+            echo "=== prune unused docker data ==="
+            sudo docker container prune -f
+            sudo docker image prune -af
+            sudo docker builder prune -af
+            echo "=== disk after prune ==="
+            df -h /
+
+            echo "=== start mysql + redis ==="
+            sudo docker compose up -d mysql redis
+            sleep 8
+            echo "=== start app + worker + nginx ==="
+            sudo docker compose up -d app worker nginx
+            sleep 10
+
+            echo "=== compose ps after ==="
+            sudo docker compose ps
+            echo "=== app logs ==="
+            sudo docker compose logs --tail=50 app || true
+            echo "=== local app HTTP ==="
+            curl -sI --max-time 10 http://127.0.0.1:3000/ | head -n 8 || true
+            echo "=== disk final ==="
+            df -h /
+            echo "=== memory final ==="
+            free -h
