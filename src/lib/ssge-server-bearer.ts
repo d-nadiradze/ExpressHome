@@ -8,11 +8,21 @@
  */
 import { db } from "@/lib/db";
 import { decrypt } from "@/lib/encryption";
+import { createCooldown, formatCooldownMs } from "@/lib/retry-cooldown";
 import { loginSsgeApi } from "@/lib/ssge-api-auth";
 import {
   getCachedSsgeApiAccessToken,
   isSsgeTokenCacheEnabled,
 } from "@/lib/ssge-api-token-cache";
+
+/**
+ * A failed login costs 60-75 s (HTTP OAuth 403 → Playwright waiting for a form
+ * that is really Cloudflare's challenge). Without this, each market slice and
+ * each parse repeats it, so one blocked hour becomes dozens of logins.
+ */
+const loginCooldown = createCooldown(
+  parseInt(process.env.SSGE_ACCOUNT_LOGIN_RETRY_MS || "600000", 10)
+);
 
 export async function resolveSsgeBearerForUser(
   userId: string
@@ -21,6 +31,14 @@ export async function resolveSsgeBearerForUser(
   if (cached) {
     console.log("[ss.ge bearer] using cached account token");
     return cached;
+  }
+
+  const blocked = loginCooldown.get(userId);
+  if (blocked) {
+    console.warn(
+      `[ss.ge bearer] skipping account login — failed ${formatCooldownMs(Date.now() - blocked.failedAt)} ago (${blocked.reason.split("\n")[0]}); next try in ${formatCooldownMs(blocked.remainingMs)}`
+    );
+    return null;
   }
 
   const account = await db.ssgeAccount.findUnique({
@@ -56,11 +74,14 @@ export async function resolveSsgeBearerForUser(
     { userId }
   );
   if (!auth.success || !auth.session) {
+    const reason = auth.error ?? "unknown";
     console.warn(
-      `[ss.ge bearer] account login failed after ${Date.now() - started}ms: ${auth.error ?? "unknown"}`
+      `[ss.ge bearer] account login failed after ${Date.now() - started}ms: ${reason}`
     );
+    loginCooldown.fail(userId, reason);
     return null;
   }
+  loginCooldown.clear(userId);
   console.log(`[ss.ge bearer] account login ok (${auth.authMethod}) in ${Date.now() - started}ms`);
   return auth.session.accessToken;
 }

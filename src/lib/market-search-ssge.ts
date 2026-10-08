@@ -20,6 +20,7 @@ import {
 import { asArray, asRecord, marketFetch, numStr, str } from "@/lib/market-http";
 import type { MarketCard, MarketSellerSlice } from "@/lib/market-types";
 import { SSGE_API_BASE, SSGE_HOME_ORIGIN } from "@/lib/ssge-api-constants";
+import { createCooldown, formatCooldownMs } from "@/lib/retry-cooldown";
 import { fetchSsgeHtmlResilient } from "@/lib/ssge-challenge-fetch";
 import type { MarketSellerType } from "@prisma/client";
 
@@ -161,14 +162,38 @@ function extractItems(json: unknown): unknown[] {
  */
 let guestTokenInflight: Promise<string> | null = null;
 
+/**
+ * After the whole escalation chain fails, do not re-run it for every caller
+ * (a market tick alone would launch Chromium ~10 times). Callers fail fast
+ * with the original reason until the cooldown lapses.
+ */
+const guestTokenCooldown = createCooldown(
+  parseInt(process.env.SSGE_GUEST_TOKEN_RETRY_MS || "300000", 10)
+);
+
 async function fetchGuestToken(force = false): Promise<string> {
   if (!force && cachedToken && cachedToken.expiresAt - TOKEN_SKEW_MS > Date.now()) {
     return cachedToken.value;
   }
+  const blocked = guestTokenCooldown.get();
+  if (blocked && !force) {
+    throw new Error(
+      `ss.ge guest token unavailable — last attempt failed ${formatCooldownMs(Date.now() - blocked.failedAt)} ago (${blocked.reason}); retrying in ${formatCooldownMs(blocked.remainingMs)}`
+    );
+  }
   if (!guestTokenInflight) {
-    guestTokenInflight = fetchGuestTokenUncached().finally(() => {
-      guestTokenInflight = null;
-    });
+    guestTokenInflight = fetchGuestTokenUncached()
+      .then((token) => {
+        guestTokenCooldown.clear();
+        return token;
+      })
+      .catch((err) => {
+        guestTokenCooldown.fail(undefined, err instanceof Error ? err.message : String(err));
+        throw err;
+      })
+      .finally(() => {
+        guestTokenInflight = null;
+      });
   }
   return guestTokenInflight;
 }

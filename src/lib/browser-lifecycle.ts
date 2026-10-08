@@ -67,6 +67,30 @@ export function registerBrowser(browser: Browser): Browser {
 }
 
 /**
+ * Image-wide launch defaults.
+ *
+ * `PLAYWRIGHT_CHROMIUM_CHANNEL=chromium` (set in the Docker images) makes
+ * Playwright use the full Chromium build in new-headless mode instead of
+ * `chromium-headless-shell`. The shell is ~380 MB smaller but Cloudflare's
+ * managed challenge detects it reliably (missing APIs, odd client hints), so
+ * from a datacenter IP ss.ge never clears — full Chromium does.
+ *
+ * `--disable-blink-features=AutomationControlled` hides navigator.webdriver;
+ * Playwright's test runner adds it, the library does not.
+ */
+function withChromiumDefaults(options?: LaunchOptions): LaunchOptions {
+  const merged: LaunchOptions = { ...options };
+  const channel = merged.channel ?? process.env.PLAYWRIGHT_CHROMIUM_CHANNEL?.trim();
+  if (channel) merged.channel = channel;
+  const args = [...(merged.args ?? [])];
+  if (!args.some((a) => a.startsWith("--disable-blink-features"))) {
+    args.push("--disable-blink-features=AutomationControlled");
+  }
+  merged.args = args;
+  return merged;
+}
+
+/**
  * Launch Chromium under the process-wide browser slot cap.
  * The slot is held until the browser disconnects / is closed — not just until
  * launch returns — so concurrent prefills cannot stack multiple Chromiums.
@@ -86,7 +110,9 @@ export async function launchTrackedBrowser(
     maxQueueWaitMs: slot?.maxWaitMs,
   });
   try {
-    const browser = trackBrowser(await chromium.launch(options));
+    const browser = trackBrowser(
+      await chromium.launch(withChromiumDefaults(options))
+    );
     slotReleases.set(browser, release);
     return browser;
   } catch (error) {
