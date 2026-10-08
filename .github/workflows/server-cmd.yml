@@ -1,0 +1,35 @@
+name: Server command
+
+# Run a one-off shell command on the VPS (in the app directory) and show its
+# output in the job log. Uses the same DEPLOY_* secrets as Deploy. Intended
+# for diagnostics (docker logs, df, running a probe inside an image) when an
+# interactive SSH session is not available.
+on:
+  workflow_dispatch:
+    inputs:
+      cmd:
+        description: "Shell command to run in /opt/myhome-parser (bash)"
+        required: true
+
+jobs:
+  run:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Run on server
+        uses: appleboy/ssh-action@v1.2.5
+        env:
+          CMD: ${{ github.event.inputs.cmd }}
+        with:
+          host: ${{ secrets.DEPLOY_HOST }}
+          username: ${{ secrets.DEPLOY_USER }}
+          key: ${{ secrets.DEPLOY_SSH_KEY }}
+          command_timeout: 20m
+          envs: CMD
+          script: |
+            APP_DIR='${{ vars.DEPLOY_APP_DIR }}'
+            [ -z "$APP_DIR" ] && APP_DIR=/opt/myhome-parser
+            cd "$APP_DIR"
+            printf '%s\n' "$CMD" > /tmp/gh-server-cmd.sh
+            echo "=== running ==="; cat /tmp/gh-server-cmd.sh; echo "=== output ==="
+            bash /tmp/gh-server-cmd.sh 2>&1 | tail -n 500
+            echo "=== exit: ${PIPESTATUS[0]} ==="
