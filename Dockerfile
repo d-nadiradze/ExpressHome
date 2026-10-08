@@ -53,8 +53,14 @@ COPY --from=builder --chown=nextjs:nodejs /app/node_modules/playwright-core ./no
 # and never clears from a datacenter IP, which breaks account linking here
 # and token fetches in the worker. --no-shell skips the redundant shell build.
 ENV PLAYWRIGHT_CHROMIUM_CHANNEL=chromium
+# `chown nextjs /app` (the directory itself, NOT -R): WORKDIR created it as
+# root and COPY --chown only owns the files inside. HOME=/app, and full
+# Chrome must create $HOME/.config/... for its crashpad database at startup;
+# when it cannot, the handler starts without --database and Chrome dies with
+# SIGTRAP before loading anything. The headless shell never wrote to $HOME.
 RUN node node_modules/playwright-core/cli.js install chromium --no-shell && \
     chown -R nextjs:nodejs /ms-playwright && \
+    chown nextjs:nodejs /app && \
     mkdir -p /app/data/uploads && chown -R nextjs:nodejs /app/data
 
 COPY --chown=nextjs:nodejs docker-entrypoint.sh ./
@@ -116,8 +122,10 @@ COPY --from=worker-deps --chown=nextjs:nodejs /app/src ./src
 # Do NOT chown -R /app here — the COPYs above already own it, and a recursive
 # chown would duplicate node_modules into another image layer.
 ENV PLAYWRIGHT_CHROMIUM_CHANNEL=chromium
+# chown of /app itself (not -R) so Chrome can create $HOME/.config — see runner.
 RUN node node_modules/playwright-core/cli.js install chromium --no-shell && \
     chown -R nextjs:nodejs /ms-playwright && \
+    chown nextjs:nodejs /app && \
     mkdir -p /app/data/uploads && chown -R nextjs:nodejs /app/data
 
 COPY --chown=nextjs:nodejs docker-entrypoint.sh ./
