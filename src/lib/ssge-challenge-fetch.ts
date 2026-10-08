@@ -24,9 +24,21 @@ const USER_AGENT =
 
 const FETCH_TIMEOUT_MS = parseInt(process.env.PARSE_GOTO_TIMEOUT_MS || "20000", 10);
 const CURL_TIMEOUT_S = Math.max(5, Math.ceil(FETCH_TIMEOUT_MS / 1000));
-/** How long to give Chromium for the challenge interstitial to clear. */
+/**
+ * Total budget for the Chromium tier (navigation + waiting for the challenge
+ * interstitial to clear). Kept well under the 180 s parse deadline.
+ */
 const BROWSER_CHALLENGE_TIMEOUT_MS = parseInt(
   process.env.SSGE_CHALLENGE_BROWSER_TIMEOUT_MS || "45000",
+  10
+);
+/**
+ * Max time to wait for a free Chromium slot. The worker allows one Chromium
+ * (BROWSER_MAX_CONCURRENT=1) and a prefill can hold it for minutes; a token
+ * fetch must not queue behind that or the parse silently hits its deadline.
+ */
+const BROWSER_SLOT_WAIT_MS = parseInt(
+  process.env.SSGE_CHALLENGE_BROWSER_SLOT_WAIT_MS || "10000",
   10
 );
 
@@ -110,16 +122,32 @@ async function viaBrowser(url: string): Promise<SsgeHtmlResult> {
   const { launchTrackedBrowser, closeBrowserSession } = await import(
     "@/lib/browser-lifecycle"
   );
-  const browser = await launchTrackedBrowser({
-    headless: true,
-    args: [
-      "--no-sandbox",
-      "--disable-setuid-sandbox",
-      "--disable-dev-shm-usage",
-      "--disable-gpu",
-      "--disable-crash-reporter",
-    ],
-  });
+  const { LimiterBusyError } = await import("@/lib/concurrency-limit");
+  const deadline = Date.now() + BROWSER_CHALLENGE_TIMEOUT_MS;
+
+  let browser;
+  try {
+    browser = await launchTrackedBrowser(
+      {
+        headless: true,
+        args: [
+          "--no-sandbox",
+          "--disable-setuid-sandbox",
+          "--disable-dev-shm-usage",
+          "--disable-gpu",
+          "--disable-crash-reporter",
+        ],
+      },
+      { maxWaitMs: BROWSER_SLOT_WAIT_MS }
+    );
+  } catch (err) {
+    if (err instanceof LimiterBusyError) {
+      throw new Error(
+        `Chromium slot busy for ${BROWSER_SLOT_WAIT_MS}ms (another browser job is running)`
+      );
+    }
+    throw err;
+  }
   const context = await browser.newContext({
     userAgent: USER_AGENT,
     locale: "ka-GE",
@@ -129,11 +157,10 @@ async function viaBrowser(url: string): Promise<SsgeHtmlResult> {
     const page = await context.newPage();
     await page.goto(url, {
       waitUntil: "domcontentloaded",
-      timeout: BROWSER_CHALLENGE_TIMEOUT_MS,
+      timeout: Math.max(5_000, deadline - Date.now()),
     });
     // The challenge page auto-submits and reloads; poll until the real page
-    // (one with Next.js data) is in the DOM or we run out of time.
-    const deadline = Date.now() + BROWSER_CHALLENGE_TIMEOUT_MS;
+    // (one with Next.js data) is in the DOM or the shared budget runs out.
     let html = "";
     while (Date.now() < deadline) {
       html = await page.content().catch(() => "");
@@ -178,6 +205,9 @@ export async function fetchSsgeHtmlResilient(url: string): Promise<SsgeHtmlResul
   if (browserEnabled()) {
     try {
       const started = Date.now();
+      console.warn(
+        `[ss.ge html] ${failures.join("; ")} — launching headless Chromium for ${new URL(url).pathname}`
+      );
       const result = await viaBrowser(url);
       console.log(
         `[ss.ge html] fetch/curl were challenged — browser succeeded in ${Date.now() - started}ms for ${new URL(url).pathname}`
