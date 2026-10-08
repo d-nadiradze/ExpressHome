@@ -193,6 +193,35 @@ sudo docker compose ps
 curl -sI http://127.0.0.1:3000 | head -5
 ```
 
+### Step 10 — IPv6 egress for containers (one-time, required for ss.ge)
+
+Cloudflare challenges every request that leaves this VPS over its **IPv4**
+address (`cf-mitigated: challenge`, HTTP 403), but lets the host's **IPv6**
+address through. Containers are IPv4-only by default, so `docker-compose.yml`
+enables IPv6 on `app-network` (NAT66 from a private `fd00:…` range). The
+Docker daemon must allow it:
+
+```bash
+sudo tee /etc/docker/daemon.json >/dev/null <<'EOF'
+{
+  "ipv6": true,
+  "fixed-cidr-v6": "fd00:d0c:1::/64",
+  "ip6tables": true
+}
+EOF
+sudo systemctl restart docker
+cd /opt/myhome-parser
+sudo docker compose down      # the network must be recreated with IPv6
+sudo docker compose up -d
+# verify: should print the host's 2a05:… address, then HTTP 200
+sudo docker compose exec worker curl -6 -s https://api64.ipify.org; echo
+sudo docker compose exec worker curl -s -o /dev/null -w '%{http_code}\n' \
+  'https://home.ss.ge/ka/udzravi-qoneba/l/bina/iyideba?cityIdList=95'
+```
+
+The images ship an `/etc/gai.conf` that prefers IPv6 even with a ULA-only
+address, and Node runs with `--dns-result-order=ipv6first`.
+
 ---
 
 ## Troubleshooting
