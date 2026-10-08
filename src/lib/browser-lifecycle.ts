@@ -72,9 +72,19 @@ export function registerBrowser(browser: Browser): Browser {
  * launch returns — so concurrent prefills cannot stack multiple Chromiums.
  */
 export async function launchTrackedBrowser(
-  options?: LaunchOptions
+  options?: LaunchOptions,
+  slot?: {
+    /**
+     * Max time to wait for a free Chromium slot (overrides BROWSER_MAX_WAIT_MS).
+     * Short-lived helpers (token fetches) pass a small value so they fail fast
+     * instead of queueing behind a long prefill. Throws LimiterBusyError.
+     */
+    maxWaitMs?: number;
+  }
 ): Promise<Browser> {
-  const release = await chromiumLaunchLimiter().acquire();
+  const release = await chromiumLaunchLimiter().acquire({
+    maxQueueWaitMs: slot?.maxWaitMs,
+  });
   try {
     const browser = trackBrowser(await chromium.launch(options));
     slotReleases.set(browser, release);

@@ -20,8 +20,9 @@ export interface Limiter {
   /**
    * Hold a slot until the returned release() is called.
    * Use when the limited resource outlives the launcher (e.g. a Playwright browser).
+   * `maxQueueWaitMs` overrides the limiter default for this one call.
    */
-  acquire(): Promise<() => void>;
+  acquire(options?: { maxQueueWaitMs?: number }): Promise<() => void>;
   readonly active: number;
   readonly queued: number;
 }
@@ -42,7 +43,7 @@ export function createLimiter(options: {
   const waiters: Waiter[] = [];
   let active = 0;
 
-  function acquireSlot(): Promise<void> {
+  function acquireSlot(waitMs = maxQueueWaitMs): Promise<void> {
     if (active < maxConcurrent) {
       active++;
       return Promise.resolve();
@@ -50,12 +51,12 @@ export function createLimiter(options: {
 
     return new Promise<void>((resolve, reject) => {
       const waiter: Waiter = { resolve, reject };
-      if (maxQueueWaitMs > 0) {
+      if (waitMs > 0) {
         waiter.timer = setTimeout(() => {
           const index = waiters.indexOf(waiter);
           if (index >= 0) waiters.splice(index, 1);
           reject(new LimiterBusyError());
-        }, maxQueueWaitMs);
+        }, waitMs);
       }
       waiters.push(waiter);
     });
@@ -81,8 +82,8 @@ export function createLimiter(options: {
         releaseSlot();
       }
     },
-    async acquire(): Promise<() => void> {
-      await acquireSlot();
+    async acquire(options?: { maxQueueWaitMs?: number }): Promise<() => void> {
+      await acquireSlot(options?.maxQueueWaitMs ?? maxQueueWaitMs);
       let released = false;
       return () => {
         if (released) return;
