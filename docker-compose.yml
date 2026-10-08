@@ -14,6 +14,8 @@ services:
     ports:
       - "3000:3000"
     environment:
+      # Prefer the IPv6 egress for outbound calls (ss.ge challenges our IPv4).
+      - NODE_OPTIONS=${APP_NODE_OPTIONS:---dns-result-order=ipv6first}
       - DATABASE_URL=mysql://myhome:${MYSQL_PASSWORD}@mysql:3306/myhome_parser
       - JWT_SECRET=${JWT_SECRET}
       - ENCRYPTION_KEY=${ENCRYPTION_KEY}
@@ -63,7 +65,8 @@ services:
       # Keep the JS heap under mem_limit so V8 collects instead of the kernel
       # OOM-killing this container mid-publish (a killed prefill is never
       # retried, so the listing would be lost). Photo buffers are off-heap.
-      - NODE_OPTIONS=${WORKER_NODE_OPTIONS:---max-old-space-size=224}
+      # --dns-result-order=ipv6first: use the clean IPv6 egress (see networks).
+      - NODE_OPTIONS=${WORKER_NODE_OPTIONS:---max-old-space-size=224 --dns-result-order=ipv6first}
       - DATABASE_URL=mysql://myhome:${MYSQL_PASSWORD}@mysql:3306/myhome_parser
       - ENCRYPTION_KEY=${ENCRYPTION_KEY}
       - REDIS_URL=redis://redis:6379
@@ -203,3 +206,13 @@ volumes:
 networks:
   app-network:
     driver: bridge
+    # IPv6 egress for containers (NAT66 from this ULA range to the host's
+    # global IPv6). Cloudflare flags this VPS's IPv4 address, so ss.ge
+    # challenges every request from it, while the host's IPv6 is clean.
+    # Requires /etc/docker/daemon.json with "ipv6": true + "fixed-cidr-v6"
+    # (see docs/GITHUB_CI_CD.md → IPv6). Address selection inside the images
+    # is tuned to prefer IPv6 (gai.conf + --dns-result-order=ipv6first).
+    enable_ipv6: true
+    ipam:
+      config:
+        - subnet: fd00:d0c:2::/64

@@ -37,6 +37,23 @@ RUN addgroup --system --gid 1001 nodejs && \
 # ca-certificates: node:*-slim ships without a CA bundle; curl cannot do
 # TLS without it ("curl: (77) error setting certificate file").
 
+# Prefer IPv6 destinations even though the container only has a ULA (fd00::/8)
+# address (Docker NAT66). RFC 6724's default labels make glibc sort IPv4 first
+# in that case, which would route every request via the VPS's IPv4 address that
+# Cloudflare challenges. Giving fc00::/7 the same label as global IPv6 fixes
+# the ordering for everything using getaddrinfo (Node, curl, Chrome). Listing
+# any label replaces the whole default table, so all defaults are repeated.
+COPY --chown=root:root <<'EOF' /etc/gai.conf
+label ::1/128       0
+label ::/0          1
+label 2002::/16     2
+label ::/96         3
+label ::ffff:0:0/96 4
+label fec0::/10     5
+label fc00::/7      1
+label 2001:0::/32   7
+EOF
+
 # Standalone output: only the minimal server + needed node_modules
 COPY --from=builder --chown=nextjs:nodejs /app/.next/standalone ./
 COPY --from=builder --chown=nextjs:nodejs /app/.next/static ./.next/static
@@ -110,6 +127,18 @@ RUN addgroup --system --gid 1001 nodejs && \
     && rm -rf /var/lib/apt/lists/*
 # ca-certificates + curl: see runner stage — fallback for the
 # Cloudflare-challenged ss.ge token page.
+
+# Prefer IPv6 with a ULA-only container address — see runner stage.
+COPY --chown=root:root <<'EOF' /etc/gai.conf
+label ::1/128       0
+label ::/0          1
+label 2002::/16     2
+label ::/96         3
+label ::ffff:0:0/96 4
+label fec0::/10     5
+label fc00::/7      1
+label 2001:0::/32   7
+EOF
 
 COPY --from=worker-deps --chown=nextjs:nodejs /app/package.json /app/package-lock.json ./
 COPY --from=worker-deps --chown=nextjs:nodejs /app/node_modules ./node_modules
