@@ -26,10 +26,12 @@ const FETCH_TIMEOUT_MS = parseInt(process.env.PARSE_GOTO_TIMEOUT_MS || "20000", 
 const CURL_TIMEOUT_S = Math.max(5, Math.ceil(FETCH_TIMEOUT_MS / 1000));
 /**
  * Total budget for the Chromium tier (navigation + waiting for the challenge
- * interstitial to clear). Kept well under the 180 s parse deadline.
+ * interstitial to clear; a passing challenge takes ~5 s). The whole chain
+ * (fetch 20 s + curl 20 s + slot 10 s + this) plus a possible account login
+ * must fit inside the worker's 180 s parse deadline.
  */
 const BROWSER_CHALLENGE_TIMEOUT_MS = parseInt(
-  process.env.SSGE_CHALLENGE_BROWSER_TIMEOUT_MS || "45000",
+  process.env.SSGE_CHALLENGE_BROWSER_TIMEOUT_MS || "30000",
   10
 );
 /**

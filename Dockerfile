@@ -48,8 +48,12 @@ COPY --from=builder --chown=nextjs:nodejs /app/node_modules/prisma ./node_module
 COPY --from=builder --chown=nextjs:nodejs /app/node_modules/playwright ./node_modules/playwright
 COPY --from=builder --chown=nextjs:nodejs /app/node_modules/playwright-core ./node_modules/playwright-core
 
-# Headless shell only (see worker stage) — saves ~380 MB per image.
-RUN node node_modules/playwright-core/cli.js install chromium-headless-shell && \
+# Full Chromium (new-headless via PLAYWRIGHT_CHROMIUM_CHANNEL), not the
+# headless shell: Cloudflare's managed challenge on ss.ge detects the shell
+# and never clears from a datacenter IP, which breaks account linking here
+# and token fetches in the worker. --no-shell skips the redundant shell build.
+ENV PLAYWRIGHT_CHROMIUM_CHANNEL=chromium
+RUN node node_modules/playwright-core/cli.js install chromium --no-shell && \
     chown -R nextjs:nodejs /ms-playwright && \
     mkdir -p /app/data/uploads && chown -R nextjs:nodejs /app/data
 
@@ -107,11 +111,12 @@ COPY --from=worker-deps --chown=nextjs:nodejs /app/prisma ./prisma
 COPY --from=worker-deps --chown=nextjs:nodejs /app/tsconfig.json ./
 COPY --from=worker-deps --chown=nextjs:nodejs /app/src ./src
 
-# Only the headless shell: every launch in this codebase is headless in
-# Docker, and Playwright uses chromium_headless_shell for headless: true.
+# Full Chromium in new-headless mode (see runner stage): the headless shell is
+# smaller but fails Cloudflare's challenge on ss.ge from the VPS.
 # Do NOT chown -R /app here — the COPYs above already own it, and a recursive
 # chown would duplicate node_modules into another image layer.
-RUN node node_modules/playwright-core/cli.js install chromium-headless-shell && \
+ENV PLAYWRIGHT_CHROMIUM_CHANNEL=chromium
+RUN node node_modules/playwright-core/cli.js install chromium --no-shell && \
     chown -R nextjs:nodejs /ms-playwright && \
     mkdir -p /app/data/uploads && chown -R nextjs:nodejs /app/data
 
