@@ -1,14 +1,13 @@
 /**
  * Parse queue.
  *
- * ss.ge  → BullMQ worker (HTTP fetch via ssge-fetch-parser)
- * myhome → in-process background task (tnet API via myhome-api-parser)
- *
- * The worker handles ss.ge parse jobs and all prefill jobs.
+ * Every listing parse (ss.ge and myhome.ge) is a BullMQ job handled by the
+ * worker. myhome used to run in-process in the web container because it was
+ * a single ~400 ms API call; since the tnet API closed to anonymous clients
+ * the fallback is the Cloudflare-protected listing page, which may need the
+ * worker's headless Chromium (and its memory budget).
  */
 import { getParseQueue } from "@/lib/bullmq-queue";
-import { myhomeParseLimiter } from "@/lib/server-limits";
-import { isValidSsgeUrl } from "@/lib/utils";
 
 interface ParseJob {
   listingId: string;
@@ -16,7 +15,8 @@ interface ParseJob {
   userId: string;
 }
 
-function stripMaskedPhone(data: {
+/** myhome masks phone numbers for anonymous callers ("579550***") — drop those. */
+export function stripMaskedPhone(data: {
   mobileNumber?: string;
   rawData?: Record<string, string>;
 }): void {
@@ -28,81 +28,11 @@ function stripMaskedPhone(data: {
 }
 
 export function enqueueParseJob(job: ParseJob): void {
-  if (isValidSsgeUrl(job.url)) {
-    void getParseQueue().add(job.listingId, {
-      listingId: job.listingId,
-      url: job.url,
-      userId: job.userId,
-    });
-  } else {
-    void myhomeParseLimiter().run(() => runMyhomeParseInProcess(job));
-  }
-}
-
-async function runMyhomeParseInProcess(job: ParseJob): Promise<void> {
-  try {
-    const { parseMyhomeViaApi } = await import("@/lib/myhome-api-parser");
-    const { db } = await import("@/lib/db");
-
-    const result = await parseMyhomeViaApi(job.url);
-
-    if (!result.success || !result.data) {
-      console.warn(`[parse] myhome failed for ${job.listingId}: ${result.error ?? "unknown error"}`);
-      await db.parsedListing.update({
-        where: { id: job.listingId },
-        data: { postStatus: "FAILED" },
-      });
-      return;
-    }
-
-    const d = result.data;
-    stripMaskedPhone(d);
-
-    await db.parsedListing.update({
-      where: { id: job.listingId },
-      data: {
-        title: d.title,
-        propertyType: d.propertyType,
-        dealType: d.dealType,
-        buildingStatus: d.buildingStatus,
-        condition: d.condition,
-        city: d.city,
-        address: d.address,
-        street: d.street,
-        streetNumber: d.streetNumber,
-        cadastralCode: d.cadastralCode,
-        price: d.price,
-        pricePerSqm: d.pricePerSqm,
-        currency: d.currency,
-        area: d.area,
-        rooms: d.rooms,
-        bedrooms: d.bedrooms,
-        floor: d.floor,
-        totalFloors: d.totalFloors,
-        projectType: d.projectType,
-        bathrooms: d.bathrooms,
-        balconyArea: d.balconyArea,
-        verandaArea: d.verandaArea,
-        loggiaArea: d.loggiaArea,
-        description: d.description,
-        images: d.images,
-        rawData: d.rawData,
-        postStatus: "PENDING",
-      },
-    });
-    console.log(`[parse] myhome OK: ${job.listingId} — "${d.title}"`);
-    const { enqueueMyhomePreupload } = await import("@/lib/myhome-image-cache");
-    void enqueueMyhomePreupload(job.listingId, job.userId, d.images);
-  } catch (err) {
-    console.error(`[parse] myhome failed for ${job.listingId}:`, err);
-    try {
-      const { db } = await import("@/lib/db");
-      await db.parsedListing.update({
-        where: { id: job.listingId },
-        data: { postStatus: "FAILED" },
-      });
-    } catch {}
-  }
+  void getParseQueue().add(job.listingId, {
+    listingId: job.listingId,
+    url: job.url,
+    userId: job.userId,
+  });
 }
 
 /** Position is approximate — BullMQ queue position, 0-indexed from front. */
