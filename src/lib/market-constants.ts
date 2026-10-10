@@ -49,20 +49,46 @@ export function canonicalizeMarketPropertyType(value: string | null | undefined)
   return null;
 }
 
+/*
+ * Poll footprint. The poller shares the VPS IP and the ss.ge guest/account
+ * tokens with real parses and prefills, so it must not look like a scraper:
+ * the original 12-minute cadence was ~6-7k requests/day per portal in neat
+ * bursts. Defaults now: hourly ± jitter, 3 pages per type, paced requests —
+ * roughly 600-700 ss.ge requests/day.
+ */
 export function marketPollIntervalMs(): number {
-  return parseInt(process.env.MARKET_POLL_INTERVAL_MS || "720000", 10);
+  return parseInt(process.env.MARKET_POLL_INTERVAL_MS || "3600000", 10);
+}
+
+/** Random delay added before each tick so polls do not land on a fixed clock. */
+export function marketPollJitterMs(): number {
+  return Math.max(0, parseInt(process.env.MARKET_POLL_JITTER_MS || "300000", 10));
+}
+
+/** Mean pause between consecutive portal requests inside one tick (±50%). */
+export function marketRequestPauseMs(): number {
+  return Math.max(0, parseInt(process.env.MARKET_POLL_REQUEST_PAUSE_MS || "2000", 10));
 }
 
 export function isMarketPollEnabled(): boolean {
   return process.env.MARKET_POLL_ENABLED !== "false";
 }
 
+/**
+ * myhome's statements API has rejected anonymous clients since 2026-10-09,
+ * so polling it only produces 401s and bot-looking traffic. Off until there
+ * is a working data source; flip MARKET_POLL_MYHOME=true to re-enable.
+ */
+export function isMarketMyhomeEnabled(): boolean {
+  return process.env.MARKET_POLL_MYHOME === "true";
+}
+
 export function marketOwnerPages(): number {
-  return Math.max(1, parseInt(process.env.MARKET_POLL_OWNER_PAGES || "2", 10));
+  return Math.max(1, parseInt(process.env.MARKET_POLL_OWNER_PAGES || "1", 10));
 }
 
 export function marketAgencyPages(): number {
-  return Math.max(1, parseInt(process.env.MARKET_POLL_AGENCY_PAGES || "4", 10));
+  return Math.max(1, parseInt(process.env.MARKET_POLL_AGENCY_PAGES || "2", 10));
 }
 
 export function marketPageSize(): number {
@@ -70,7 +96,7 @@ export function marketPageSize(): number {
 }
 
 export function marketDetailMaxPerPoll(): number {
-  return Math.max(0, parseInt(process.env.MARKET_DETAIL_MAX_PER_POLL || "40", 10));
+  return Math.max(0, parseInt(process.env.MARKET_DETAIL_MAX_PER_POLL || "15", 10));
 }
 
 /** Owner rows with firstSeenAt inside this window appear in “New owner uploads”. */

@@ -299,8 +299,9 @@ void recoverStuckParseJobs();
 
 // ---- Market listing poll (owner / special statements cache) ----------------
 
+// Budget covers the start jitter (≤ 5 min) plus paced requests.
 const MARKET_POLL_TIMEOUT_MS = parseInt(
-  process.env.MARKET_POLL_TIMEOUT_MS || "540000",
+  process.env.MARKET_POLL_TIMEOUT_MS || "900000",
   10
 );
 
