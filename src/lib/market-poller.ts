@@ -16,7 +16,11 @@ import {
   type MarketPropertyType,
 } from "@/lib/market-constants";
 import { buildAgencyIndex, findAgencyDuplicateIndexed } from "@/lib/market-duplicate";
-import { fetchMyhomeMarketDetail, searchMyhomeMarket } from "@/lib/market-search-myhome";
+import {
+  MyhomeApiCooldownError,
+  fetchMyhomeMarketDetail,
+  searchMyhomeMarket,
+} from "@/lib/market-search-myhome";
 import { fetchSsgeMarketDetail, searchSsgeMarket } from "@/lib/market-search-ssge";
 import type { MarketCard, MarketSellerSlice } from "@/lib/market-types";
 
@@ -65,7 +69,10 @@ async function searchSlice(
         // Same ids again means the API ignored our paging — stop paging this type.
         if (addPage(myhome) === 0) break;
       } catch (err) {
-        console.warn(`[market] myhome ${slice} ${propertyType} p${page}:`, err);
+        // Parked API: the first rejection already logged why; stay quiet.
+        if (!(err instanceof MyhomeApiCooldownError)) {
+          console.warn(`[market] myhome ${slice} ${propertyType} p${page}:`, err);
+        }
         break;
       }
     }
@@ -135,6 +142,7 @@ async function enrichNewCards(cards: MarketCard[], known: Set<string>): Promise<
           : await fetchSsgeMarketDetail(card.externalId);
       byKey.set(`${card.platform}:${card.externalId}`, mergeDetail(card, detail));
     } catch (err) {
+      if (err instanceof MyhomeApiCooldownError) continue;
       console.warn(`[market] detail ${card.platform}:${card.externalId}:`, err);
     }
   }

@@ -15,6 +15,7 @@ import {
 } from "@/lib/market-constants";
 import { asArray, asRecord, marketFetch, numStr, str } from "@/lib/market-http";
 import type { MarketCard, MarketSellerSlice } from "@/lib/market-types";
+import { createCooldown, formatCooldownMs } from "@/lib/retry-cooldown";
 import { splitStreetHouseNumber } from "@/lib/street-dictionary";
 import type { MarketSellerType } from "@prisma/client";
 
@@ -25,6 +26,36 @@ const HEADERS = {
   Accept: "application/json",
   "Accept-Language": "ka-GE,ka;q=0.9,en;q=0.8",
 };
+
+/**
+ * The tnet API started answering 401 to anonymous clients on 2026-10-09.
+ * One rejection parks every myhome market call for this long so a poll tick
+ * logs a single line instead of one error per type × slice × page × detail.
+ */
+const API_AUTH_RETRY_MS = parseInt(process.env.MYHOME_API_AUTH_RETRY_MS || "900000", 10);
+const apiCooldown = createCooldown(API_AUTH_RETRY_MS);
+
+/** Thrown without a network call while the API is parked; pollers skip quietly. */
+export class MyhomeApiCooldownError extends Error {
+  constructor(reason: string, remainingMs: number) {
+    super(`myhome API parked (${reason}); retry in ${formatCooldownMs(remainingMs)}`);
+  }
+}
+
+async function myhomeApiFetch(url: string, what: string): Promise<Response> {
+  const cooling = apiCooldown.get();
+  if (cooling) throw new MyhomeApiCooldownError(cooling.reason, cooling.remainingMs);
+  const res = await marketFetch(url, { headers: HEADERS });
+  if (res.status === 401 || res.status === 403) {
+    apiCooldown.fail(undefined, `HTTP ${res.status}`);
+    console.warn(
+      `[market] myhome API rejected ${what} (HTTP ${res.status}) — skipping myhome for ${formatCooldownMs(API_AUTH_RETRY_MS)}`
+    );
+  } else if (res.ok) {
+    apiCooldown.clear();
+  }
+  return res;
+}
 
 function mapSellerType(userType: string | undefined): MarketSellerType {
   const t = (userType ?? "").toLowerCase();
@@ -135,7 +166,7 @@ export async function searchMyhomeMarket(
   pageSize: number
 ): Promise<MarketCard[]> {
   const url = buildSearchUrl(propertyType, slice, page, pageSize);
-  const res = await marketFetch(url, { headers: HEADERS });
+  const res = await myhomeApiFetch(url, `search ${propertyType} ${slice} p${page}`);
   if (!res.ok) {
     throw new Error(`myhome search HTTP ${res.status} (${propertyType} ${slice} p${page})`);
   }
@@ -153,7 +184,7 @@ export async function searchMyhomeMarket(
 export async function fetchMyhomeMarketDetail(
   externalId: string
 ): Promise<Partial<Pick<MarketCard, "cadastralCode" | "street" | "streetNumber" | "sourcePostedAt" | "floor" | "area">>> {
-  const res = await marketFetch(`${API_BASE}/${externalId}`, { headers: HEADERS });
+  const res = await myhomeApiFetch(`${API_BASE}/${externalId}`, `detail ${externalId}`);
   if (!res.ok) {
     throw new Error(`myhome detail HTTP ${res.status} for ${externalId}`);
   }

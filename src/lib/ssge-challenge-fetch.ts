@@ -1,18 +1,19 @@
 /**
- * Fetch an ss.ge HTML page in a way that survives Cloudflare's managed
- * challenge on datacenter IPs.
+ * Fetch an HTML page from a Cloudflare-protected portal (ss.ge, myhome.ge) in
+ * a way that survives the managed challenge on datacenter IPs.
  *
- * Cloudflare keys the challenge on the client's TLS/HTTP fingerprint, not the
- * IP: from the same VPS, Node's fetch gets `cf-mitigated: challenge` (403,
- * ~5 KB "Just a moment" page) while curl receives the real page and a real
- * Chromium passes the challenge. So escalate:
+ * Cloudflare keys the challenge on the client's TLS/HTTP fingerprint and the
+ * egress IP: from the VPS, Node's fetch gets `cf-mitigated: challenge` (403,
+ * ~5 KB "Just a moment" page) while a real Chromium passes. So escalate:
  *
  *   1. plain fetch            — ~300 ms, works from residential IPs / locally
- *   2. curl (if installed)    — different TLS stack, passes from the VPS
- *   3. headless Chromium      — slowest (~5-15 s), but a real browser
+ *   2. curl (if installed)    — different TLS stack, sometimes passes
+ *   3. headless Chromium      — slowest (~5-40 s), but a real browser
  *
- * Callers should cache whatever they extract (tokens live ~1 h) so the slow
- * strategies run at most once per cache period.
+ * Once Chromium clears a challenge, its `cf_clearance` cookie is kept per
+ * host and replayed by the fetch tier (same User-Agent, same egress IP), so
+ * the next requests to that host are fast again until the cookie expires.
+ * Callers should also cache whatever they extract (tokens live ~1 h).
  */
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
@@ -24,6 +25,16 @@ const USER_AGENT =
 
 const FETCH_TIMEOUT_MS = parseInt(process.env.PARSE_GOTO_TIMEOUT_MS || "20000", 10);
 const CURL_TIMEOUT_S = Math.max(5, Math.ceil(FETCH_TIMEOUT_MS / 1000));
+/**
+ * How long a browser-obtained `cf_clearance` cookie is replayed before we let
+ * the chain escalate again. Cloudflare's own expiry is usually longer, but a
+ * site can revoke early; the cookie is also dropped as soon as a replay gets
+ * challenged.
+ */
+const CLEARANCE_TTL_MS = parseInt(
+  process.env.CHALLENGE_CLEARANCE_TTL_MS || String(25 * 60 * 1000),
+  10
+);
 /**
  * Total budget for the Chromium tier (navigation + waiting for the challenge
  * interstitial to clear; a passing challenge takes ~5 s). The whole chain
@@ -73,7 +84,74 @@ function browserEnabled(): boolean {
   return process.env.SSGE_BROWSER_FALLBACK !== "false";
 }
 
+// ---- Clearance cookie reuse -------------------------------------------------
+
+interface Clearance {
+  /** `Cookie` header value (cf_clearance plus whatever the site set). */
+  cookie: string;
+  expiresAt: number;
+}
+
+const clearances = new Map<string, Clearance>();
+
+/** Replayable Cloudflare clearance for `host`, or null. Exposed for tests. */
+export function getChallengeClearance(host: string): string | null {
+  const c = clearances.get(host);
+  if (!c) return null;
+  if (c.expiresAt <= Date.now()) {
+    clearances.delete(host);
+    return null;
+  }
+  return c.cookie;
+}
+
+/** Remember browser cookies for `host`. Only useful when they include cf_clearance. */
+export function setChallengeClearance(
+  host: string,
+  cookies: { name: string; value: string; expires?: number }[]
+): boolean {
+  const cf = cookies.find((c) => c.name === "cf_clearance");
+  if (!cf) return false;
+  let expiresAt = Date.now() + CLEARANCE_TTL_MS;
+  if (cf.expires && cf.expires > 0) {
+    expiresAt = Math.min(expiresAt, cf.expires * 1000);
+  }
+  if (expiresAt <= Date.now()) return false;
+  clearances.set(host, {
+    cookie: cookies.map((c) => `${c.name}=${c.value}`).join("; "),
+    expiresAt,
+  });
+  return true;
+}
+
+export function clearChallengeClearance(host: string): void {
+  clearances.delete(host);
+}
+
+/**
+ * Hosts where fetch *and* curl were just challenged while the browser passed
+ * (Cloudflare is scoring the TLS fingerprint there). Skip straight to the
+ * browser for a while rather than paying ~1 s to be refused twice per call.
+ */
+const CHALLENGED_HOST_TTL_MS = parseInt(
+  process.env.CHALLENGE_SKIP_PLAIN_TTL_MS || String(10 * 60 * 1000),
+  10
+);
+const challengedHosts = new Map<string, number>();
+
+function plainTiersChallenged(host: string): boolean {
+  const until = challengedHosts.get(host);
+  if (!until) return false;
+  if (until <= Date.now()) {
+    challengedHosts.delete(host);
+    return false;
+  }
+  return true;
+}
+
 async function viaFetch(url: string): Promise<SsgeHtmlResult> {
+  const host = new URL(url).hostname;
+  const clearance = getChallengeClearance(host);
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), FETCH_TIMEOUT_MS);
   try {
@@ -82,11 +160,16 @@ async function viaFetch(url: string): Promise<SsgeHtmlResult> {
         "User-Agent": USER_AGENT,
         Accept: "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
         "Accept-Language": "ka-GE,ka;q=0.9,en;q=0.8",
+        ...(clearance ? { Cookie: clearance } : {}),
       },
       signal: controller.signal,
     });
     const html = await res.text();
     if (looksLikeCloudflareChallenge(html, res.headers)) {
+      if (clearance) {
+        clearChallengeClearance(host);
+        throw new Error(`Cloudflare challenge (HTTP ${res.status}) despite clearance cookie — dropped`);
+      }
       throw new Error(`Cloudflare challenge (HTTP ${res.status})`);
     }
     if (!res.ok) throw new Error(`HTTP ${res.status}`);
@@ -156,23 +239,76 @@ async function viaBrowser(url: string): Promise<SsgeHtmlResult> {
     viewport: { width: 1366, height: 768 },
   });
   try {
-    const page = await context.newPage();
-    await page.goto(url, {
-      waitUntil: "domcontentloaded",
-      timeout: Math.max(5_000, deadline - Date.now()),
-    });
-    // The challenge page auto-submits and reloads; poll until the real page
-    // (one with Next.js data) is in the DOM or the shared budget runs out.
-    let html = "";
-    while (Date.now() < deadline) {
-      html = await page.content().catch(() => "");
-      if (html.includes("__NEXT_DATA__") && !looksLikeCloudflareChallenge(html)) {
-        return { html, via: "browser" };
+    // We only want the server-rendered document. Letting a 1.6 MB listing
+    // page hydrate on a 2 vCPU box costs 20-30 s of renderer time (and
+    // page.content()/close block behind it), so drop every subresource
+    // except Cloudflare's own challenge assets under /cdn-cgi/.
+    await context.route("**/*", (route) => {
+      const req = route.request();
+      if (req.resourceType() === "document" || req.url().includes("/cdn-cgi/")) {
+        return route.continue();
       }
-      await page.waitForTimeout(1000);
+      return route.abort();
+    });
+
+    const page = await context.newPage();
+    // Read the HTML straight from the main-frame navigation response instead
+    // of the DOM: it is available as soon as the bytes arrive, and a cleared
+    // challenge simply produces a second navigation response.
+    let html = "";
+    let lastDoc = "";
+    page.on("response", (res) => {
+      const req = res.request();
+      if (!req.isNavigationRequest() || req.frame() !== page.mainFrame()) return;
+      if (res.status() >= 300 && res.status() < 400) return;
+      const cfMitigated = res.headers()["cf-mitigated"];
+      void res
+        .text()
+        .then((body) => {
+          lastDoc = body;
+          if (
+            body.includes("__NEXT_DATA__") &&
+            !cfMitigated &&
+            !looksLikeCloudflareChallenge(body)
+          ) {
+            html = body;
+          }
+        })
+        .catch(() => {});
+    });
+
+    await page
+      .goto(url, {
+        waitUntil: "commit",
+        timeout: Math.max(5_000, deadline - Date.now()),
+      })
+      .catch((err) => {
+        // A challenge that clears mid-navigation can abort goto; the response
+        // listener still sees the final document, so only fail if it did not.
+        if (!html) throw err;
+      });
+
+    while (!html && Date.now() < deadline) {
+      await page.waitForTimeout(250);
+    }
+    if (!html) {
+      // Last resort: whatever the DOM holds now (slow, but complete).
+      const dom = await page.content().catch(() => "");
+      if (dom.includes("__NEXT_DATA__") && !looksLikeCloudflareChallenge(dom)) html = dom;
+      else if (dom) lastDoc = dom;
+    }
+    if (html) {
+      // Keep the clearance (if a challenge was actually served and solved) so
+      // the fetch tier can skip the browser next time.
+      const host = new URL(url).hostname;
+      const cookies = await context.cookies(url).catch(() => []);
+      if (setChallengeClearance(host, cookies)) {
+        console.log(`[${host} html] stored Cloudflare clearance cookie for reuse`);
+      }
+      return { html, via: "browser" };
     }
     throw new Error(
-      looksLikeCloudflareChallenge(html)
+      looksLikeCloudflareChallenge(lastDoc)
         ? "Cloudflare challenge did not clear in the browser"
         : "Page loaded in browser but had no __NEXT_DATA__"
     );
@@ -185,40 +321,65 @@ async function viaBrowser(url: string): Promise<SsgeHtmlResult> {
  * Fetch `url` with the escalation chain. Throws only when every enabled
  * strategy failed; the message lists each failure.
  */
-export async function fetchSsgeHtmlResilient(url: string): Promise<SsgeHtmlResult> {
+export async function fetchHtmlResilient(url: string): Promise<SsgeHtmlResult> {
   const failures: string[] = [];
+  const { hostname: host, pathname } = new URL(url);
+  const tag = `[${host.replace(/^(www|home)\./, "")} html]`;
+  let challenged = 0;
 
-  try {
-    return await viaFetch(url);
-  } catch (err) {
-    failures.push(`fetch: ${err instanceof Error ? err.message : String(err)}`);
-  }
+  // Plain tiers are skipped only while the host is known to challenge them
+  // and we hold no clearance cookie that might let fetch through.
+  const skipPlain =
+    browserEnabled() && plainTiersChallenged(host) && !getChallengeClearance(host);
 
-  if (curlEnabled()) {
+  if (skipPlain) {
+    failures.push("fetch/curl: skipped (host challenged them recently)");
+  } else {
     try {
-      const result = await viaCurl(url);
-      console.log(`[ss.ge html] fetch was challenged — curl succeeded for ${new URL(url).pathname}`);
-      return result;
+      return await viaFetch(url);
     } catch (err) {
-      failures.push(`curl: ${err instanceof Error ? err.message : String(err)}`);
+      const message = err instanceof Error ? err.message : String(err);
+      if (/Cloudflare challenge/.test(message)) challenged++;
+      failures.push(`fetch: ${message}`);
+    }
+
+    if (curlEnabled()) {
+      try {
+        const result = await viaCurl(url);
+        console.log(`${tag} fetch was challenged — curl succeeded for ${pathname}`);
+        return result;
+      } catch (err) {
+        const message = err instanceof Error ? err.message : String(err);
+        if (/Cloudflare challenge/.test(message)) challenged++;
+        failures.push(`curl: ${message}`);
+      }
+    } else {
+      challenged++; // only one plain tier available; treat it as decisive
     }
   }
 
   if (browserEnabled()) {
     try {
       const started = Date.now();
-      console.warn(
-        `[ss.ge html] ${failures.join("; ")} — launching headless Chromium for ${new URL(url).pathname}`
-      );
+      if (!skipPlain) {
+        console.warn(`${tag} ${failures.join("; ")} — launching headless Chromium for ${pathname}`);
+      }
       const result = await viaBrowser(url);
+      if (challenged >= 2) {
+        challengedHosts.set(host, Date.now() + CHALLENGED_HOST_TTL_MS);
+      }
       console.log(
-        `[ss.ge html] fetch/curl were challenged — browser succeeded in ${Date.now() - started}ms for ${new URL(url).pathname}`
+        `${tag} ${skipPlain ? "browser" : "fetch/curl were challenged — browser"} succeeded in ${Date.now() - started}ms for ${pathname}`
       );
       return result;
     } catch (err) {
+      challengedHosts.delete(host);
       failures.push(`browser: ${err instanceof Error ? err.message : String(err)}`);
     }
   }
 
-  throw new Error(`ss.ge page unavailable (${failures.join("; ")})`);
+  throw new Error(`${host} page unavailable (${failures.join("; ")})`);
 }
+
+/** @deprecated alias — the chain is not ss.ge-specific any more. */
+export const fetchSsgeHtmlResilient = fetchHtmlResilient;

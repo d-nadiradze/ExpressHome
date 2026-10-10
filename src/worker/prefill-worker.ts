@@ -4,8 +4,9 @@
  * Run with:   npm run worker
  * Docker:     node node_modules/tsx/dist/cli.mjs src/worker/prefill-worker.ts
  *
- * All Playwright browser work for prefills runs here, isolated from Next.js.
- * Listing parse uses HTTP only: ss.ge fetch in this worker, myhome API in the app.
+ * All Playwright browser work runs here, isolated from Next.js. Listing parse
+ * is HTTP-first (ss.ge API / myhome API or page) and only falls back to a
+ * headless Chromium when Cloudflare challenges the plain request.
  *
  * Concurrency:
  *   PARSE_MAX_CONCURRENT  — parallel listing parses   (default 3)
@@ -47,6 +48,8 @@ import { withDeadline } from "@/lib/job-deadline";
 import { closeAllBrowsers, registerBrowserShutdownHooks } from "@/lib/browser-lifecycle";
 import { db } from "@/lib/db";
 import { parseSsgeListingViaFetch } from "@/lib/ssge-fetch-parser";
+import { parseMyhomeViaApi } from "@/lib/myhome-api-parser";
+import { stripMaskedPhone } from "@/lib/parse-queue";
 import { isValidSsgeUrl } from "@/lib/utils";
 import { isMarketPollEnabled, marketPollIntervalMs } from "@/lib/market-constants";
 import { runMarketPoll } from "@/lib/market-poller";
@@ -94,13 +97,9 @@ async function runParseJob(job: Job<ParseJobData>): Promise<void> {
   console.log(`[worker] Parse job ${job.id} — ${url}`);
 
   try {
-    // Worker only handles ss.ge parse jobs (plain HTTP fetch, ~2s).
-    // myhome.ge parse runs in-process in Next.js (see parse-queue.ts).
-    if (!isValidSsgeUrl(url)) {
-      console.warn(`[worker] Unexpected non-ssge parse job for ${url} — skipping`);
-      return;
-    }
-    const result = await parseSsgeListingViaFetch(url, { userId });
+    const result = isValidSsgeUrl(url)
+      ? await parseSsgeListingViaFetch(url, { userId })
+      : await parseMyhomeViaApi(url);
 
     if (!result.success || !result.data) {
       await db.parsedListing.update({
@@ -112,6 +111,7 @@ async function runParseJob(job: Job<ParseJobData>): Promise<void> {
     }
 
     const d = result.data;
+    stripMaskedPhone(d);
     await db.parsedListing.update({
       where: { id: listingId },
       data: {

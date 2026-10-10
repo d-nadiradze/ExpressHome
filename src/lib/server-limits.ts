@@ -7,7 +7,6 @@ import { createLimiter, type Limiter } from "@/lib/concurrency-limit";
 
 const store = globalThis as unknown as {
   browserLoginLimiter?: Limiter;
-  myhomeParseLimiter?: Limiter;
   chromiumLaunchLimiter?: Limiter;
 };
 
@@ -24,16 +23,6 @@ export function browserLoginLimiter(): Limiter {
     });
   }
   return store.browserLoginLimiter;
-}
-
-/** myhome parses run in-process (HTTP + DB), so cap how many overlap. */
-export function myhomeParseLimiter(): Limiter {
-  if (!store.myhomeParseLimiter) {
-    store.myhomeParseLimiter = createLimiter({
-      maxConcurrent: parseInt(process.env.MYHOME_PARSE_MAX_CONCURRENT || "3", 10),
-    });
-  }
-  return store.myhomeParseLimiter;
 }
 
 /**
