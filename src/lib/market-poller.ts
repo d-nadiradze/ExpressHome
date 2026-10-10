@@ -9,10 +9,13 @@ import {
   MARKET_DEAL_TYPE_KA,
   MARKET_PROPERTY_TYPES,
   SSGE_MARKET_TYPE_IDS,
+  isMarketMyhomeEnabled,
   marketAgencyPages,
   marketDetailMaxPerPoll,
   marketOwnerPages,
   marketPageSize,
+  marketPollJitterMs,
+  marketRequestPauseMs,
   type MarketPropertyType,
 } from "@/lib/market-constants";
 import { buildAgencyIndex, findAgencyDuplicateIndexed } from "@/lib/market-duplicate";
@@ -25,6 +28,15 @@ import { fetchSsgeMarketDetail, searchSsgeMarket } from "@/lib/market-search-ssg
 import type { MarketCard, MarketSellerSlice } from "@/lib/market-types";
 
 const SYNC_ID = "singleton";
+
+const sleep = (ms: number) => new Promise<void>((r) => setTimeout(r, ms));
+
+/** Human-ish gap between two portal requests: mean ±50%. */
+async function pace(): Promise<void> {
+  const mean = marketRequestPauseMs();
+  if (mean <= 0) return;
+  await sleep(Math.round(mean * (0.5 + Math.random())));
+}
 
 function uniqueCards(cards: MarketCard[]): MarketCard[] {
   const seen = new Set<string>();
@@ -61,9 +73,12 @@ async function searchSlice(
     return added;
   };
 
+  const myhomeEnabled = isMarketMyhomeEnabled();
+
   for (const propertyType of MARKET_PROPERTY_TYPES) {
-    for (let page = 1; page <= pages; page++) {
+    for (let page = 1; myhomeEnabled && page <= pages; page++) {
       try {
+        await pace();
         const myhome = await searchMyhomeMarket(propertyType, slice, page, pageSize);
         if (myhome.length === 0) break;
         // Same ids again means the API ignored our paging — stop paging this type.
@@ -80,6 +95,7 @@ async function searchSlice(
     for (const typeId of SSGE_MARKET_TYPE_IDS[propertyType]) {
       for (let page = 1; page <= pages; page++) {
         try {
+          await pace();
           const ssge = await searchSsgeMarket(propertyType, slice, page, pageSize, typeId);
           if (ssge.length === 0) break;
           if (addPage(ssge) === 0) break;
@@ -136,6 +152,7 @@ async function enrichNewCards(cards: MarketCard[], known: Set<string>): Promise<
 
   for (const card of toFetch) {
     try {
+      await pace();
       const detail =
         card.platform === "MYHOME"
           ? await fetchMyhomeMarketDetail(card.externalId)
@@ -345,6 +362,13 @@ async function writeSyncState(lastPolledAt: Date, lastError: string | null): Pro
 }
 
 export async function runMarketPoll(): Promise<void> {
+  // Scheduled ticks fire on an exact clock; wait a random slice first so the
+  // portals never see us at :00 every hour.
+  const jitter = Math.round(Math.random() * marketPollJitterMs());
+  if (jitter > 0) {
+    console.log(`[market] poll in ${Math.round(jitter / 1000)}s (jitter)`);
+    await sleep(jitter);
+  }
   const now = new Date();
   console.log("[market] poll start");
 
