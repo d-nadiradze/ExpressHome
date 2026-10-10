@@ -3,6 +3,7 @@ import { db } from "@/lib/db";
 import { isValidListingUrl } from "@/lib/utils";
 import { enqueueParseJob } from "@/lib/parse-queue";
 import {
+  extractMyhomeListingIdFromUrl,
   findExistingParsedListing,
   normalizeListingUrl,
 } from "@/lib/listing-url";
@@ -53,6 +54,21 @@ export async function POST(request: NextRequest) {
     if (!isValidListingUrl(url)) {
       return NextResponse.json(
         { error: "Invalid URL. Must be a myhome.ge or ss.ge link." },
+        { status: 400 }
+      );
+    }
+
+    // myhome project / complex pages (/project/…), search pages and the home
+    // page carry no statement ID. Say so now instead of queueing a job that
+    // can only fail with a generic "Parsing failed".
+    if (/myhome\.ge/i.test(url) && !extractMyhomeListingIdFromUrl(url)) {
+      const isProject = /\/project\//i.test(url);
+      return NextResponse.json(
+        {
+          error: isProject
+            ? "This is a project (new development) page, not a single listing. Open one apartment inside the project and paste its link (…/pr/12345/)."
+            : "This myhome.ge link is not a single listing. Paste the link of one listing (…/pr/12345/).",
+        },
         { status: 400 }
       );
     }
