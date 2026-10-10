@@ -1,6 +1,8 @@
 import type { Metadata } from "next";
 import { Toaster } from "react-hot-toast";
 import ThemeProvider from "@/components/ThemeProvider";
+import StaleBuildReload from "@/components/StaleBuildReload";
+import { getBuildId } from "@/lib/build-id";
 import "./globals.css";
 
 export const metadata: Metadata = {
@@ -22,6 +24,7 @@ export default function RootLayout({
         <ThemeProvider>
           {children}
           <Toaster position="top-right" />
+          <StaleBuildReload buildId={getBuildId()} />
         </ThemeProvider>
       </body>
     </html>

@@ -128,7 +128,9 @@ services:
     container_name: myhome-redis
     restart: unless-stopped
     mem_limit: ${REDIS_MEM_LIMIT:-64m}
-    command: redis-server --save 60 1 --loglevel warning --maxmemory 48mb --maxmemory-policy allkeys-lru
+    # BullMQ needs `noeviction`: with an LRU policy Redis may silently drop
+    # queue/job keys under memory pressure instead of failing loudly.
+    command: redis-server --save 60 1 --loglevel warning --maxmemory 48mb --maxmemory-policy noeviction
     ports:
       - "127.0.0.1:6379:6379"
     volumes:
@@ -147,7 +149,13 @@ services:
     restart: unless-stopped
     mem_limit: ${MYSQL_MEM_LIMIT:-220m}
     # Defaults are too large for a 1 GB VPS — keep InnoDB buffer modest.
+    # No replica reads this server, so the binary log (on by default in
+    # MySQL 8, 30-day retention, ROW format with full row images) was pure
+    # waste: ~1 GB/day from the market poller's updates, 25 GB before it
+    # was switched off. If you ever need point-in-time recovery, re-enable
+    # it together with --binlog-expire-logs-seconds=172800 or similar.
     command:
+      - --skip-log-bin
       - --innodb-buffer-pool-size=128M
       - --performance-schema=OFF
       - --table-open-cache=200

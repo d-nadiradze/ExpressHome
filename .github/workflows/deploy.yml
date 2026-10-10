@@ -86,7 +86,7 @@ jobs:
           host: ${{ secrets.DEPLOY_HOST }}
           username: ${{ secrets.DEPLOY_USER }}
           key: ${{ secrets.DEPLOY_SSH_KEY }}
-          script_stop: true
+          # (`script_stop` was removed in ssh-action v1; `set -e` below does it.)
           # Default is 10m, which the VPS overruns just unpacking the images:
           # the worker ships the whole builder stage (dev deps, sources, .next)
           # plus Chromium, and extraction is disk-bound on a box this size.
