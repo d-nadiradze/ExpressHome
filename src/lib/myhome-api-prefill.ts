@@ -158,9 +158,44 @@ function parseSetCookieTokens(setCookies: string[]): Partial<MyhomeApiSession> |
   return { accessToken, refreshToken: refreshToken || accessToken };
 }
 
+/**
+ * tnet answers a wrong email/password with 422 and
+ * `{ message: { error_data: { password: ["incorrect"], _error: ["…"] } } }`.
+ * Pull a human sentence out of that so the UI can say *why* instead of
+ * lumping it together with network / anti-bot failures.
+ */
+function describeAuthRejection(status: number, body: string): string | null {
+  if (status !== 422 && status !== 401) return null;
+  try {
+    const json = JSON.parse(body) as {
+      message?: { error_data?: Record<string, string[] | string> } | string;
+    };
+    const msg = json.message;
+    const data = typeof msg === "object" && msg ? msg.error_data : undefined;
+    const sentence = data?._error;
+    const text = Array.isArray(sentence) ? sentence[0] : sentence;
+    if (text) return text;
+    if (data && Object.keys(data).length) {
+      return Object.entries(data)
+        .map(([field, v]) => `${field}: ${Array.isArray(v) ? v.join(", ") : v}`)
+        .join("; ");
+    }
+    if (typeof msg === "string") return msg;
+  } catch {
+    /* not JSON */
+  }
+  return "email or password rejected";
+}
+
 export async function loginMyhomeApi(
   credentials: MyhomeCredentials
-): Promise<{ success: boolean; session?: MyhomeApiSession; error?: string }> {
+): Promise<{
+  success: boolean;
+  session?: MyhomeApiSession;
+  error?: string;
+  /** True when tnet explicitly rejected the email/password (not a transport problem). */
+  invalidCredentials?: boolean;
+}> {
   try {
     const res = await fetchWithTimeout(AUTH_URL, {
       method: "POST",
@@ -179,13 +214,27 @@ export async function loginMyhomeApi(
       }),
     });
 
+    const text = await res.text();
+
     if (!res.ok) {
-      return { success: false, error: `Login failed (HTTP ${res.status})` };
+      const rejection = describeAuthRejection(res.status, text);
+      if (rejection) {
+        return {
+          success: false,
+          invalidCredentials: true,
+          error: `myhome rejected the email/password (${rejection})`,
+        };
+      }
+      const challenged = res.headers.get("cf-mitigated") || /Just a moment/i.test(text);
+      return {
+        success: false,
+        error: challenged
+          ? `tnet login blocked by Cloudflare (HTTP ${res.status})`
+          : `tnet login service error (HTTP ${res.status})`,
+      };
     }
 
     let session: Partial<MyhomeApiSession> | null = null;
-
-    const text = await res.text();
     if (text) {
       try {
         session = parseTokensFromJson(JSON.parse(text));
