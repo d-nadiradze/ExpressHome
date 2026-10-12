@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { db } from "@/lib/db";
 import { encrypt } from "@/lib/encryption";
+import { loginMyhomeApi } from "@/lib/myhome-api-prefill";
 import { loginToMyhome } from "@/lib/myhome-parser";
 import { LimiterBusyError } from "@/lib/concurrency-limit";
 import { browserLoginLimiter } from "@/lib/server-limits";
@@ -33,16 +34,34 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    // Verify credentials by attempting login
-    const loginResult = await browserLoginLimiter().run(() =>
-      loginToMyhome({ email, password })
-    );
+    // Verify credentials the same way prefills and photo uploads authenticate:
+    // one HTTP call to accounts.tnet.ge (~250 ms from the VPS). The old
+    // headless-browser check ran inside this 280 MB container and reported
+    // every timeout / anti-bot interstitial as "Invalid credentials".
+    const apiLogin = await loginMyhomeApi({ email, password });
 
-    if (!loginResult.success) {
-      return NextResponse.json(
-        { error: `Myhome login failed: ${loginResult.error}` },
-        { status: 400 }
+    if (!apiLogin.success) {
+      if (apiLogin.invalidCredentials) {
+        return NextResponse.json(
+          { error: `Myhome login failed: ${apiLogin.error}` },
+          { status: 400 }
+        );
+      }
+
+      // The API itself was unreachable/blocked — only then try a real browser,
+      // and say what actually went wrong if that fails too.
+      console.warn(`[myhome link] API login unavailable (${apiLogin.error}); trying browser`);
+      const browserLogin = await browserLoginLimiter().run(() =>
+        loginToMyhome({ email, password })
       );
+      if (!browserLogin.success) {
+        return NextResponse.json(
+          {
+            error: `Could not reach myhome's login service to verify the account (${apiLogin.error}; browser: ${browserLogin.error}). Please try again in a few minutes.`,
+          },
+          { status: 502 }
+        );
+      }
     }
 
     // Encrypt password before storing
