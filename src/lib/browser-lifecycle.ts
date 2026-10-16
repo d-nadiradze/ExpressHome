@@ -132,6 +132,10 @@ export async function closeBrowserSession(
     if (browser?.isConnected()) {
       await closeWithDeadline("browser", () => browser.close());
     }
+    // A graceful close can hang when the container is out of task slots or
+    // Chromium is wedged; the process then outlives its job (one ran 25 h on
+    // the VPS and held ~60 threads). Make sure it is actually gone.
+    killBrowserProcess(browser);
   } finally {
     // The slot must come back even when Chromium refused to die, otherwise the
     // next prefill waits on a launch slot that no live browser owns.
@@ -147,10 +151,31 @@ export async function closeAllBrowsers(): Promise<void> {
   await Promise.all(
     browsers.map(async (b) => {
       await closeWithDeadline("browser", () => b.close());
+      killBrowserProcess(b);
       releaseSlot(b);
     })
   );
   activeBrowsers.clear();
+}
+
+/** SIGKILL the Chromium behind `browser` if Playwright still has its handle and it is alive. */
+function killBrowserProcess(browser?: Browser | null): void {
+  if (!browser) return;
+  // Playwright exposes the launched process for local browsers (not for connect()).
+  const proc = (browser as unknown as { process?: () => { pid?: number; killed?: boolean } | null })
+    .process?.();
+  if (!proc?.pid || proc.killed) return;
+  try {
+    process.kill(proc.pid, 0); // still alive?
+  } catch {
+    return;
+  }
+  try {
+    process.kill(proc.pid, "SIGKILL");
+    console.warn(`[browser] force-killed leftover Chromium pid ${proc.pid}`);
+  } catch {
+    /* already gone */
+  }
 }
 
 export function isMyhomePrefillHeadless(): boolean {

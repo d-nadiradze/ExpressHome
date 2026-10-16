@@ -47,11 +47,14 @@ const BROWSER_CHALLENGE_TIMEOUT_MS = parseInt(
 );
 /**
  * Max time to wait for a free Chromium slot. The worker allows one Chromium
- * (BROWSER_MAX_CONCURRENT=1) and a prefill can hold it for minutes; a token
- * fetch must not queue behind that or the parse silently hits its deadline.
+ * (BROWSER_MAX_CONCURRENT=1). Prefills now go through the portal APIs, so the
+ * slot is normally held for the 4-15 s a challenge page takes; with parse
+ * concurrency 3, the third concurrent myhome parse waits for two of those.
+ * (A browser prefill, if enabled, can still hold it for minutes — then this
+ * fails fast rather than letting the parse hit its 180 s deadline.)
  */
 const BROWSER_SLOT_WAIT_MS = parseInt(
-  process.env.SSGE_CHALLENGE_BROWSER_SLOT_WAIT_MS || "10000",
+  process.env.SSGE_CHALLENGE_BROWSER_SLOT_WAIT_MS || "45000",
   10
 );
 
@@ -226,7 +229,7 @@ async function viaBrowser(url: string): Promise<SsgeHtmlResult> {
       { maxWaitMs: BROWSER_SLOT_WAIT_MS }
     );
   } catch (err) {
-    if (err instanceof LimiterBusyError) {
+    if (err instanceof LimiterBusyError || (err as Error)?.name === "LimiterBusyError") {
       throw new Error(
         `Chromium slot busy for ${BROWSER_SLOT_WAIT_MS}ms (another browser job is running)`
       );

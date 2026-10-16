@@ -11,6 +11,7 @@ services:
     # Keep the site up when Playwright/parse work spikes — OOM kills this
     # container instead of starving MySQL/nginx on a 1 GB host.
     mem_limit: ${APP_MEM_LIMIT:-280m}
+    pids_limit: ${APP_PIDS_LIMIT:-2048}
     ports:
       - "3000:3000"
     environment:
@@ -58,6 +59,11 @@ services:
     container_name: myhome-worker
     restart: unless-stopped
     mem_limit: ${WORKER_MEM_LIMIT:-320m}
+    # Without this, systemd's DefaultTasksMax (15% of the host's threads-max,
+    # 1020 on the 1 GB VPS) silently caps the container. Chromium alone uses
+    # 60-100 threads and the kernel counter was observed stuck far above the
+    # real thread count; once the cap is hit Prisma/DNS/Chromium all fail.
+    pids_limit: ${WORKER_PIDS_LIMIT:-4096}
     command: ["node", "node_modules/tsx/dist/cli.mjs", "src/worker/prefill-worker.ts"]
     environment:
       - HOME=/app
