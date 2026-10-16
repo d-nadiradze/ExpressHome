@@ -379,6 +379,48 @@ async function startMarketPoller(): Promise<void> {
 
 void startMarketPoller();
 
+// ---- Liveness watchdog -----------------------------------------------------
+//
+// A worker can be "up" yet useless: on 2026-10-15 the container hit its
+// cgroup task limit, after which Prisma, DNS and Chromium could not create
+// threads and every job failed with "Can't reach database server" for a day
+// while MySQL was healthy. Docker only restarts a container whose process
+// exits, so exit when the database stays unreachable from here: a fresh
+// container gets a fresh cgroup and a clean Node process.
+
+const WATCHDOG_INTERVAL_MS = parseInt(process.env.WORKER_WATCHDOG_INTERVAL_MS || "60000", 10);
+const WATCHDOG_MAX_FAILURES = parseInt(process.env.WORKER_WATCHDOG_MAX_FAILURES || "3", 10);
+let watchdogFailures = 0;
+
+if (WATCHDOG_INTERVAL_MS > 0 && WATCHDOG_MAX_FAILURES > 0) {
+  const timer = setInterval(async () => {
+    try {
+      await Promise.race([
+        db.$queryRaw`SELECT 1`,
+        new Promise((_, reject) =>
+          setTimeout(() => reject(new Error("db ping timed out")), 15_000)
+        ),
+      ]);
+      if (watchdogFailures > 0) console.log("[worker:watchdog] database reachable again");
+      watchdogFailures = 0;
+    } catch (err) {
+      watchdogFailures++;
+      const message = err instanceof Error ? err.message.split("\n")[0] : String(err);
+      console.error(
+        `[worker:watchdog] database ping failed (${watchdogFailures}/${WATCHDOG_MAX_FAILURES}): ${message}`
+      );
+      if (watchdogFailures >= WATCHDOG_MAX_FAILURES) {
+        console.error("[worker:watchdog] giving up — exiting so Docker restarts the worker");
+        clearInterval(timer);
+        // Let the log line flush, then die hard: a wedged process may not be
+        // able to run its graceful shutdown (that needs threads too).
+        setTimeout(() => process.exit(70), 500).unref();
+      }
+    }
+  }, WATCHDOG_INTERVAL_MS);
+  timer.unref();
+}
+
 // ---- Graceful shutdown -----------------------------------------------------
 
 registerBrowserShutdownHooks(async () => {
