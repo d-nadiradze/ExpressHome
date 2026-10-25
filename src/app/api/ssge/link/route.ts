@@ -4,6 +4,32 @@ import { encrypt } from "@/lib/encryption";
 import { loginToSsge } from "@/lib/ssge-parser";
 import { LimiterBusyError } from "@/lib/concurrency-limit";
 import { browserLoginLimiter } from "@/lib/server-limits";
+import { isRelayAlive, verifyCredentialsViaRelay } from "@/lib/ssge-relay";
+import { saveSsgeApiToken } from "@/lib/ssge-api-token-cache";
+
+/**
+ * Verify ss.ge credentials. With the token relay online the real login runs
+ * there (home.ss.ge is Turnstile-blocked from the server); otherwise fall back
+ * to the headless-browser login.
+ */
+async function verifySsgeCredentials(
+  email: string,
+  password: string
+): Promise<{ success: boolean; accessToken?: string; error?: string }> {
+  if (await isRelayAlive()) {
+    try {
+      const accessToken = await verifyCredentialsViaRelay(email, password);
+      if (accessToken) return { success: true, accessToken };
+      return {
+        success: false,
+        error: "verification timed out — please try again in a minute",
+      };
+    } catch (err) {
+      return { success: false, error: err instanceof Error ? err.message : "login failed" };
+    }
+  }
+  return browserLoginLimiter().run(() => loginToSsge({ email, password }));
+}
 
 export async function GET(request: NextRequest) {
   const userId = request.headers.get("x-user-id");
@@ -31,9 +57,7 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    const loginResult = await browserLoginLimiter().run(() =>
-      loginToSsge({ email, password })
-    );
+    const loginResult = await verifySsgeCredentials(email, password);
 
     if (!loginResult.success) {
       return NextResponse.json(
@@ -60,6 +84,12 @@ export async function POST(request: NextRequest) {
         lastLoginAt: new Date(),
       },
     });
+
+    // The relay already minted a token while verifying — keep it so the first
+    // publish does not need another login.
+    if (loginResult.accessToken) {
+      await saveSsgeApiToken(userId, loginResult.accessToken).catch(() => null);
+    }
 
     return NextResponse.json({ success: true, message: "ss.ge account linked successfully" });
   } catch (error) {

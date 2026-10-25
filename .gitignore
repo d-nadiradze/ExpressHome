@@ -30,6 +30,10 @@ mysql-data/
 # cannot re-include anything under an excluded directory, hence `scripts/*`.)
 scripts/*
 !scripts/run-tests.ts
+# The ss.ge token relay runs on a separate (residential) machine from a checkout.
+!scripts/ssge-token-relay.ts
+!scripts/ssge-token-relay.ps1
+.env.relay
 
 # Uploaded listing images
 data/uploads/
