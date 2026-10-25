@@ -14,6 +14,11 @@ import {
   invalidateSsgeApiToken,
   saveSsgeApiToken,
 } from "@/lib/ssge-api-token-cache";
+import {
+  isRelayAlive,
+  markAccountWanted,
+  requestRelayAccountToken,
+} from "@/lib/ssge-relay";
 
 const USER_AGENT =
   "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36";
@@ -30,12 +35,14 @@ export interface LoginSsgeApiOptions {
 }
 
 /** How ss.ge API Bearer token was obtained (for live prefill logs). */
-export type SsgeApiAuthMethod = "cached" | "http" | "playwright";
+export type SsgeApiAuthMethod = "cached" | "relay" | "http" | "playwright";
 
 export function ssgeAuthMethodMessage(method: SsgeApiAuthMethod | undefined): string {
   switch (method) {
     case "cached":
       return "Cached API token — no browser login";
+    case "relay":
+      return "API token from the ss.ge relay — no browser";
     case "http":
       return "HTTP OAuth login — no browser";
     case "playwright":
@@ -101,11 +108,41 @@ export async function loginSsgeApi(
 }> {
   const userId = options?.userId;
 
+  if (userId) {
+    // Keep this account's token warm for the next day of use.
+    void markAccountWanted(userId);
+  }
+
   if (userId && !options?.forceRefresh) {
     const cached = await getCachedSsgeApiAccessToken(userId);
     if (cached) {
       console.log("[ss.ge API auth] Using cached ss.ge API token");
       return { success: true, session: toSession(cached), authMethod: "cached" };
+    }
+  }
+
+  // home.ss.ge / account.ss.ge are Turnstile-blocked from the server, so a
+  // local login (HTTP or Playwright) can only fail slowly. With a relay online
+  // ask it for the token and wait; the relay saves it into the cache.
+  if (userId && (await isRelayAlive())) {
+    console.log("[ss.ge API auth] Requesting token from the ss.ge relay…");
+    const started = Date.now();
+    try {
+      const token = await requestRelayAccountToken(userId);
+      if (token) {
+        console.log(`[ss.ge API auth] Relay delivered a token in ${Date.now() - started}ms`);
+        return { success: true, session: toSession(token), authMethod: "relay" };
+      }
+      return {
+        success: false,
+        error:
+          "ss.ge login via relay timed out — the relay is online but did not answer in time. Please try again in a minute.",
+      };
+    } catch (err) {
+      return {
+        success: false,
+        error: err instanceof Error ? err.message : "ss.ge login via relay failed",
+      };
     }
   }
 

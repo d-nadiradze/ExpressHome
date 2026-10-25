@@ -3,12 +3,18 @@
  *
  * Search: POST https://api-gateway.ss.ge/v1/RealEstate/LegendSearch
  * Detail: GET  https://api-gateway.ss.ge/v1/RealEstate/details?applicationId=
- * Auth:   anonymous credentialsToken from home.ss.ge SSR (cached in memory;
- *         fetched via curl/Chromium when Cloudflare challenges plain fetch),
- *         else a linked account's JWT.
+ * Auth:   anonymous credentialsToken from home.ss.ge SSR — delivered by the
+ *         ss.ge token relay when one is online (see ssge-relay.ts), otherwise
+ *         fetched here via fetch/curl/Chromium; cached in memory. Last resort
+ *         is a linked account's JWT.
  * Owner:  advancedSearch.individualEntityOnly = true
  */
 import { decodeJwtExpiryMs } from "@/lib/ssge-api-token-cache";
+import {
+  getRelayGuestToken,
+  isRelayAlive,
+  requestRelayGuestToken,
+} from "@/lib/ssge-relay";
 import {
   MARKET_CITY_KA,
   MARKET_DEAL_TYPE_KA,
@@ -175,6 +181,37 @@ async function fetchGuestToken(force = false): Promise<string> {
   if (!force && cachedToken && cachedToken.expiresAt - TOKEN_SKEW_MS > Date.now()) {
     return cachedToken.value;
   }
+
+  // Relay-minted token (Redis, shared with the app). Cheap; check it first.
+  const relayed = await getRelayGuestToken();
+  if (relayed && (!force || relayed.token !== cachedToken?.value)) {
+    cachedToken = { value: relayed.token, expiresAt: relayed.expiresAt };
+    return relayed.token;
+  }
+
+  // With a relay online, don't run the local fetch → curl → Chromium chain:
+  // from the server every hop is Turnstile-blocked and only burns ~a minute.
+  // Ask the relay and wait for it instead.
+  if (await isRelayAlive()) {
+    if (!guestTokenInflight) {
+      guestTokenInflight = requestRelayGuestToken()
+        .then((got) => {
+          if (!got) {
+            throw new Error(
+              "ss.ge guest token: relay is online but did not deliver one in time — try again in a minute"
+            );
+          }
+          cachedToken = { value: got.token, expiresAt: got.expiresAt };
+          guestTokenCooldown.clear();
+          return got.token;
+        })
+        .finally(() => {
+          guestTokenInflight = null;
+        });
+    }
+    return guestTokenInflight;
+  }
+
   const blocked = guestTokenCooldown.get();
   if (blocked && !force) {
     throw new Error(

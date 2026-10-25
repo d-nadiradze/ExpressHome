@@ -6,7 +6,14 @@ const SECRET = new TextEncoder().encode(
   process.env.JWT_SECRET || "fallback-secret-change-in-production"
 );
 
-const PUBLIC_PATHS = ["/login", "/api/auth/login", "/api/auth/register", "/api/version"];
+// /api/internal/ssge-relay authenticates with its own shared secret, not a session.
+const PUBLIC_PATHS = [
+  "/login",
+  "/api/auth/login",
+  "/api/auth/register",
+  "/api/version",
+  "/api/internal/ssge-relay",
+];
 const ADMIN_PATHS = ["/admin", "/api/admin"];
 
 export async function middleware(request: NextRequest) {
