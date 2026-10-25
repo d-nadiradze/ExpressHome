@@ -26,7 +26,9 @@ while ($true) {
     Move-Item -Force $log "$log.1"
   }
   "$(Get-Date -Format s) launcher: starting relay" | Add-Content $log
-  & npx --no tsx scripts/ssge-token-relay.ts 2>&1 | ForEach-Object { "$_" } | Add-Content $log
+  # cmd's append-redirect shares the file for reading, so the log can be
+  # tailed while the relay runs (a PowerShell pipeline would hold it locked).
+  & cmd /c "npx --no tsx scripts/ssge-token-relay.ts >> `"$log`" 2>&1"
   "$(Get-Date -Format s) launcher: relay exited, restarting in 15s" | Add-Content $log
   Start-Sleep -Seconds 15
 }

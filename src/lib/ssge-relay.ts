@@ -320,7 +320,9 @@ export async function pullRelayWork(): Promise<RelayWork> {
     guest: { needed: guestNeeded, urgent: guestUrgent },
     accounts,
     verifications,
-    pollMs: busy ? 3000 : parseInt(process.env.SSGE_RELAY_POLL_MS || "15000", 10),
+    // Idle polls are one small GET against our own server; keep them frequent
+    // so a cold account's first publish waits seconds, not a quarter minute.
+    pollMs: busy ? 2000 : parseInt(process.env.SSGE_RELAY_POLL_MS || "5000", 10),
   };
 }
 

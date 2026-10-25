@@ -54,7 +54,7 @@ function sleep(ms: number): Promise<void> {
 
 function mask(email: string): string {
   const [user, domain] = email.split("@");
-  return `${(user || "").slice(0, 3)}…@${domain || "?"}`;
+  return `${(user || "").slice(0, 3)}...@${domain || "?"}`;
 }
 
 async function api<T>(method: "GET" | "POST", body?: unknown): Promise<T> {
@@ -160,7 +160,7 @@ async function main(): Promise<void> {
     console.error("Set SSGE_RELAY_URL and SSGE_RELAY_SECRET (env or .env.relay).");
     process.exit(1);
   }
-  log(`ss.ge token relay → ${SERVER}${ONCE ? " (single pass)" : ""}`);
+  log(`ss.ge token relay -> ${SERVER}${ONCE ? " (single pass)" : ""}`);
 
   let backoffMs = 5_000;
   for (;;) {
