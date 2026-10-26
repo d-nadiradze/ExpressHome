@@ -34,6 +34,9 @@ scripts/*
 !scripts/ssge-token-relay.ts
 !scripts/ssge-token-relay.ps1
 .env.relay
+# Built by the Dockerfile from src/relay/client.ts (install.ps1/launcher.ps1 are sources).
+public/relay/ssge-relay.cjs
+public/relay/version.txt
 
 # Uploaded listing images
 data/uploads/

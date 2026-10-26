@@ -12,8 +12,9 @@
 import { decodeJwtExpiryMs } from "@/lib/ssge-api-token-cache";
 import {
   getRelayGuestToken,
-  isRelayAlive,
+  isAnyRelayAlive,
   relayOfflineNote,
+  relayRequired,
   requestRelayGuestToken,
 } from "@/lib/ssge-relay";
 import {
@@ -193,7 +194,7 @@ async function fetchGuestToken(force = false): Promise<string> {
   // With a relay online, don't run the local fetch → curl → Chromium chain:
   // from the server every hop is Turnstile-blocked and only burns ~a minute.
   // Ask the relay and wait for it instead.
-  if (await isRelayAlive()) {
+  if (await isAnyRelayAlive()) {
     if (!guestTokenInflight) {
       guestTokenInflight = requestRelayGuestToken()
         .then((got) => {
@@ -211,6 +212,14 @@ async function fetchGuestToken(force = false): Promise<string> {
         });
     }
     return guestTokenInflight;
+  }
+
+  // Relay configured but none online: fail fast. The local chain cannot
+  // succeed from the server and its Chromium step would hold the only browser
+  // slot for ~45 s per attempt — starving myhome parses of their challenge
+  // browser. (SSGE_RELAY_LOCAL_FALLBACK=true re-enables the local chain.)
+  if (relayRequired()) {
+    throw new Error((await relayOfflineNote()) ?? "ss.ge relay is offline");
   }
 
   const blocked = guestTokenCooldown.get();

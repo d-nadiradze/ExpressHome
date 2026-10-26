@@ -15,9 +15,10 @@ import {
   saveSsgeApiToken,
 } from "@/lib/ssge-api-token-cache";
 import {
-  isRelayAlive,
+  canRelayMintForUser,
   markAccountWanted,
   relayOfflineNote,
+  relayRequired,
   requestRelayAccountToken,
 } from "@/lib/ssge-relay";
 
@@ -125,7 +126,7 @@ export async function loginSsgeApi(
   // home.ss.ge / account.ss.ge are Turnstile-blocked from the server, so a
   // local login (HTTP or Playwright) can only fail slowly. With a relay online
   // ask it for the token and wait; the relay saves it into the cache.
-  if (userId && (await isRelayAlive())) {
+  if (userId && (await canRelayMintForUser(userId))) {
     console.log("[ss.ge API auth] Requesting token from the ss.ge relay…");
     const started = Date.now();
     try {
@@ -147,9 +148,19 @@ export async function loginSsgeApi(
     }
   }
 
+  // Relay configured but none able to mint for this user: fail fast instead
+  // of a ~40 s Playwright login that is Turnstile-blocked anyway and would
+  // occupy the single Chromium slot myhome parsing needs.
+  if (relayRequired()) {
+    return {
+      success: false,
+      error: (await relayOfflineNote(userId)) ?? "ss.ge relay is offline",
+    };
+  }
+
   const auth = await obtainFreshAccessToken(credentials);
   if (!auth.success || !auth.accessToken) {
-    const note = await relayOfflineNote();
+    const note = await relayOfflineNote(userId);
     const reason = auth.error || "ss.ge API login failed";
     return { success: false, error: note ? `${note}; ${reason}` : reason };
   }

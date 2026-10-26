@@ -4,21 +4,28 @@ import { encrypt } from "@/lib/encryption";
 import { loginToSsge } from "@/lib/ssge-parser";
 import { LimiterBusyError } from "@/lib/concurrency-limit";
 import { browserLoginLimiter } from "@/lib/server-limits";
-import { isRelayAlive, verifyCredentialsViaRelay } from "@/lib/ssge-relay";
+import {
+  canRelayMintForUser,
+  relayOfflineNote,
+  relayRequired,
+  verifyCredentialsViaRelay,
+} from "@/lib/ssge-relay";
 import { saveSsgeApiToken } from "@/lib/ssge-api-token-cache";
 
 /**
- * Verify ss.ge credentials. With the token relay online the real login runs
- * there (home.ss.ge is Turnstile-blocked from the server); otherwise fall back
- * to the headless-browser login.
+ * Verify ss.ge credentials. With a token relay online the real login runs
+ * there (home.ss.ge is Turnstile-blocked from the server) — the admin relay
+ * or this user's own PC. Without any relay configured, fall back to the
+ * headless-browser login.
  */
 async function verifySsgeCredentials(
+  userId: string,
   email: string,
   password: string
 ): Promise<{ success: boolean; accessToken?: string; error?: string }> {
-  if (await isRelayAlive()) {
+  if (await canRelayMintForUser(userId)) {
     try {
-      const accessToken = await verifyCredentialsViaRelay(email, password);
+      const accessToken = await verifyCredentialsViaRelay(email, password, userId);
       if (accessToken) return { success: true, accessToken };
       return {
         success: false,
@@ -27,6 +34,9 @@ async function verifySsgeCredentials(
     } catch (err) {
       return { success: false, error: err instanceof Error ? err.message : "login failed" };
     }
+  }
+  if (relayRequired()) {
+    return { success: false, error: (await relayOfflineNote(userId)) ?? "ss.ge relay is offline" };
   }
   return browserLoginLimiter().run(() => loginToSsge({ email, password }));
 }
@@ -57,7 +67,7 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    const loginResult = await verifySsgeCredentials(email, password);
+    const loginResult = await verifySsgeCredentials(userId, email, password);
 
     if (!loginResult.success) {
       return NextResponse.json(
