@@ -64,7 +64,10 @@ services:
       target: worker-runner
     container_name: myhome-worker
     restart: unless-stopped
-    mem_limit: ${WORKER_MEM_LIMIT:-320m}
+    # Must leave room for Chromium (slimmed myhome challenge browser ~200 MB,
+    # full prefill browser more) on top of the ~120 MB node process; a cgroup
+    # at its limit swaps itself and the swap IO stalls MySQL and the app too.
+    mem_limit: ${WORKER_MEM_LIMIT:-400m}
     # Without this, systemd's DefaultTasksMax (15% of the host's threads-max,
     # 1020 on the 1 GB VPS) silently caps the container. Chromium alone uses
     # 60-100 threads and the kernel counter was observed stuck far above the

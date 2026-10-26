@@ -7,8 +7,10 @@
  * ~5 KB "Just a moment" page) while a real Chromium passes. So escalate:
  *
  *   1. plain fetch            — ~300 ms, works from residential IPs / locally
- *   2. curl (if installed)    — different TLS stack, sometimes passes
- *   3. headless Chromium      — slowest (~5-40 s), but a real browser
+ *   2. curl-impersonate       — ~1 s, Chrome's exact TLS/HTTP2 fingerprint;
+ *      then plain curl          passes myhome.ge from the VPS (Oct 2026)
+ *   3. headless Chromium      — slowest (~5-40 s) and ~500 MB on the
+ *                               challenge page; last resort only
  *
  * Once Chromium clears a challenge, its `cf_clearance` cookie is kept per
  * host and replayed by the fetch tier (same User-Agent, same egress IP), so
@@ -182,17 +184,28 @@ async function viaFetch(url: string): Promise<SsgeHtmlResult> {
   }
 }
 
-async function viaCurl(url: string): Promise<SsgeHtmlResult> {
-  // Deliberately *not* impersonating Chrome here: Cloudflare scores the
-  // User-Agent against the TLS fingerprint, and plain `curl/8.x` with curl's
-  // own TLS stack is exactly what was verified to pass from the VPS.
-  let stdout: string;
+/**
+ * curl-impersonate (lexiforest fork, installed by the Dockerfile) speaks TLS
+ * and HTTP/2 exactly like a real Chrome — ciphers, extensions order, ALPS,
+ * h2 SETTINGS, client-hint headers. Cloudflare keys the myhome.ge challenge
+ * on that fingerprint, so from the VPS this fetches a listing page in ~1 s
+ * where Node's fetch and plain curl get 403 and only a 500 MB Chromium
+ * passed. Unset CURL_IMPERSONATE_BIN to "" to skip it.
+ */
+const CURL_IMPERSONATE_BIN =
+  process.env.CURL_IMPERSONATE_BIN === undefined
+    ? "curl-impersonate"
+    : process.env.CURL_IMPERSONATE_BIN.trim();
+const CURL_IMPERSONATE_TARGET = process.env.CURL_IMPERSONATE_TARGET?.trim() || "chrome136";
+
+async function runCurl(bin: string, extraArgs: string[], url: string): Promise<string> {
   try {
-    ({ stdout } = await execFileAsync(
-      "curl",
-      ["-sS", "-L", "--max-time", String(CURL_TIMEOUT_S), "--compressed", url],
+    const { stdout } = await execFileAsync(
+      bin,
+      [...extraArgs, "-sS", "-L", "--max-time", String(CURL_TIMEOUT_S), "--compressed", url],
       { maxBuffer: 16 * 1024 * 1024, timeout: (CURL_TIMEOUT_S + 2) * 1000 }
-    ));
+    );
+    return stdout;
   } catch (err) {
     const e = err as NodeJS.ErrnoException & { stderr?: string; code?: string | number };
     if (e.code === "ENOENT") throw new Error("not installed");
@@ -200,10 +213,33 @@ async function viaCurl(url: string): Promise<SsgeHtmlResult> {
     const detail = (e.stderr ?? "").trim().split("\n")[0] || e.message.split("\n")[0];
     throw new Error(`exit ${e.code ?? "?"}: ${detail}`);
   }
-  if (looksLikeCloudflareChallenge(stdout)) {
-    throw new Error("Cloudflare challenge via curl");
+}
+
+async function viaCurl(url: string): Promise<SsgeHtmlResult> {
+  const failures: string[] = [];
+
+  // 1. Chrome-fingerprinted curl (see CURL_IMPERSONATE_BIN).
+  if (CURL_IMPERSONATE_BIN) {
+    try {
+      const html = await runCurl(CURL_IMPERSONATE_BIN, ["--impersonate", CURL_IMPERSONATE_TARGET], url);
+      if (!looksLikeCloudflareChallenge(html)) return { html, via: "curl" };
+      failures.push("Cloudflare challenge via curl-impersonate");
+    } catch (err) {
+      failures.push(`curl-impersonate ${err instanceof Error ? err.message : String(err)}`);
+    }
   }
-  return { html: stdout, via: "curl" };
+
+  // 2. Plain curl: its own TLS stack differs from Node's and has been seen to
+  // pass where fetch was challenged (ss.ge, before the Turnstile).
+  try {
+    const html = await runCurl("curl", [], url);
+    if (!looksLikeCloudflareChallenge(html)) return { html, via: "curl" };
+    failures.push("Cloudflare challenge via curl");
+  } catch (err) {
+    failures.push(`curl ${err instanceof Error ? err.message : String(err)}`);
+  }
+
+  throw new Error(failures.join("; "));
 }
 
 async function viaBrowser(url: string): Promise<SsgeHtmlResult> {
