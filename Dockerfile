@@ -10,6 +10,14 @@ COPY . .
 ENV NODE_OPTIONS="--max-old-space-size=2048"
 ENV SKIP_BUILD_CHECKS=1
 RUN npx prisma generate
+# ss.ge token relay client for staff PCs: one dependency-free CommonJS file
+# served from /relay/ (installed by public/relay/install.ps1). version.txt is
+# the bundle's hash; running relays compare it with their own and restart to
+# self-update when it changes.
+RUN mkdir -p public/relay \
+  && npx esbuild src/relay/client.ts --bundle --platform=node --target=node20 --format=cjs \
+       --alias:@=./src --log-level=warning --outfile=public/relay/ssge-relay.cjs \
+  && sha256sum public/relay/ssge-relay.cjs | cut -c1-16 > public/relay/version.txt
 # Persist Next.js' incremental build cache (.next/cache) so repeat builds only
 # recompile changed modules instead of the whole app.
 RUN --mount=type=cache,target=/app/.next/cache mkdir -p public && npm run build

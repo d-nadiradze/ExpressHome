@@ -39,9 +39,129 @@ const PLATFORMS: Record<
     description:
       "Connect ss.ge so parsed listings can be pre-filled on the platform step by step.",
     howItWorks:
-      "We log into ss.ge in a browser to verify your credentials. Your encrypted password is only used when pre-filling listings.",
+      "We log into ss.ge to verify your credentials — through the ExpressHome relay (see below), because ss.ge blocks logins from servers. Your encrypted password is only used when pre-filling listings.",
   },
 };
+
+interface RelayStatus {
+  configured: boolean;
+  anyOnline: boolean;
+  adminOnline: boolean;
+  onlineCount: number;
+  mine: { online: boolean; lastSeen: string | null };
+  canMintForMe: boolean;
+}
+
+function formatAgo(iso: string): string {
+  const ms = Date.now() - new Date(iso).getTime();
+  const m = Math.floor(ms / 60_000);
+  if (m < 1) return "just now";
+  if (m < 60) return `${m} min ago`;
+  const h = Math.floor(m / 60);
+  if (h < 48) return `${h} h ago`;
+  return `${Math.floor(h / 24)} days ago`;
+}
+
+/**
+ * ss.ge blocks token minting from server IPs, so each user's Windows PC runs
+ * a tiny hidden "relay" that mints ss.ge tokens for the server. This card
+ * shows whether it is running and hands out the one-click installer.
+ */
+function RelayCard() {
+  const [status, setStatus] = useState<RelayStatus | null>(null);
+  const [showSteps, setShowSteps] = useState(false);
+
+  useEffect(() => {
+    let cancelled = false;
+    async function load() {
+      try {
+        const res = await fetch("/api/relay/status", { cache: "no-store" });
+        if (!res.ok) return;
+        const data = (await res.json()) as RelayStatus;
+        if (!cancelled) setStatus(data);
+      } catch {
+        /* keep the last known status */
+      }
+    }
+    void load();
+    const timer = setInterval(load, 15_000);
+    return () => {
+      cancelled = true;
+      clearInterval(timer);
+    };
+  }, []);
+
+  if (!status?.configured) return null;
+
+  const mineOnline = status.mine.online;
+  const publishingOk = status.canMintForMe;
+
+  return (
+    <section className="card p-6 space-y-5" aria-label="ss.ge relay">
+      <div className="flex flex-wrap items-start justify-between gap-3">
+        <div>
+          <h2 className="font-semibold text-slate-900 dark:text-slate-50">ss.ge relay on this PC</h2>
+          <p className="text-sm text-slate-500 dark:text-slate-400 mt-1 leading-relaxed max-w-2xl">
+            ss.ge only lets real computers sign in, not servers. A small background program on
+            your Windows PC does the sign-in for the server. It starts by itself every time the PC
+            is turned on and needs no attention. ss.ge publishing works for you while it is running
+            (or while the office relay is online); ss.ge parsing works while any colleague&apos;s relay is online.
+          </p>
+        </div>
+        <div className="flex flex-col items-end gap-1.5 shrink-0">
+          <span className={cn("badge", mineOnline ? "badge-posted" : "badge-pending")}>
+            {mineOnline ? "Your relay: online" : "Your relay: offline"}
+          </span>
+          <span className="text-[11px] text-slate-500 dark:text-slate-400">
+            {status.onlineCount} relay{status.onlineCount === 1 ? "" : "s"} online in total
+            {!mineOnline && status.mine.lastSeen ? ` · yours last seen ${formatAgo(status.mine.lastSeen)}` : ""}
+            {!mineOnline && !status.mine.lastSeen ? " · yours never connected" : ""}
+          </span>
+        </div>
+      </div>
+
+      {!publishingOk && (
+        <div className="rounded-xl border border-amber-200 bg-amber-50 dark:border-amber-900/50 dark:bg-amber-950/30 px-4 py-3 text-sm text-amber-800 dark:text-amber-200">
+          No relay can sign in to <strong>your</strong> ss.ge account right now, so ss.ge publishing
+          will fail for you until you install the relay on your PC (or the office relay comes back).
+        </div>
+      )}
+
+      <div className="flex flex-wrap items-center gap-3">
+        <a
+          href="/api/relay/installer"
+          download="ExpressHome-relay-setup.cmd"
+          className="btn-primary"
+          onClick={() => setShowSteps(true)}
+        >
+          <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" aria-hidden="true">
+            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4" />
+          </svg>
+          {mineOnline ? "Download installer again (Windows)" : "Download relay installer (Windows)"}
+        </a>
+        <button type="button" className="btn-secondary" onClick={() => setShowSteps((v) => !v)}>
+          {showSteps ? "Hide steps" : "How to install"}
+        </button>
+      </div>
+
+      {showSteps && (
+        <ol className="list-decimal pl-5 space-y-1.5 text-sm text-slate-600 dark:text-slate-300">
+          <li>Open the downloaded <code>ExpressHome-relay-setup.cmd</code> file.</li>
+          <li>
+            If Windows shows &quot;Windows protected your PC&quot;, click <strong>More info</strong> →{" "}
+            <strong>Run anyway</strong>. If it asks &quot;Do you want to open this file?&quot;, click <strong>Run</strong>.
+            No administrator password is needed.
+          </li>
+          <li>A black window installs everything (about one minute) and ends with &quot;Done&quot;. Close it.</li>
+          <li>
+            This badge turns to <em>online</em> within a minute. From now on the relay starts by
+            itself at every logon; nothing else to do. The installer is personal — do not pass your file to a colleague; they download their own here.
+          </li>
+        </ol>
+      )}
+    </section>
+  );
+}
 
 function LoadingState() {
   return (
@@ -505,6 +625,8 @@ export default function LinkAccountsClient() {
           )}
         </aside>
       </div>
+
+      {activeTab === "ssge" && <RelayCard />}
     </div>
   );
 }
