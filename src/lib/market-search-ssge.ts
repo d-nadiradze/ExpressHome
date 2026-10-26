@@ -13,6 +13,7 @@ import { decodeJwtExpiryMs } from "@/lib/ssge-api-token-cache";
 import {
   getRelayGuestToken,
   isRelayAlive,
+  relayOfflineNote,
   requestRelayGuestToken,
 } from "@/lib/ssge-relay";
 import {
@@ -224,9 +225,14 @@ async function fetchGuestToken(force = false): Promise<string> {
         guestTokenCooldown.clear();
         return token;
       })
-      .catch((err) => {
-        guestTokenCooldown.fail(undefined, err instanceof Error ? err.message : String(err));
-        throw err;
+      .catch(async (err) => {
+        // If a relay exists but is not checking in, say so up front — that is
+        // the actionable part; the Cloudflare details below are the symptom.
+        const note = await relayOfflineNote();
+        const reason = err instanceof Error ? err.message : String(err);
+        const message = note ? `${note}; ${reason}` : reason;
+        guestTokenCooldown.fail(undefined, message);
+        throw new Error(message);
       })
       .finally(() => {
         guestTokenInflight = null;

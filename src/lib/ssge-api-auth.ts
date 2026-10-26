@@ -17,6 +17,7 @@ import {
 import {
   isRelayAlive,
   markAccountWanted,
+  relayOfflineNote,
   requestRelayAccountToken,
 } from "@/lib/ssge-relay";
 
@@ -148,7 +149,9 @@ export async function loginSsgeApi(
 
   const auth = await obtainFreshAccessToken(credentials);
   if (!auth.success || !auth.accessToken) {
-    return { success: false, error: auth.error || "ss.ge API login failed" };
+    const note = await relayOfflineNote();
+    const reason = auth.error || "ss.ge API login failed";
+    return { success: false, error: note ? `${note}; ${reason}` : reason };
   }
 
   if (userId) {
