@@ -6,6 +6,10 @@
  *
  * The token is derived from SSGE_RELAY_SECRET (see mintUserRelayToken) and only
  * lets that PC mint the shared guest token and the user's own account token.
+ *
+ * The bootstrap PowerShell is written to a .ps1 file (not -Command) so cmd.exe
+ * quoting cannot mangle it, and it avoids APIs missing on Windows 8.1 / .NET
+ * 4.0 (Tls12 enum name, DateTimeOffset.ToUnixTimeSeconds).
  */
 import { NextRequest, NextResponse } from "next/server";
 import { publicUrl } from "@/lib/auth";
@@ -25,7 +29,7 @@ export async function GET(request: NextRequest) {
 
   const origin = publicUrl("/", request).origin;
   const token = mintUserRelayToken(userId);
-  // Both values are URL/token-safe ([A-Za-z0-9.:/-]); nothing to escape for cmd.
+  // URL/token are [A-Za-z0-9.:/-]; nothing to escape for cmd or the tiny .ps1.
   const lines = [
     "@echo off",
     "title ExpressHome relay setup",
@@ -37,9 +41,14 @@ export async function GET(request: NextRequest) {
     `set "EH_RELAY_URL=${origin}"`,
     `set "EH_RELAY_TOKEN=${token}"`,
     `set "EH_INSTALLER=%TEMP%\\ExpressHomeRelay-install.ps1"`,
-    // Download the installer script to a file and run it with Bypass so no
-    // execution-policy prompt appears; TLS 1.2 for older Windows 10 builds.
-    `powershell -NoProfile -ExecutionPolicy Bypass -Command "[Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12; (New-Object Net.WebClient).DownloadFile('%EH_RELAY_URL%/relay/install.ps1?t=' + [DateTimeOffset]::UtcNow.ToUnixTimeSeconds(), '%EH_INSTALLER%')"`,
+    `set "EH_BOOTSTRAP=%TEMP%\\ExpressHomeRelay-dl.ps1"`,
+    // Tiny downloader: TLS 1.2 as numeric 3072 (named Tls12 is missing on
+    // .NET 2.0/3.5 / PowerShell 2), no DateTimeOffset.ToUnixTimeSeconds.
+    `> "%EH_BOOTSTRAP%" echo $ErrorActionPreference = 'Stop'`,
+    `>> "%EH_BOOTSTRAP%" echo try { [Net.ServicePointManager]::SecurityProtocol = [Net.ServicePointManager]::SecurityProtocol -bor 3072 } catch {}`,
+    `>> "%EH_BOOTSTRAP%" echo $u = '%EH_RELAY_URL%/relay/install.ps1?t=' + (Get-Random)`,
+    `>> "%EH_BOOTSTRAP%" echo (New-Object Net.WebClient).DownloadFile($u, '%EH_INSTALLER%')`,
+    `powershell -NoProfile -ExecutionPolicy Bypass -File "%EH_BOOTSTRAP%"`,
     `if not exist "%EH_INSTALLER%" ( echo  Could not download the installer. Check your internet connection and try again. & goto :end )`,
     `powershell -NoProfile -ExecutionPolicy Bypass -File "%EH_INSTALLER%"`,
     `if errorlevel 1 ( echo. & echo  Setup did not finish. Please send a screenshot of this window to support. )`,
