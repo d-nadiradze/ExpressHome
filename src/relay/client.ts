@@ -36,21 +36,20 @@ const SELF_PATH = process.argv[1] ?? "";
 
 function readConfig(): { url: string; token: string } {
   const env = process.env;
-  if (!env.EH_RELAY_URL && !env.SSGE_RELAY_URL) {
-    loadEnv({ path: ".env.relay" });
+  const configFile = SELF_PATH ? join(dirname(SELF_PATH), "config.json") : "";
+  // .env.relay is the admin/checkout way; bundled installs carry config.json.
+  if (!env.EH_RELAY_URL && !env.SSGE_RELAY_URL && !(configFile && existsSync(configFile))) {
+    loadEnv({ path: ".env.relay", quiet: true });
   }
   let url = env.EH_RELAY_URL || env.SSGE_RELAY_URL || "";
   let token = env.EH_RELAY_TOKEN || env.SSGE_RELAY_SECRET || "";
-  if ((!url || !token) && SELF_PATH) {
-    const file = join(dirname(SELF_PATH), "config.json");
-    if (existsSync(file)) {
-      try {
-        const parsed = JSON.parse(readFileSync(file, "utf8")) as { url?: string; token?: string };
-        url = url || parsed.url || "";
-        token = token || parsed.token || "";
-      } catch (err) {
-        console.error(`config.json unreadable: ${err instanceof Error ? err.message : String(err)}`);
-      }
+  if ((!url || !token) && configFile && existsSync(configFile)) {
+    try {
+      const parsed = JSON.parse(readFileSync(configFile, "utf8")) as { url?: string; token?: string };
+      url = url || parsed.url || "";
+      token = token || parsed.token || "";
+    } catch (err) {
+      console.error(`config.json unreadable: ${err instanceof Error ? err.message : String(err)}`);
     }
   }
   return { url: url.replace(/\/+$/, ""), token: token.trim() };
