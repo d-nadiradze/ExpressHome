@@ -22,6 +22,21 @@ RUN mkdir -p public/relay \
 # recompile changed modules instead of the whole app.
 RUN --mount=type=cache,target=/app/.next/cache mkdir -p public && npm run build
 
+# curl-impersonate (lexiforest fork): curl that presents Chrome's exact TLS and
+# HTTP/2 fingerprint. Cloudflare keys the myhome.ge challenge on that
+# fingerprint from datacenter IPs — Node's fetch and plain curl get 403 and the
+# parser had to launch a ~500 MB Chromium per listing (which swapped the 1 GB
+# VPS to a standstill). With this binary the page comes back in ~1 s.
+# Single static-ish ELF (glibc only), ~33 MB. See src/lib/ssge-challenge-fetch.ts.
+FROM debian:bookworm-slim AS curl-impersonate
+ARG CURL_IMPERSONATE_VERSION=2.3.1
+RUN apt-get update && apt-get install -y --no-install-recommends ca-certificates curl \
+    && rm -rf /var/lib/apt/lists/* \
+    && mkdir -p /ci \
+    && curl -fsSL "https://github.com/lexiforest/curl-impersonate/releases/download/v${CURL_IMPERSONATE_VERSION}/curl-impersonate-v${CURL_IMPERSONATE_VERSION}.x86_64-linux-gnu.tar.gz" \
+       | tar xz -C /ci curl-impersonate \
+    && /ci/curl-impersonate --version | head -1
+
 # Stage 2: Production
 FROM node:20-slim AS runner
 WORKDIR /app
@@ -44,6 +59,7 @@ RUN addgroup --system --gid 1001 nodejs && \
 # fetching the ss.ge guest token (see src/lib/ssge-challenge-fetch.ts).
 # ca-certificates: node:*-slim ships without a CA bundle; curl cannot do
 # TLS without it ("curl: (77) error setting certificate file").
+COPY --from=curl-impersonate /ci/curl-impersonate /usr/local/bin/curl-impersonate
 
 # Prefer IPv6 destinations even though the container only has a ULA (fd00::/8)
 # address (Docker NAT66). RFC 6724's default labels make glibc sort IPv4 first
@@ -135,6 +151,9 @@ RUN addgroup --system --gid 1001 nodejs && \
     && rm -rf /var/lib/apt/lists/*
 # ca-certificates + curl: see runner stage — fallback for the
 # Cloudflare-challenged ss.ge token page.
+# curl-impersonate: Chrome-fingerprinted curl — fetches myhome.ge listing
+# pages without Chromium (see the curl-impersonate stage).
+COPY --from=curl-impersonate /ci/curl-impersonate /usr/local/bin/curl-impersonate
 
 # Prefer IPv6 with a ULA-only container address — see runner stage.
 COPY --chown=root:root <<'EOF' /etc/gai.conf
