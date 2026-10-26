@@ -19,8 +19,11 @@ New-Item -ItemType Directory -Force -Path $logDir | Out-Null
 
 if ($Install) {
   $taskName = "ExpressHome ss.ge token relay"
-  $action = New-ScheduledTaskAction -Execute "powershell.exe" `
-    -Argument "-NoProfile -WindowStyle Hidden -ExecutionPolicy Bypass -File `"$PSCommandPath`""
+  # conhost --headless: Windows Terminal (default console host on Win11) ignores
+  # -WindowStyle Hidden and pops a visible tab for the task; a headless conhost
+  # gives the launcher and its node child a console with no window at all.
+  $action = New-ScheduledTaskAction -Execute "$env:SystemRoot\System32\conhost.exe" `
+    -Argument "--headless powershell.exe -NoProfile -NonInteractive -ExecutionPolicy Bypass -File `"$PSCommandPath`""
   $trigger = New-ScheduledTaskTrigger -AtLogOn -User $env:USERNAME
   # Re-fire every 5 min indefinitely; a live instance holds the mutex and the
   # newcomer exits, so this only matters after a crash or Ctrl+C.
@@ -49,9 +52,10 @@ while ($true) {
     Move-Item -Force $log "$log.1"
   }
   "$(Get-Date -Format s) launcher: starting relay" | Add-Content $log
-  # cmd's append-redirect shares the file for reading, so the log can be
-  # tailed while the relay runs (a PowerShell pipeline would hold it locked).
-  & cmd /c "npx --no tsx scripts/ssge-token-relay.ts >> `"$log`" 2>&1"
+  # Run node directly (no cmd/npx hop → no extra console window). Append per
+  # line so the file is never held open and can be tailed while running.
+  & node "$repo\node_modules\tsx\dist\cli.mjs" "scripts/ssge-token-relay.ts" 2>&1 |
+    ForEach-Object { Add-Content -Path $log -Value "$_" }
   "$(Get-Date -Format s) launcher: relay exited, restarting in 15s" | Add-Content $log
   Start-Sleep -Seconds 15
 }
