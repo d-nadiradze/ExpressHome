@@ -140,14 +140,39 @@ export async function isRelayAlive(): Promise<boolean> {
   }
 }
 
+const KEY_LAST_SEEN = `${PREFIX}last-seen`;
+
 /** When the relay last checked in, or null. */
 export async function relayLastSeen(): Promise<Date | null> {
   try {
-    const v = await redis().get(KEY_HEARTBEAT);
+    const v = (await redis().get(KEY_HEARTBEAT)) ?? (await redis().get(KEY_LAST_SEEN));
     return v ? new Date(parseInt(v, 10)) : null;
   } catch {
     return null;
   }
+}
+
+/**
+ * A one-line explanation for error messages when a relay is configured but
+ * not checking in — the usual reason ss.ge stops working — or null when the
+ * relay is fine / not configured at all.
+ */
+export async function relayOfflineNote(): Promise<string | null> {
+  if (!isRelayConfigured()) return null;
+  if (await isRelayAlive()) return null;
+  const seen = await relayLastSeen();
+  const since = seen
+    ? `last seen ${formatAgo(Date.now() - seen.getTime())} ago`
+    : "never seen";
+  return `ss.ge token relay is OFFLINE (${since}) — start it on the relay machine (scripts/ssge-token-relay.ps1)`;
+}
+
+function formatAgo(ms: number): string {
+  const m = Math.floor(ms / 60_000);
+  if (m < 1) return "<1m";
+  if (m < 60) return `${m}m`;
+  const h = Math.floor(m / 60);
+  return h < 48 ? `${h}h ${m % 60}m` : `${Math.floor(h / 24)}d`;
 }
 
 // ---- Guest token -------------------------------------------------------------
@@ -261,7 +286,9 @@ async function scanKeys(pattern: string): Promise<string[]> {
 
 export async function pullRelayWork(): Promise<RelayWork> {
   const r = redis();
-  await r.set(KEY_HEARTBEAT, String(Date.now()), "EX", HEARTBEAT_TTL_S);
+  const now = String(Date.now());
+  await r.set(KEY_HEARTBEAT, now, "EX", HEARTBEAT_TTL_S);
+  await r.set(KEY_LAST_SEEN, now); // persists after the heartbeat expires, for "offline since"
 
   // Guest token: always keep one warm; urgent if someone is waiting.
   const guest = await getRelayGuestToken();
