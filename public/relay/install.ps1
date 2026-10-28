@@ -65,9 +65,21 @@ function Get-StartInfo {
   }
 }
 
+# schtasks writes "file not found" to stderr when the task is not there yet.
+# With ErrorActionPreference Stop, PowerShell turns that into a fatal error
+# even if stderr is redirected, so the call goes through cmd.
+function Invoke-QuietSchtasks([string]$line) {
+  $prev = $ErrorActionPreference
+  $ErrorActionPreference = "SilentlyContinue"
+  cmd.exe /c "schtasks $line >nul 2>&1" | Out-Null
+  $code = $LASTEXITCODE
+  $ErrorActionPreference = $prev
+  return $code
+}
+
 function Remove-LegacyTasks {
   foreach ($name in @($TaskName, "$TaskName watchdog")) {
-    & schtasks.exe /Delete /TN $name /F 2>$null | Out-Null
+    [void](Invoke-QuietSchtasks "/Delete /TN `"$name`" /F")
   }
 }
 
@@ -78,11 +90,9 @@ function Register-LegacyTasks($start) {
   $bat = "@echo off`r`nstart `"`" /MIN `"$($start.Exe)`" $($start.Args)`r`n"
   [IO.File]::WriteAllText($cmdPath, $bat, (New-Object Text.ASCIIEncoding))
   Remove-LegacyTasks
-  & schtasks.exe /Create /TN $TaskName /TR "`"$cmdPath`"" /SC ONLOGON /F | Out-Null
-  if ($LASTEXITCODE -ne 0) { return $false }
-  & schtasks.exe /Create /TN "$TaskName watchdog" /TR "`"$cmdPath`"" /SC MINUTE /MO 5 /F | Out-Null
-  if ($LASTEXITCODE -ne 0) { return $false }
-  & schtasks.exe /Run /TN $TaskName | Out-Null
+  if ((Invoke-QuietSchtasks "/Create /TN `"$TaskName`" /TR `"$cmdPath`" /SC ONLOGON /F") -ne 0) { return $false }
+  if ((Invoke-QuietSchtasks "/Create /TN `"$TaskName watchdog`" /TR `"$cmdPath`" /SC MINUTE /MO 5 /F") -ne 0) { return $false }
+  [void](Invoke-QuietSchtasks "/Run /TN `"$TaskName`"")
   return $true
 }
 
