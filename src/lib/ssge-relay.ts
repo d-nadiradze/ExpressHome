@@ -51,6 +51,8 @@ const keyVerify = (id: string) => `${PREFIX}verify:${id}`;
 const keyVerifyResult = (id: string) => `${PREFIX}verify-result:${id}`;
 const keyPageWant = (id: string) => `${PREFIX}page-want:${id}`;
 const keyPageResult = (id: string) => `${PREFIX}page-result:${id}`;
+const keyApiWant = (id: string) => `${PREFIX}api-want:${id}`;
+const keyApiResult = (id: string) => `${PREFIX}api-result:${id}`;
 const keyClaim = (item: string) => `${PREFIX}claim:${item}`;
 
 export const ADMIN_RELAY_ID = "admin";
@@ -69,6 +71,11 @@ const ERROR_TTL_S = 600;
 const VERIFY_TTL_S = 180;
 const PAGE_TTL_S = 120;
 const PAGE_HTML_MAX_CHARS = 1_000_000;
+const API_TTL_S = 180;
+const API_WAIT_MS = parseInt(process.env.SSGE_RELAY_API_WAIT_MS || "120000", 10);
+const API_BODY_MAX_CHARS = 8_000_000;
+const API_RESULT_MAX_CHARS = 2_000_000;
+const API_CLAIM_TTL_S = 180;
 /** A claimed work item is left to its relay this long before another may take it. */
 const CLAIM_TTL_S = parseInt(process.env.SSGE_RELAY_CLAIM_TTL_S || "60", 10);
 /** Guest mint failed because ss.ge no longer embeds the token — don't hammer. */
@@ -102,6 +109,15 @@ export interface RelayPageWork {
   url: string;
 }
 
+export interface RelayApiWork {
+  id: string;
+  method: string;
+  path: string;
+  body?: string;
+  contentType?: string;
+  authorization: string;
+}
+
 export interface RelayWork {
   /** Which relay the server thinks is asking (echo for client logs). */
   relay: { id: string; kind: RelayKind };
@@ -110,6 +126,8 @@ export interface RelayWork {
   verifications: RelayVerifyWork[];
   /** Listing/search pages the server cannot fetch (403 from the VPS). */
   pages: RelayPageWork[];
+  /** api-gateway calls Cloudflare blocks from the server IP. */
+  api: RelayApiWork[];
   /** Suggested poll interval for the client (ms). */
   pollMs: number;
 }
@@ -119,6 +137,7 @@ export interface RelayResults {
   accounts?: Array<{ userId: string; accessToken?: string; error?: string }>;
   verifications?: Array<{ id: string; accessToken?: string; error?: string }>;
   pages?: Array<{ id: string; html?: string; error?: string }>;
+  api?: Array<{ id: string; status?: number; body?: string; contentType?: string; error?: string }>;
 }
 
 export type RelayKind = "admin" | "user";
@@ -383,6 +402,87 @@ export async function requestRelayListingHtml(url: string): Promise<string | nul
   }
 }
 
+/** Path + query only, on api-gateway.ss.ge/v1. No other host, no traversal. */
+export function isAllowedSsgeApiPath(path: string): boolean {
+  if (!path.startsWith("/") || path.startsWith("//")) return false;
+  if (path.includes("..") || path.includes("\\") || path.length > 500) return false;
+  return /^\/[A-Za-z0-9_./?&=%+\-]+$/.test(path);
+}
+
+export interface RelayApiResult {
+  status: number;
+  body: string;
+  contentType: string | null;
+}
+
+/**
+ * Run one api-gateway call from a residential relay. Cloudflare now challenges
+ * api-gateway.ss.ge from the server IP (create-draft, search, details), so the
+ * bearer is useless until the request leaves a home/office connection.
+ * Only `userId`'s own relay (or the admin relay) is given the bearer.
+ */
+export async function requestRelayApiCall(opts: {
+  userId: string;
+  method: string;
+  path: string;
+  body?: string;
+  contentType?: string;
+  authorization: string;
+}): Promise<RelayApiResult> {
+  if (!isRelayConfigured()) throw new Error("ss.ge relay is not configured");
+  if (!isAllowedSsgeApiPath(opts.path)) throw new Error("refused ss.ge API path");
+  const method = opts.method.toUpperCase();
+  if (!["GET", "POST", "PUT", "DELETE", "PATCH"].includes(method)) {
+    throw new Error("refused ss.ge API method");
+  }
+  if ((opts.body?.length ?? 0) > API_BODY_MAX_CHARS) {
+    throw new Error("ss.ge API body is too large to send through the relay");
+  }
+  if (!(await canRelayMintForUser(opts.userId))) {
+    throw new Error((await relayOfflineNote(opts.userId)) ?? "ss.ge relay is offline");
+  }
+  const r = redis();
+  const id = `${Date.now().toString(36)}${Math.random().toString(36).slice(2, 8)}`;
+  await r.set(
+    keyApiWant(id),
+    JSON.stringify({
+      userId: opts.userId,
+      method,
+      path: opts.path,
+      body: opts.body ?? null,
+      contentType: opts.contentType ?? "application/json",
+      authorization: opts.authorization,
+    }),
+    "EX",
+    API_TTL_S
+  );
+  const deadline = Date.now() + API_WAIT_MS;
+  try {
+    while (Date.now() < deadline) {
+      await sleep(WAIT_POLL_MS);
+      const raw = await r.get(keyApiResult(id));
+      if (!raw) continue;
+      const result = JSON.parse(raw) as {
+        status?: number;
+        body?: string;
+        contentType?: string | null;
+        error?: string;
+      };
+      if (result.error && !result.status) throw new Error(result.error);
+      return {
+        status: result.status || 502,
+        body: result.body ?? "",
+        contentType: result.contentType ?? null,
+      };
+    }
+    throw new Error(
+      "ss.ge relay did not finish the API call in time — wait a minute (the office relay updates itself) and try again"
+    );
+  } finally {
+    await r.del(keyApiWant(id), keyApiResult(id), keyClaim(`api:${id}`)).catch(() => null);
+  }
+}
+
 // ---- Guest token -------------------------------------------------------------
 
 export async function getRelayGuestToken(): Promise<RelayGuestToken | null> {
@@ -495,10 +595,10 @@ async function scanKeys(pattern: string): Promise<string[]> {
 }
 
 /** Take `item` for `relayId` unless another relay holds it (claims expire). */
-async function claim(item: string, relayId: string): Promise<boolean> {
+async function claim(item: string, relayId: string, ttlS = CLAIM_TTL_S): Promise<boolean> {
   const r = redis();
   const key = keyClaim(item);
-  const ok = await r.set(key, relayId, "EX", CLAIM_TTL_S, "NX");
+  const ok = await r.set(key, relayId, "EX", ttlS, "NX");
   if (ok) return true;
   return (await r.get(key)) === relayId;
 }
@@ -606,14 +706,52 @@ export async function pullRelayWork(identity: RelayIdentity): Promise<RelayWork>
     }
   }
 
+  const api: RelayApiWork[] = [];
+  for (const k of await scanKeys(`${PREFIX}api-want:*`)) {
+    if (api.length >= 2) break;
+    const id = k.slice(`${PREFIX}api-want:`.length);
+    if ((await r.exists(keyApiResult(id))) === 1) continue;
+    const raw = await r.get(k);
+    if (!raw) continue;
+    try {
+      const job = JSON.parse(raw) as {
+        userId?: string;
+        method?: string;
+        path?: string;
+        body?: string | null;
+        contentType?: string;
+        authorization?: string;
+      };
+      if (!job.userId || !job.path || !job.method || !job.authorization) continue;
+      if (!isAllowedSsgeApiPath(job.path)) continue;
+      if (identity.kind === "user" && job.userId !== identity.id) continue;
+      if (!(await claim(`api:${id}`, identity.id, API_CLAIM_TTL_S))) continue;
+      api.push({
+        id,
+        method: job.method,
+        path: job.path,
+        body: job.body ?? undefined,
+        contentType: job.contentType,
+        authorization: job.authorization,
+      });
+    } catch {
+      /* skip malformed */
+    }
+  }
+
   const busy =
-    guestUrgent || accounts.some((a) => a.urgent) || verifications.length > 0 || pages.length > 0;
+    guestUrgent ||
+    accounts.some((a) => a.urgent) ||
+    verifications.length > 0 ||
+    pages.length > 0 ||
+    api.length > 0;
   return {
     relay: { id: identity.id, kind: identity.kind },
     guest: { needed: guestNeeded, urgent: guestUrgent },
     accounts,
     verifications,
     pages,
+    api,
     // Idle polls are one small GET against our own server; keep them frequent
     // so a cold account's first publish waits seconds, not a quarter minute.
     pollMs: busy ? 2000 : parseInt(process.env.SSGE_RELAY_POLL_MS || "5000", 10),
@@ -623,12 +761,13 @@ export async function pullRelayWork(identity: RelayIdentity): Promise<RelayWork>
 export async function pushRelayResults(
   identity: RelayIdentity,
   results: RelayResults
-): Promise<{ guest: boolean; accounts: number; verifications: number; pages: number }> {
+): Promise<{ guest: boolean; accounts: number; verifications: number; pages: number; api: number }> {
   const r = redis();
   let guestSaved = false;
   let accountsSaved = 0;
   let verificationsSaved = 0;
   let pagesSaved = 0;
+  let apiSaved = 0;
 
   if (results.guest) {
     if (results.guest.token) {
@@ -707,5 +846,37 @@ export async function pushRelayResults(
     pagesSaved++;
   }
 
-  return { guest: guestSaved, accounts: accountsSaved, verifications: verificationsSaved, pages: pagesSaved };
+  for (const call of results.api ?? []) {
+    if (!call?.id) continue;
+    if (identity.kind === "user") {
+      const raw = await r.get(keyApiWant(call.id));
+      const owner = raw ? (JSON.parse(raw) as { userId?: string }).userId : undefined;
+      if (owner !== identity.id) continue;
+    }
+    const body =
+      typeof call.body === "string" && call.body.length > API_RESULT_MAX_CHARS
+        ? call.body.slice(0, API_RESULT_MAX_CHARS)
+        : (call.body ?? "");
+    await r.set(
+      keyApiResult(call.id),
+      JSON.stringify({
+        status: call.status ?? 0,
+        body,
+        contentType: call.contentType ?? null,
+        error: call.error,
+      }),
+      "EX",
+      API_TTL_S
+    );
+    await releaseClaim(`api:${call.id}`);
+    apiSaved++;
+  }
+
+  return {
+    guest: guestSaved,
+    accounts: accountsSaved,
+    verifications: verificationsSaved,
+    pages: pagesSaved,
+    api: apiSaved,
+  };
 }

@@ -2,11 +2,8 @@
  * Resolve ss.ge city/street → numeric location ids.
  */
 import streetsData from "@/data/tbilisi-streets-ssge.json";
-import {
-  SSGE_API_BASE,
-  SSGE_HOME_ORIGIN,
-} from "@/lib/ssge-api-constants";
-import type { SsgeApiSession } from "@/lib/ssge-api-auth";
+import { SSGE_HOME_ORIGIN } from "@/lib/ssge-api-constants";
+import { ssgeApiFetch, type SsgeApiSession } from "@/lib/ssge-api-auth";
 import { reverseSsgeCityId } from "@/lib/ssge-api-reverse";
 import {
   normalizeStreetForMatch,
@@ -127,9 +124,10 @@ export async function resolveSsgeLocationIds(
         cityId: String(fromJson.cityId),
         street: q,
       });
-      const res = await fetch(
-        `${SSGE_API_BASE}/RealEstate/find-location-by-street?${params}`,
-        { headers: session.headers, signal: AbortSignal.timeout(LOOKUP_TIMEOUT_MS) }
+      const res = await ssgeApiFetch(
+        session,
+        `/RealEstate/find-location-by-street?${params}`,
+        { signal: AbortSignal.timeout(LOOKUP_TIMEOUT_MS) }
       );
       if (!res.ok) continue;
       const data = (await res.json()) as {

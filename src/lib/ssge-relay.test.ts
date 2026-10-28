@@ -4,6 +4,7 @@
  */
 import assert from "node:assert/strict";
 import {
+  isAllowedSsgeApiPath,
   isAllowedSsgePageUrl,
   isRelayConfigured,
   isValidRelaySecret,
@@ -56,5 +57,10 @@ assert.equal(isAllowedSsgePageUrl("https://account.ss.ge/login"), false);
 assert.equal(isAllowedSsgePageUrl("https://api-gateway.ss.ge/v1/x"), false);
 assert.equal(isAllowedSsgePageUrl("http://home.ss.ge/ka/x"), false);
 assert.equal(isAllowedSsgePageUrl("not a url"), false);
+assert.equal(isAllowedSsgeApiPath("/RealEstate/create-draft"), true);
+assert.equal(isAllowedSsgeApiPath("/RealEstate/find-location-by-street?cityId=95&street=%E1%83%90"), true);
+assert.equal(isAllowedSsgeApiPath("/RealEstate/../admin"), false);
+assert.equal(isAllowedSsgeApiPath("https://api-gateway.ss.ge/v1/RealEstate/create-draft"), false);
+assert.equal(isAllowedSsgeApiPath("//evil.example/x"), false);
 
 console.log("ssge-relay.test.ts: all assertions passed");
