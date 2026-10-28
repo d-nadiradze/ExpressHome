@@ -20,6 +20,7 @@ import {
   relayOfflineNote,
   relayRequired,
   requestRelayAccountToken,
+  requestRelayApiCall,
 } from "@/lib/ssge-relay";
 
 const USER_AGENT =
@@ -28,6 +29,8 @@ const USER_AGENT =
 export interface SsgeApiSession {
   accessToken: string;
   headers: Record<string, string>;
+  /** Set when the token belongs to a user, so a Cloudflare 403 can go through their relay. */
+  userId?: string;
 }
 
 export interface LoginSsgeApiOptions {
@@ -68,8 +71,8 @@ export function ssgeApiHeaders(
   };
 }
 
-function toSession(accessToken: string): SsgeApiSession {
-  return { accessToken, headers: ssgeApiHeaders({ accessToken }) };
+function toSession(accessToken: string, userId?: string): SsgeApiSession {
+  return { accessToken, userId, headers: ssgeApiHeaders({ accessToken }) };
 }
 
 async function obtainFreshAccessToken(
@@ -119,7 +122,7 @@ export async function loginSsgeApi(
     const cached = await getCachedSsgeApiAccessToken(userId);
     if (cached) {
       console.log("[ss.ge API auth] Using cached ss.ge API token");
-      return { success: true, session: toSession(cached), authMethod: "cached" };
+      return { success: true, session: toSession(cached, userId), authMethod: "cached" };
     }
   }
 
@@ -133,7 +136,7 @@ export async function loginSsgeApi(
       const token = await requestRelayAccountToken(userId);
       if (token) {
         console.log(`[ss.ge API auth] Relay delivered a token in ${Date.now() - started}ms`);
-        return { success: true, session: toSession(token), authMethod: "relay" };
+        return { success: true, session: toSession(token, userId), authMethod: "relay" };
       }
       return {
         success: false,
@@ -173,7 +176,7 @@ export async function loginSsgeApi(
 
   return {
     success: true,
-    session: toSession(auth.accessToken),
+    session: toSession(auth.accessToken, userId),
     authMethod: auth.authMethod,
   };
 }
@@ -201,17 +204,79 @@ const API_FETCH_TIMEOUT_MS = parseInt(
   10
 );
 
+/** api-gateway.ss.ge answers the VPS with a Cloudflare challenge; skip the doomed direct call for a while. */
+let gatewayBlockedUntil = 0;
+
+function requestBodyToString(body: RequestInit["body"]): string | undefined {
+  if (body == null) return undefined;
+  if (typeof body === "string") return body;
+  if (Buffer.isBuffer(body)) return body.toString("utf8");
+  if (body instanceof Uint8Array) return Buffer.from(body).toString("utf8");
+  throw new Error("ss.ge relay cannot forward this request body");
+}
+
+function apiPathOf(path: string): string {
+  if (!path.startsWith("http")) return path;
+  const url = new URL(path);
+  return url.pathname.replace(/^\/v1/, "") + url.search;
+}
+
+function isCloudflareChallenge(res: Response): boolean {
+  if (res.headers.get("cf-mitigated")) return true;
+  if (res.status !== 403) return false;
+  return (res.headers.get("content-type") || "").includes("text/html");
+}
+
+async function ssgeApiFetchViaRelay(
+  session: SsgeApiSession,
+  path: string,
+  init?: RequestInit
+): Promise<Response> {
+  if (!session.userId) {
+    throw new Error(
+      "ss.ge blocked this server (Cloudflare) and this call is not tied to an account relay"
+    );
+  }
+  const apiPath = apiPathOf(path);
+  const method = (init?.method || "GET").toUpperCase();
+  console.log(`[ss.ge API] ${method} ${apiPath.split("?")[0]} via relay`);
+  const result = await requestRelayApiCall({
+    userId: session.userId,
+    method,
+    path: apiPath,
+    body: requestBodyToString(init?.body),
+    contentType: "application/json",
+    authorization: `Bearer ${session.accessToken}`,
+  });
+  return new Response(result.body, {
+    status: result.status,
+    headers: { "content-type": result.contentType || "application/json" },
+  });
+}
+
 export async function ssgeApiFetch(
   session: SsgeApiSession,
   path: string,
   init?: RequestInit
 ): Promise<Response> {
   const url = path.startsWith("http") ? path : `${SSGE_API_BASE}${path}`;
-  return fetch(url, {
+  if (session.userId && Date.now() < gatewayBlockedUntil) {
+    return ssgeApiFetchViaRelay(session, path, init);
+  }
+  const res = await fetch(url, {
     ...init,
     headers: { ...session.headers, ...(init?.headers as Record<string, string>) },
     // A stalled api-gateway socket would otherwise pin the prefill job that
     // awaits it for as long as the connection stays open.
     signal: init?.signal ?? AbortSignal.timeout(API_FETCH_TIMEOUT_MS),
   });
+  if (session.userId && isCloudflareChallenge(res)) {
+    gatewayBlockedUntil = Date.now() + 10 * 60_000;
+    console.warn(
+      "[ss.ge API] api-gateway is Cloudflare-challenged from this server — using the office relay"
+    );
+    await res.arrayBuffer().catch(() => null);
+    return ssgeApiFetchViaRelay(session, path, init);
+  }
+  return res;
 }

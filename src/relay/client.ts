@@ -71,6 +71,14 @@ interface Work {
   accounts: Array<{ userId: string; email: string; password: string; urgent: boolean }>;
   verifications: Array<{ id: string; email: string; password: string }>;
   pages?: Array<{ id: string; url: string }>;
+  api?: Array<{
+    id: string;
+    method: string;
+    path: string;
+    body?: string;
+    contentType?: string;
+    authorization: string;
+  }>;
   pollMs: number;
 }
 
@@ -79,6 +87,7 @@ interface Results {
   accounts?: Array<{ userId: string; accessToken?: string; error?: string }>;
   verifications?: Array<{ id: string; accessToken?: string; error?: string }>;
   pages?: Array<{ id: string; html?: string; error?: string }>;
+  api?: Array<{ id: string; status?: number; body?: string; contentType?: string; error?: string }>;
 }
 
 function log(msg: string): void {
@@ -160,6 +169,54 @@ async function fetchGuestToken(): Promise<string> {
   return match[1];
 }
 
+const API_ORIGIN = "https://api-gateway.ss.ge/v1";
+const API_METHODS = new Set(["GET", "POST", "PUT", "DELETE", "PATCH"]);
+
+function isAllowedApiPath(path: string): boolean {
+  if (!path.startsWith("/") || path.startsWith("//")) return false;
+  if (path.includes("..") || path.includes("\\") || path.length > 500) return false;
+  return /^\/[A-Za-z0-9_./?&=%+\-]+$/.test(path);
+}
+
+async function callSsgeApi(job: NonNullable<Work["api"]>[number]): Promise<{
+  status: number;
+  body: string;
+  contentType?: string;
+  error?: string;
+}> {
+  const method = (job.method || "GET").toUpperCase();
+  if (!API_METHODS.has(method) || !isAllowedApiPath(job.path)) {
+    return { status: 0, body: "", error: "refused api call" };
+  }
+  if (!/^Bearer \S+$/.test(job.authorization || "")) {
+    return { status: 0, body: "", error: "refused api call" };
+  }
+  const res = await fetch(`${API_ORIGIN}${job.path}`, {
+    method,
+    headers: {
+      Accept: "application/json, text/plain, */*",
+      "Accept-Language": "ka-GE",
+      Authorization: job.authorization,
+      Origin: "https://home.ss.ge",
+      Referer: "https://home.ss.ge/ka/udzravi-qoneba/create",
+      "User-Agent": USER_AGENT,
+      ...(job.body != null ? { "Content-Type": job.contentType || "application/json" } : {}),
+    },
+    body: job.body ?? undefined,
+    redirect: "manual",
+    signal: AbortSignal.timeout(60_000),
+  });
+  if (res.status >= 300 && res.status < 400) {
+    return { status: res.status, body: "", error: "refused redirect" };
+  }
+  const body = await res.text();
+  return {
+    status: res.status,
+    body: body.length > 2_000_000 ? body.slice(0, 2_000_000) : body,
+    contentType: res.headers.get("content-type") || undefined,
+  };
+}
+
 async function login(email: string, password: string): Promise<{ accessToken?: string; error?: string }> {
   const started = Date.now();
   const result = await loginSsgeApiHttp({ email, password });
@@ -183,7 +240,27 @@ async function pass(): Promise<number> {
   const results: Results = {};
   let did = 0;
 
-  // Listing HTML first — a person is waiting on parse, and ss.ge no longer
+  // Prefill API calls first — a person is waiting, and the body can be a photo.
+  if (work.api?.length) {
+    results.api = [];
+    for (const job of work.api) {
+      const started = Date.now();
+      try {
+        const result = await callSsgeApi(job);
+        results.api.push({ id: job.id, ...result });
+        log(
+          `api ${job.method} ${job.path.split("?")[0]} -> ${result.status || result.error} (${Date.now() - started}ms)`
+        );
+      } catch (err) {
+        const error = err instanceof Error ? err.message : String(err);
+        results.api.push({ id: job.id, status: 0, error });
+        log(`api FAIL ${job.method} ${job.path.split("?")[0]}: ${error}`);
+      }
+    }
+    did++;
+  }
+
+  // Listing HTML — a person is waiting on parse, and ss.ge no longer
   // ships credentialsToken so guest mint is often a wasted round-trip.
   if (work.pages?.length) {
     results.pages = [];
