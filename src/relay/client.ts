@@ -31,6 +31,24 @@ import { dirname, join } from "node:path";
 import { config as loadEnv } from "dotenv";
 import { loginSsgeApiHttp } from "@/lib/ssge-api-http-auth";
 
+// Node 16 (the last release that runs on Windows 7) has AbortController but
+// not AbortSignal.timeout, and only has fetch behind --experimental-fetch,
+// which the launcher turns on. Node 18+ already has both.
+const signalStatics = AbortSignal as unknown as { timeout?: (ms: number) => AbortSignal };
+if (typeof signalStatics.timeout !== "function") {
+  signalStatics.timeout = (ms: number): AbortSignal => {
+    const controller = new AbortController();
+    setTimeout(() => controller.abort(), ms);
+    return controller.signal;
+  };
+}
+if (typeof fetch !== "function") {
+  console.error(
+    "This Node.js has no fetch. On Windows 7 the ExpressHome launcher must start it with --experimental-fetch."
+  );
+  process.exit(1);
+}
+
 const ONCE = process.argv.includes("--once");
 const SELF_PATH = process.argv[1] ?? "";
 

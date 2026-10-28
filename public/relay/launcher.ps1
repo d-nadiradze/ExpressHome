@@ -2,8 +2,7 @@
 # %LOCALAPPDATA%\ExpressHomeRelay, started hidden by a scheduled task at logon
 # and re-checked every 5 minutes).
 #
-# Compatible with Windows 8.1 / PowerShell 4 (no Tls12 enum, no
-# DateTimeOffset.ToUnixTimeSeconds, no Get-FileHash on some builds).
+# Compatible with Windows 7 SP1 / PowerShell 2, Windows 8.1, and Windows 10+.
 
 $ErrorActionPreference = "Continue"
 if (-not $PSScriptRoot) { $PSScriptRoot = Split-Path -Parent $MyInvocation.MyCommand.Path }
@@ -18,7 +17,14 @@ function Log($msg) { "$(Get-Date -Format s) launcher: $msg" | Add-Content $log }
 try { [Console]::TreatControlCAsInput = $true } catch {}
 try { [Net.ServicePointManager]::SecurityProtocol = [Net.ServicePointManager]::SecurityProtocol -bor 3072 } catch {}
 
-$mutex = New-Object System.Threading.Mutex($false, "Global\ExpressHomeSsgeRelayClient")
+# A Global mutex needs a privilege normal users do not have on Windows 7.
+# Fall back to a per-user mutex, which is enough for one interactive session.
+$mutex = $null
+try {
+  $mutex = New-Object System.Threading.Mutex($false, "Global\ExpressHomeSsgeRelayClient")
+} catch {
+  $mutex = New-Object System.Threading.Mutex($false, "Local\ExpressHomeSsgeRelayClient")
+}
 if (-not $mutex.WaitOne(0)) { exit 0 }
 
 function Read-ServerUrl {
@@ -94,7 +100,17 @@ while ($true) {
 
   Log "starting relay"
   Set-Location $dir
-  & $node $client 2>&1 | ForEach-Object { Add-Content -Path $log -Value "$_" }
+  $major = 0
+  try {
+    $ver = & $node --version 2>$null
+    if ($ver -match "^v(\d+)") { $major = [int]$Matches[1] }
+  } catch {}
+  # Node 16 (Windows 7 / 8) only exposes fetch behind this flag. Node 18+ rejects it.
+  if ($major -ge 1 -and $major -lt 18) {
+    & $node --experimental-fetch $client 2>&1 | ForEach-Object { Add-Content -Path $log -Value "$_" }
+  } else {
+    & $node $client 2>&1 | ForEach-Object { Add-Content -Path $log -Value "$_" }
+  }
   Log "relay exited, restarting in 15s"
   Start-Sleep -Seconds 15
 }

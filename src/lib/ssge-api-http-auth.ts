@@ -17,19 +17,28 @@ export function isSsgeHttpAuthEnabled(): boolean {
   return process.env.SSGE_HTTP_AUTH === "true";
 }
 
+/**
+ * Node 18+ Headers.getSetCookie() returns one line per cookie. Node 16's
+ * experimental fetch only exposes them joined, which would drop every cookie
+ * after the first during an ss.ge login.
+ */
+function readSetCookies(headers: Headers): string[] {
+  const withList = headers as Headers & { getSetCookie?: () => string[] };
+  if (typeof withList.getSetCookie === "function") {
+    const lines = withList.getSetCookie();
+    if (lines.length > 0) return lines;
+  }
+  const combined = headers.get("set-cookie");
+  if (!combined) return [];
+  return combined.split(/,(?=\s*[^;,=\s][^;,=]*=)/);
+}
+
 class SimpleCookieJar {
   private store = new Map<string, string>();
 
   ingest(response: Response, requestUrl: string): void {
     const host = new URL(requestUrl).hostname;
-    const setCookies =
-      typeof response.headers.getSetCookie === "function"
-        ? response.headers.getSetCookie()
-        : [];
-    if (setCookies.length === 0) {
-      const single = response.headers.get("set-cookie");
-      if (single) setCookies.push(single);
-    }
+    const setCookies = readSetCookies(response.headers);
     for (const raw of setCookies) {
       const pair = raw.split(";")[0]?.trim();
       if (!pair) continue;
