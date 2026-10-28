@@ -16,6 +16,7 @@ import {
 } from "@/lib/ssge-description-location";
 import { ssgeOriginalImageUrl } from "@/lib/ssge-image";
 import { fetchSsgeApplicationDetails } from "@/lib/market-search-ssge";
+import { requestRelayListingHtml } from "@/lib/ssge-relay";
 
 const USER_AGENT =
   "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36";
@@ -209,10 +210,26 @@ export async function parseSsgeListingViaFetch(
     await new Promise((resolve) => setTimeout(resolve, 700 * attempt));
   }
 
-  // Prefer SSR HTML (fast, full). On block pages / 403, fall back to
-  // api-gateway details — guest token first, then the user's linked ss.ge JWT.
+  // Prefer SSR HTML (fast, full). The VPS gets HTTP 403 from home.ss.ge
+  // (Cloudflare); office relays can still fetch the page, which still has
+  // applicationData even though credentialsToken is gone. api-gateway is last.
   let app = html ? getApp(extractNextData(html) ?? {}) : null;
   let viaApi = false;
+  if (!app) {
+    const why = htmlError ?? `HTML missing __NEXT_DATA__ (${html.length} bytes)`;
+    try {
+      console.warn(`[ss.ge fetch-parse] ${why} — fetching listing via relay`);
+      const relayHtml = await requestRelayListingHtml(url);
+      if (relayHtml) {
+        html = relayHtml;
+        app = getApp(extractNextData(html) ?? {});
+      }
+    } catch (err) {
+      console.warn(
+        `[ss.ge fetch-parse] relay HTML failed: ${err instanceof Error ? err.message : String(err)}`
+      );
+    }
+  }
   if (!app) {
     const applicationId = extractSsgeListingIdFromUrl(url);
     if (!applicationId) {
