@@ -42,6 +42,7 @@ const KEY_LAST_SEEN = `${PREFIX}last-seen`; // any relay, persistent
 const KEY_GUEST = `${PREFIX}guest`;
 const KEY_GUEST_URGENT = `${PREFIX}guest-urgent`;
 const KEY_GUEST_ERROR = `${PREFIX}guest-error`;
+const KEY_WAKE = `${PREFIX}wake`;
 const keyHb = (relayId: string) => `${PREFIX}hb:${relayId}`;
 const keyLastSeen = (relayId: string) => `${PREFIX}seen:${relayId}`;
 const keyWant = (userId: string) => `${PREFIX}want:${userId}`;
@@ -66,6 +67,8 @@ const REFRESH_AHEAD_MS = parseInt(process.env.SSGE_RELAY_REFRESH_AHEAD_MS || "90
 /** How long a job waits for the relay to deliver a token it asked for. */
 const WAIT_MS = parseInt(process.env.SSGE_RELAY_WAIT_MS || "60000", 10);
 const WAIT_POLL_MS = 2000;
+/** How often a prefill waits for the relay result. Kept short — the relay is already on the call. */
+const API_RESULT_POLL_MS = 200;
 const URGENT_TTL_S = 180;
 const ERROR_TTL_S = 600;
 const VERIFY_TTL_S = 180;
@@ -169,6 +172,23 @@ function redis(): IORedis {
 
 function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+/** Bump so relays sitting in a long-poll GET wake within a couple of hundred milliseconds. */
+export async function signalRelayWake(): Promise<void> {
+  try {
+    await redis().incr(KEY_WAKE);
+  } catch {
+    /* a relay will notice on its next poll anyway */
+  }
+}
+
+export async function readRelayWake(): Promise<string> {
+  try {
+    return (await redis().get(KEY_WAKE)) ?? "0";
+  } catch {
+    return "0";
+  }
 }
 
 // ---- Configuration / auth ------------------------------------------------------
@@ -386,10 +406,11 @@ export async function requestRelayListingHtml(url: string): Promise<string | nul
   const r = redis();
   const id = `${Date.now().toString(36)}${Math.random().toString(36).slice(2, 8)}`;
   await r.set(keyPageWant(id), JSON.stringify({ url }), "EX", PAGE_TTL_S);
+  await signalRelayWake();
   const deadline = Date.now() + WAIT_MS;
   try {
     while (Date.now() < deadline) {
-      await sleep(WAIT_POLL_MS);
+      await sleep(API_RESULT_POLL_MS);
       const raw = await r.get(keyPageResult(id));
       if (!raw) continue;
       const result = JSON.parse(raw) as { html?: string; error?: string };
@@ -456,10 +477,11 @@ export async function requestRelayApiCall(opts: {
     "EX",
     API_TTL_S
   );
+  await signalRelayWake();
   const deadline = Date.now() + API_WAIT_MS;
   try {
     while (Date.now() < deadline) {
-      await sleep(WAIT_POLL_MS);
+      await sleep(API_RESULT_POLL_MS);
       const raw = await r.get(keyApiResult(id));
       if (!raw) continue;
       const result = JSON.parse(raw) as {
@@ -708,7 +730,7 @@ export async function pullRelayWork(identity: RelayIdentity): Promise<RelayWork>
 
   const api: RelayApiWork[] = [];
   for (const k of await scanKeys(`${PREFIX}api-want:*`)) {
-    if (api.length >= 2) break;
+    if (api.length >= 4) break;
     const id = k.slice(`${PREFIX}api-want:`.length);
     if ((await r.exists(keyApiResult(id))) === 1) continue;
     const raw = await r.get(k);
@@ -739,12 +761,6 @@ export async function pullRelayWork(identity: RelayIdentity): Promise<RelayWork>
     }
   }
 
-  const busy =
-    guestUrgent ||
-    accounts.some((a) => a.urgent) ||
-    verifications.length > 0 ||
-    pages.length > 0 ||
-    api.length > 0;
   return {
     relay: { id: identity.id, kind: identity.kind },
     guest: { needed: guestNeeded, urgent: guestUrgent },
@@ -754,7 +770,8 @@ export async function pullRelayWork(identity: RelayIdentity): Promise<RelayWork>
     api,
     // Idle polls are one small GET against our own server; keep them frequent
     // so a cold account's first publish waits seconds, not a quarter minute.
-    pollMs: busy ? 2000 : parseInt(process.env.SSGE_RELAY_POLL_MS || "5000", 10),
+    // The GET itself long-polls while idle, so the client should come straight back.
+    pollMs: 200,
   };
 }
 

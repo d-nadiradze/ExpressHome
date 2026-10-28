@@ -18,12 +18,30 @@ import {
   isAdminRelayAlive,
   pullRelayWork,
   pushRelayResults,
+  readRelayWake,
   type RelayIdentity,
   type RelayResults,
+  type RelayWork,
 } from "@/lib/ssge-relay";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
+
+const LONG_POLL_MS = 18_000;
+
+function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+function workIsWaiting(work: RelayWork): boolean {
+  return (
+    work.api.length > 0 ||
+    work.pages.length > 0 ||
+    work.verifications.length > 0 ||
+    work.accounts.some((account) => account.urgent) ||
+    work.guest.urgent
+  );
+}
 
 async function identify(
   request: NextRequest
@@ -51,7 +69,17 @@ export async function GET(request: NextRequest) {
         { headers: { "Cache-Control": "no-store" } }
       );
     }
-    const work = await pullRelayWork(auth.identity);
+    let work = await pullRelayWork(auth.identity);
+    if (!workIsWaiting(work)) {
+      const wakeAtStart = await readRelayWake();
+      const deadline = Date.now() + LONG_POLL_MS;
+      while (Date.now() < deadline) {
+        await sleep(200);
+        if ((await readRelayWake()) === wakeAtStart) continue;
+        work = await pullRelayWork(auth.identity);
+        break;
+      }
+    }
     return NextResponse.json(work, { headers: { "Cache-Control": "no-store" } });
   } catch (error) {
     console.error("[ss.ge relay] pull failed:", error);

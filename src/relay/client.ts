@@ -118,7 +118,8 @@ async function api<T>(method: "GET" | "POST", body?: unknown): Promise<T> {
       Accept: "application/json",
     },
     body: body === undefined ? undefined : JSON.stringify(body),
-    signal: AbortSignal.timeout(30_000),
+    // GET long-polls while the office PC is idle, so this has to outlast that hold.
+    signal: AbortSignal.timeout(method === "GET" ? 60_000 : 30_000),
   });
   if (!res.ok) {
     throw new HttpError(res.status, `${method} relay endpoint -> HTTP ${res.status}`);
@@ -240,23 +241,23 @@ async function pass(): Promise<number> {
   const results: Results = {};
   let did = 0;
 
-  // Prefill API calls first — a person is waiting, and the body can be a photo.
+  // Prefill API calls first — photos go out together, same as a direct upload.
   if (work.api?.length) {
-    results.api = [];
-    for (const job of work.api) {
+    const outcomes = await mapPool(work.api, 4, async (job) => {
       const started = Date.now();
       try {
         const result = await callSsgeApi(job);
-        results.api.push({ id: job.id, ...result });
         log(
           `api ${job.method} ${job.path.split("?")[0]} -> ${result.status || result.error} (${Date.now() - started}ms)`
         );
+        return { id: job.id, ...result };
       } catch (err) {
         const error = err instanceof Error ? err.message : String(err);
-        results.api.push({ id: job.id, status: 0, error });
         log(`api FAIL ${job.method} ${job.path.split("?")[0]}: ${error}`);
+        return { id: job.id, status: 0, error };
       }
-    }
+    });
+    results.api = outcomes;
     did++;
   }
 
@@ -319,7 +320,29 @@ async function pass(): Promise<number> {
   }
 
   if (did > 0) await api("POST", results);
+  // Come straight back after real work. Idle time is spent inside the long-poll GET.
+  if (work.api?.length || work.pages?.length) return 200;
   return work.pollMs;
+}
+
+async function mapPool<T, R>(
+  items: T[],
+  limit: number,
+  fn: (item: T) => Promise<R>
+): Promise<R[]> {
+  const results = new Array<R>(items.length);
+  let next = 0;
+  const workers = Math.min(limit, items.length);
+  await Promise.all(
+    Array.from({ length: workers }, async () => {
+      for (;;) {
+        const index = next++;
+        if (index >= items.length) return;
+        results[index] = await fn(items[index]);
+      }
+    })
+  );
+  return results;
 }
 
 // ---- Self-update (bundled installs only) ------------------------------------------
@@ -397,7 +420,7 @@ async function main(): Promise<void> {
       }
     }
 
-    await sleep(Math.max(1_000, waitMs));
+    await sleep(Math.max(200, waitMs));
   }
 }
 
