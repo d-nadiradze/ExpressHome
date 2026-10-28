@@ -27,8 +27,10 @@ param(
 
 $ErrorActionPreference = "Stop"
 $ProgressPreference = "SilentlyContinue"
-# 3072 = Tls12. The named enum is missing on .NET 2.0/3.5 (PS 2) so Tls12 is $null.
-try { [Net.ServicePointManager]::SecurityProtocol = [Net.ServicePointManager]::SecurityProtocol -bor 3072 } catch {}
+# 4032 = Tls+Tls11+Tls12. The name Tls12 is missing on older .NET, so use the number.
+try { [Net.ServicePointManager]::SecurityProtocol = [Enum]::ToObject([Net.SecurityProtocolType], 4032) } catch {
+  try { [Net.ServicePointManager]::SecurityProtocol = [Net.ServicePointManager]::SecurityProtocol -bor 3072 } catch {}
+}
 
 $TaskName = "ExpressHome relay"
 $Dir = Join-Path $env:LOCALAPPDATA "ExpressHomeRelay"
