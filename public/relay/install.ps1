@@ -5,9 +5,10 @@
 #   powershell -ExecutionPolicy Bypass -File install.ps1 -Url https://... -Token u.xxx.yyy
 #   powershell -ExecutionPolicy Bypass -File install.ps1 -Uninstall
 #
-# Compatible with Windows 8.1 / PowerShell 4 and Windows 10+ (the office PCs
-# that failed were missing [Net.SecurityProtocolType]::Tls12 and
-# DateTimeOffset.ToUnixTimeSeconds, both .NET 4.5.2+ / 4.6).
+# Compatible with Windows 7 SP1, Windows 8.1, and Windows 10+.
+# Windows 7 / 8 get Node 16 (last release that runs there). Windows 8.1 gets
+# Node 18. Windows 10+ gets Node 22. TLS 1.2 is enabled by number (3072)
+# because older .NET has no Tls12 name.
 #
 # What it does (no admin rights needed, nothing outside the user's profile):
 #   %LOCALAPPDATA%\ExpressHomeRelay\
@@ -64,8 +65,30 @@ function Get-StartInfo {
   }
 }
 
+function Remove-LegacyTasks {
+  foreach ($name in @($TaskName, "$TaskName watchdog")) {
+    & schtasks.exe /Delete /TN $name /F 2>$null | Out-Null
+  }
+}
+
+# Windows 7 has no Register-ScheduledTask. schtasks.exe is on every Windows
+# since XP and does not need an admin prompt for the current user.
+function Register-LegacyTasks($start) {
+  $cmdPath = Join-Path $Dir "start-relay.cmd"
+  $bat = "@echo off`r`nstart `"`" /MIN `"$($start.Exe)`" $($start.Args)`r`n"
+  [IO.File]::WriteAllText($cmdPath, $bat, (New-Object Text.ASCIIEncoding))
+  Remove-LegacyTasks
+  & schtasks.exe /Create /TN $TaskName /TR "`"$cmdPath`"" /SC ONLOGON /F | Out-Null
+  if ($LASTEXITCODE -ne 0) { return $false }
+  & schtasks.exe /Create /TN "$TaskName watchdog" /TR "`"$cmdPath`"" /SC MINUTE /MO 5 /F | Out-Null
+  if ($LASTEXITCODE -ne 0) { return $false }
+  & schtasks.exe /Run /TN $TaskName | Out-Null
+  return $true
+}
+
 function Stop-Relay {
   try { Stop-ScheduledTask -TaskName $TaskName -ErrorAction SilentlyContinue } catch {}
+  Remove-LegacyTasks
   $procs = @()
   try { $procs = Get-CimInstance Win32_Process -ErrorAction Stop } catch {
     try { $procs = Get-WmiObject Win32_Process } catch { $procs = @() }
@@ -116,6 +139,7 @@ if ($Uninstall) {
   Step "Stopping relay"
   Stop-Relay
   try { Unregister-ScheduledTask -TaskName $TaskName -Confirm:$false -ErrorAction SilentlyContinue } catch {}
+  Remove-LegacyTasks
   if (Test-Path $StartupLnk) { Remove-Item -Force $StartupLnk }
   if (Test-Path $Dir) { Remove-Item -Recurse -Force $Dir }
   Ok "ExpressHome relay removed."
@@ -132,11 +156,13 @@ New-Item -ItemType Directory -Force -Path $Dir | Out-Null
 New-Item -ItemType Directory -Force -Path $NodeDir | Out-Null
 
 # --- 1. Portable Node.js ------------------------------------------------------------
-# Node 22 needs Windows 10; office PCs on 8.1 get Node 18 (last version that runs there).
+# Node 22 needs Windows 10. Windows 8.1 can run Node 18. Windows 7 / 8 stop at Node 16.
 Step "Node.js runtime"
+$winBuild = Get-WinBuild
 $haveNode = $false
-$minMajor = 18
-if ((Get-WinBuild) -ge 10240) { $minMajor = 20 }
+$minMajor = 16
+if ($winBuild -ge 9600) { $minMajor = 18 }
+if ($winBuild -ge 10240) { $minMajor = 20 }
 if (Test-Path $NodeExe) {
   try {
     $v = & $NodeExe --version 2>$null
@@ -148,20 +174,30 @@ if (-not $haveNode) {
   $wc = New-Object Net.WebClient
   $zipName = $null
   $zipUrl = $null
-  if ((Get-WinBuild) -ge 10240) {
+  if ($winBuild -ge 10240) {
     try {
       $sums = $wc.DownloadString("https://nodejs.org/dist/latest-v22.x/SHASUMS256.txt")
       $pat = "node-v22\.[0-9.]+-win-$arch\.zip"
       if ($sums -match $pat) { $zipName = $Matches[0]; $zipUrl = "https://nodejs.org/dist/latest-v22.x/$zipName" }
     } catch {}
     if (-not $zipUrl) { $zipName = "node-v22.12.0-win-$arch.zip"; $zipUrl = "https://nodejs.org/dist/v22.12.0/$zipName" }
-  } else {
+  } elseif ($winBuild -ge 9600) {
     $zipName = "node-v18.20.8-win-$arch.zip"
     $zipUrl = "https://nodejs.org/dist/v18.20.8/$zipName"
+  } else {
+    $zipName = "node-v16.20.2-win-$arch.zip"
+    $zipUrl = "https://nodejs.org/dist/v16.20.2/$zipName"
   }
   $zipPath = Join-Path $env:TEMP $zipName
   Write-Host "    downloading $zipName (about 30 MB)..."
-  $wc.DownloadFile($zipUrl, $zipPath)
+  try {
+    $wc.DownloadFile($zipUrl, $zipPath)
+  } catch {
+    if ($winBuild -lt 9600) {
+      throw "Could not download Node.js. Windows 7 needs Service Pack 1 and .NET Framework 4.5 or newer (TLS 1.2). $($_.Exception.Message)"
+    }
+    throw
+  }
   Extract-NodeExe $zipPath $NodeExe
   Remove-Item -Force $zipPath -ErrorAction SilentlyContinue
   $v = & $NodeExe --version
@@ -196,7 +232,14 @@ try {
   Ok "scheduled task '$TaskName' (logon + 5-minute watchdog)"
   if (Test-Path $StartupLnk) { Remove-Item -Force $StartupLnk }
 } catch {
-  Warn "scheduled task not allowed here ($($_.Exception.Message)) - using the Startup folder instead"
+  Warn "scheduled task cmdlet is not on this Windows ($($_.Exception.Message))"
+}
+if (-not $registered) {
+  if (Register-LegacyTasks $start) {
+    $registered = $true
+    Ok "scheduled task '$TaskName' (logon + 5-minute watchdog)"
+    if (Test-Path $StartupLnk) { Remove-Item -Force $StartupLnk }
+  }
 }
 if (-not $registered) {
   $shell = New-Object -ComObject WScript.Shell
@@ -218,8 +261,8 @@ for ($i = 0; $i -lt 20 -and -not $online; $i++) {
   try {
     $wc2 = New-Object Net.WebClient
     $wc2.Headers.Add("Authorization", "Bearer $Token")
-    $status = $wc2.DownloadString("$Url/api/internal/ssge-relay?status=1") | ConvertFrom-Json
-    if ($status.online) { $online = $true }
+    $status = $wc2.DownloadString("$Url/api/internal/ssge-relay?status=1")
+    if ($status -match '"online"\s*:\s*true') { $online = $true }
   } catch {}
 }
 Write-Host ""

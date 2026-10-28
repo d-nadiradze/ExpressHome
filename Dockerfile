@@ -15,7 +15,7 @@ RUN npx prisma generate
 # the bundle's hash; running relays compare it with their own and restart to
 # self-update when it changes.
 RUN mkdir -p public/relay \
-  && npx esbuild src/relay/client.ts --bundle --platform=node --target=node20 --format=cjs \
+  && npx esbuild src/relay/client.ts --bundle --platform=node --target=node16 --format=cjs \
        --alias:@=./src --log-level=warning --outfile=public/relay/ssge-relay.cjs \
   && sha256sum public/relay/ssge-relay.cjs | cut -c1-16 > public/relay/version.txt
 # Persist Next.js' incremental build cache (.next/cache) so repeat builds only
