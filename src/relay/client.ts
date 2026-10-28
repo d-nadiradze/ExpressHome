@@ -59,7 +59,7 @@ const { url: SERVER, token: TOKEN } = readConfig();
 /** Max account logins per pass — the rest wait for the next poll. */
 const MAX_LOGINS_PER_PASS = parseInt(process.env.SSGE_RELAY_MAX_LOGINS || "8", 10);
 const LOGIN_PAUSE_MS = parseInt(process.env.SSGE_RELAY_LOGIN_PAUSE_MS || "1500", 10);
-const UPDATE_CHECK_MS = parseInt(process.env.SSGE_RELAY_UPDATE_CHECK_MS || String(10 * 60_000), 10);
+const UPDATE_CHECK_MS = parseInt(process.env.SSGE_RELAY_UPDATE_CHECK_MS || String(2 * 60_000), 10);
 const GUEST_PAGE =
   "https://home.ss.ge/ka/udzravi-qoneba/l/bina/iyideba?cityIdList=95";
 const USER_AGENT =
@@ -70,6 +70,7 @@ interface Work {
   guest: { needed: boolean; urgent: boolean };
   accounts: Array<{ userId: string; email: string; password: string; urgent: boolean }>;
   verifications: Array<{ id: string; email: string; password: string }>;
+  pages?: Array<{ id: string; url: string }>;
   pollMs: number;
 }
 
@@ -77,6 +78,7 @@ interface Results {
   guest?: { token?: string; error?: string };
   accounts?: Array<{ userId: string; accessToken?: string; error?: string }>;
   verifications?: Array<{ id: string; accessToken?: string; error?: string }>;
+  pages?: Array<{ id: string; html?: string; error?: string }>;
 }
 
 function log(msg: string): void {
@@ -115,26 +117,45 @@ async function api<T>(method: "GET" | "POST", body?: unknown): Promise<T> {
   return (await res.json()) as T;
 }
 
-async function fetchGuestToken(): Promise<string> {
-  const res = await fetch(GUEST_PAGE, {
+function looksLikeCloudflare(html: string): boolean {
+  if (html.length > 50_000) return false;
+  return /Just a moment|cf-chl|challenge-platform/i.test(html);
+}
+
+function isAllowedSsgePageUrl(url: string): boolean {
+  try {
+    const u = new URL(url);
+    if (u.protocol !== "https:") return false;
+    const host = u.hostname.toLowerCase();
+    return host === "home.ss.ge" || host === "www.home.ss.ge" || host === "ss.ge" || host === "www.ss.ge";
+  } catch {
+    return false;
+  }
+}
+
+async function fetchSsgeHtml(url: string): Promise<string> {
+  const res = await fetch(url, {
     headers: {
       "User-Agent": USER_AGENT,
       Accept: "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
       "Accept-Language": "ka-GE,ka;q=0.9,en;q=0.8",
     },
+    redirect: "follow",
     signal: AbortSignal.timeout(25_000),
   });
-  if (!res.ok) throw new Error(`guest page HTTP ${res.status}`);
   const html = await res.text();
+  if (!res.ok) throw new Error(`page HTTP ${res.status}`);
+  if (looksLikeCloudflare(html)) throw new Error("page is Cloudflare-challenged from this connection too");
+  return html;
+}
+
+async function fetchGuestToken(): Promise<string> {
+  const html = await fetchSsgeHtml(GUEST_PAGE);
   const match =
     html.match(/"credentialsToken"\s*:\s*"([^"]+)"/) ??
     html.match(/credentialsToken\\":\\"([^\\"]+)/);
   if (!match?.[1]) {
-    throw new Error(
-      /Just a moment|cf-chl/i.test(html)
-        ? "guest page is Cloudflare-challenged from this connection too"
-        : `credentialsToken not in page (${html.length} bytes)`
-    );
+    throw new Error(`credentialsToken not in page (${html.length} bytes)`);
   }
   return match[1];
 }
@@ -161,6 +182,28 @@ async function pass(): Promise<number> {
   }
   const results: Results = {};
   let did = 0;
+
+  // Listing HTML first — a person is waiting on parse, and ss.ge no longer
+  // ships credentialsToken so guest mint is often a wasted round-trip.
+  if (work.pages?.length) {
+    results.pages = [];
+    for (const p of work.pages) {
+      if (!isAllowedSsgePageUrl(p.url)) {
+        results.pages.push({ id: p.id, error: "refused non-ss.ge URL" });
+        continue;
+      }
+      try {
+        const html = await fetchSsgeHtml(p.url);
+        results.pages.push({ id: p.id, html });
+        log(`page ok ${p.url} (${html.length} bytes)`);
+      } catch (err) {
+        const error = err instanceof Error ? err.message : String(err);
+        results.pages.push({ id: p.id, error });
+        log(`page FAIL ${p.url}: ${error}`);
+      }
+    }
+    did++;
+  }
 
   if (work.guest.needed) {
     try {

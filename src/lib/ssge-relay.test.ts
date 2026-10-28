@@ -4,6 +4,7 @@
  */
 import assert from "node:assert/strict";
 import {
+  isAllowedSsgePageUrl,
   isRelayConfigured,
   isValidRelaySecret,
   mintUserRelayToken,
@@ -48,5 +49,12 @@ assert.equal(isValidRelaySecret(null), false);
 process.env.SSGE_RELAY_SECRET = "   ";
 assert.equal(isRelayConfigured(), false);
 assert.equal(isValidRelaySecret("Bearer    "), false);
+
+assert.equal(isAllowedSsgePageUrl("https://home.ss.ge/ka/udzravi-qoneba/x-37141189"), true);
+assert.equal(isAllowedSsgePageUrl("https://www.ss.ge/ka/foo"), true);
+assert.equal(isAllowedSsgePageUrl("https://account.ss.ge/login"), false);
+assert.equal(isAllowedSsgePageUrl("https://api-gateway.ss.ge/v1/x"), false);
+assert.equal(isAllowedSsgePageUrl("http://home.ss.ge/ka/x"), false);
+assert.equal(isAllowedSsgePageUrl("not a url"), false);
 
 console.log("ssge-relay.test.ts: all assertions passed");

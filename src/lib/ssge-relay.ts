@@ -49,6 +49,8 @@ const keyUrgent = (userId: string) => `${PREFIX}urgent:${userId}`;
 const keyError = (userId: string) => `${PREFIX}error:${userId}`;
 const keyVerify = (id: string) => `${PREFIX}verify:${id}`;
 const keyVerifyResult = (id: string) => `${PREFIX}verify-result:${id}`;
+const keyPageWant = (id: string) => `${PREFIX}page-want:${id}`;
+const keyPageResult = (id: string) => `${PREFIX}page-result:${id}`;
 const keyClaim = (item: string) => `${PREFIX}claim:${item}`;
 
 export const ADMIN_RELAY_ID = "admin";
@@ -65,8 +67,12 @@ const WAIT_POLL_MS = 2000;
 const URGENT_TTL_S = 180;
 const ERROR_TTL_S = 600;
 const VERIFY_TTL_S = 180;
+const PAGE_TTL_S = 120;
+const PAGE_HTML_MAX_CHARS = 1_000_000;
 /** A claimed work item is left to its relay this long before another may take it. */
 const CLAIM_TTL_S = parseInt(process.env.SSGE_RELAY_CLAIM_TTL_S || "60", 10);
+/** Guest mint failed because ss.ge no longer embeds the token — don't hammer. */
+const GUEST_STRUCTURAL_ERROR_TTL_S = 1800;
 /** Guest tokens from ss.ge are ~1 h; treat as expiring a bit early. */
 const TOKEN_SKEW_MS = 120_000;
 
@@ -91,12 +97,19 @@ export interface RelayVerifyWork {
   password: string;
 }
 
+export interface RelayPageWork {
+  id: string;
+  url: string;
+}
+
 export interface RelayWork {
   /** Which relay the server thinks is asking (echo for client logs). */
   relay: { id: string; kind: RelayKind };
   guest: { needed: boolean; urgent: boolean };
   accounts: RelayAccountWork[];
   verifications: RelayVerifyWork[];
+  /** Listing/search pages the server cannot fetch (403 from the VPS). */
+  pages: RelayPageWork[];
   /** Suggested poll interval for the client (ms). */
   pollMs: number;
 }
@@ -105,6 +118,7 @@ export interface RelayResults {
   guest?: { token?: string; error?: string };
   accounts?: Array<{ userId: string; accessToken?: string; error?: string }>;
   verifications?: Array<{ id: string; accessToken?: string; error?: string }>;
+  pages?: Array<{ id: string; html?: string; error?: string }>;
 }
 
 export type RelayKind = "admin" | "user";
@@ -330,6 +344,45 @@ function formatAgo(ms: number): string {
   return h < 48 ? `${h}h ${m % 60}m` : `${Math.floor(h / 24)}d`;
 }
 
+/** Only home.ss.ge listing pages — the relay is not a general-purpose proxy. */
+export function isAllowedSsgePageUrl(url: string): boolean {
+  try {
+    const u = new URL(url);
+    if (u.protocol !== "https:") return false;
+    const host = u.hostname.toLowerCase();
+    return host === "home.ss.ge" || host === "www.home.ss.ge" || host === "ss.ge" || host === "www.ss.ge";
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Ask an online relay to GET a listing page the VPS cannot (Cloudflare 403)
+ * and wait for the HTML. Returns null on timeout / no relay. Throws if a
+ * relay fetched the URL and ss.ge answered with an error.
+ */
+export async function requestRelayListingHtml(url: string): Promise<string | null> {
+  if (!isRelayConfigured() || !isAllowedSsgePageUrl(url)) return null;
+  if (!(await isAnyRelayAlive())) return null;
+  const r = redis();
+  const id = `${Date.now().toString(36)}${Math.random().toString(36).slice(2, 8)}`;
+  await r.set(keyPageWant(id), JSON.stringify({ url }), "EX", PAGE_TTL_S);
+  const deadline = Date.now() + WAIT_MS;
+  try {
+    while (Date.now() < deadline) {
+      await sleep(WAIT_POLL_MS);
+      const raw = await r.get(keyPageResult(id));
+      if (!raw) continue;
+      const result = JSON.parse(raw) as { html?: string; error?: string };
+      if (result.html) return result.html;
+      throw new Error(result.error || "ss.ge relay could not fetch the listing page");
+    }
+    return null;
+  } finally {
+    await r.del(keyPageWant(id), keyPageResult(id), keyClaim(`page:${id}`)).catch(() => null);
+  }
+}
+
 // ---- Guest token -------------------------------------------------------------
 
 export async function getRelayGuestToken(): Promise<RelayGuestToken | null> {
@@ -463,9 +516,14 @@ export async function pullRelayWork(identity: RelayIdentity): Promise<RelayWork>
   await r.set(keyLastSeen(identity.id), now);
 
   // Guest token: any relay keeps one warm; urgent if someone is waiting.
+  // ss.ge stopped embedding credentialsToken in SSR (Oct 2026); after a
+  // structural miss, skip minting until TTL unless a job is actually waiting.
   const guest = await getRelayGuestToken();
   const guestUrgent = (await r.exists(KEY_GUEST_URGENT)) === 1;
-  let guestNeeded = guestUrgent || !guest || guest.expiresAt - REFRESH_AHEAD_MS <= Date.now();
+  const guestError = await r.get(KEY_GUEST_ERROR);
+  let guestNeeded =
+    (guestUrgent || !guest || guest.expiresAt - REFRESH_AHEAD_MS <= Date.now()) &&
+    (guestUrgent || !guestError);
   if (guestNeeded && !(await claim("guest", identity.id))) guestNeeded = false;
 
   // Accounts. Admin: every wanted/urgent account. User: only itself — and
@@ -532,12 +590,30 @@ export async function pullRelayWork(identity: RelayIdentity): Promise<RelayWork>
     }
   }
 
-  const busy = guestUrgent || accounts.some((a) => a.urgent) || verifications.length > 0;
+  const pages: RelayPageWork[] = [];
+  for (const k of await scanKeys(`${PREFIX}page-want:*`)) {
+    const id = k.slice(`${PREFIX}page-want:`.length);
+    if ((await r.exists(keyPageResult(id))) === 1) continue;
+    const raw = await r.get(k);
+    if (!raw) continue;
+    try {
+      const { url } = JSON.parse(raw) as { url?: string };
+      if (!url || !isAllowedSsgePageUrl(url)) continue;
+      if (!(await claim(`page:${id}`, identity.id))) continue;
+      pages.push({ id, url });
+    } catch {
+      /* skip malformed */
+    }
+  }
+
+  const busy =
+    guestUrgent || accounts.some((a) => a.urgent) || verifications.length > 0 || pages.length > 0;
   return {
     relay: { id: identity.id, kind: identity.kind },
     guest: { needed: guestNeeded, urgent: guestUrgent },
     accounts,
     verifications,
+    pages,
     // Idle polls are one small GET against our own server; keep them frequent
     // so a cold account's first publish waits seconds, not a quarter minute.
     pollMs: busy ? 2000 : parseInt(process.env.SSGE_RELAY_POLL_MS || "5000", 10),
@@ -547,11 +623,12 @@ export async function pullRelayWork(identity: RelayIdentity): Promise<RelayWork>
 export async function pushRelayResults(
   identity: RelayIdentity,
   results: RelayResults
-): Promise<{ guest: boolean; accounts: number; verifications: number }> {
+): Promise<{ guest: boolean; accounts: number; verifications: number; pages: number }> {
   const r = redis();
   let guestSaved = false;
   let accountsSaved = 0;
   let verificationsSaved = 0;
+  let pagesSaved = 0;
 
   if (results.guest) {
     if (results.guest.token) {
@@ -561,7 +638,13 @@ export async function pushRelayResults(
       await r.del(KEY_GUEST_URGENT, KEY_GUEST_ERROR);
       guestSaved = true;
     } else if (results.guest.error) {
-      await r.set(KEY_GUEST_ERROR, results.guest.error.slice(0, 300), "EX", ERROR_TTL_S);
+      const structural = /credentialsToken not in page|no longer embeds/i.test(results.guest.error);
+      await r.set(
+        KEY_GUEST_ERROR,
+        results.guest.error.slice(0, 300),
+        "EX",
+        structural ? GUEST_STRUCTURAL_ERROR_TTL_S : ERROR_TTL_S
+      );
       await r.del(KEY_GUEST_URGENT);
     }
     await releaseClaim("guest");
@@ -608,5 +691,21 @@ export async function pushRelayResults(
     verificationsSaved++;
   }
 
-  return { guest: guestSaved, accounts: accountsSaved, verifications: verificationsSaved };
+  for (const p of results.pages ?? []) {
+    if (!p?.id) continue;
+    const html =
+      typeof p.html === "string" && p.html.length > PAGE_HTML_MAX_CHARS
+        ? p.html.slice(0, PAGE_HTML_MAX_CHARS)
+        : p.html;
+    await r.set(
+      keyPageResult(p.id),
+      JSON.stringify({ html, error: p.error }),
+      "EX",
+      PAGE_TTL_S
+    );
+    await releaseClaim(`page:${p.id}`);
+    pagesSaved++;
+  }
+
+  return { guest: guestSaved, accounts: accountsSaved, verifications: verificationsSaved, pages: pagesSaved };
 }

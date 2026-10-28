@@ -65,9 +65,9 @@ export async function POST(request: NextRequest) {
   try {
     const body = (await request.json()) as RelayResults;
     const saved = await pushRelayResults(auth.identity, body ?? {});
-    if (saved.guest || saved.accounts || saved.verifications) {
+    if (saved.guest || saved.accounts || saved.verifications || saved.pages) {
       console.log(
-        `[ss.ge relay] received from ${auth.identity.id}: guest=${saved.guest} accounts=${saved.accounts} verifications=${saved.verifications}`
+        `[ss.ge relay] received from ${auth.identity.id}: guest=${saved.guest} accounts=${saved.accounts} verifications=${saved.verifications} pages=${saved.pages}`
       );
     }
     return NextResponse.json({ ok: true, ...saved });
