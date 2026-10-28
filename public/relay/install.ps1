@@ -91,7 +91,9 @@ function Remove-LegacyTasks {
 # since XP and does not need an admin prompt for the current user.
 function Register-LegacyTasks($start) {
   $cmdPath = Join-Path $Dir "start-relay.cmd"
-  $bat = "@echo off`r`nstart `"`" /MIN `"$($start.Exe)`" $($start.Args)`r`n"
+  # The variable has to be in this cmd, not only in PowerShell. Node 16 exits
+  # before running any script on Windows 7/8 unless it is exactly "1".
+  $bat = "@echo off`r`nset NODE_SKIP_PLATFORM_CHECK=1`r`nstart `"`" /MIN `"$($start.Exe)`" $($start.Args)`r`n"
   [IO.File]::WriteAllText($cmdPath, $bat, (New-Object Text.ASCIIEncoding))
   Remove-LegacyTasks
   if ((Invoke-QuietSchtasks "/Create /TN `"$TaskName`" /TR `"$cmdPath`" /SC ONLOGON /F") -ne 0) { return $false }

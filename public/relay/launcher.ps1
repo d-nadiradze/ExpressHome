@@ -5,8 +5,14 @@
 # Compatible with Windows 7 SP1 / PowerShell 2, Windows 8.1, and Windows 10+.
 
 $ErrorActionPreference = "Continue"
-if (-not $PSScriptRoot) { $PSScriptRoot = Split-Path -Parent $MyInvocation.MyCommand.Path }
+# $PSScriptRoot and $PSCommandPath do not exist on Windows 7 (PowerShell 2).
+# Using $PSCommandPath there made every launch look like a launcher update,
+# so the script restarted itself and never started Node.
+$scriptPath = $MyInvocation.MyCommand.Path
+if (-not $scriptPath) { $scriptPath = $MyInvocation.MyCommand.Definition }
+if (-not $PSScriptRoot) { $PSScriptRoot = Split-Path -Parent $scriptPath }
 $dir = $PSScriptRoot
+if (-not $scriptPath) { $scriptPath = Join-Path $dir "launcher.ps1" }
 $log = Join-Path $dir "relay.log"
 $node = Join-Path $dir "node\node.exe"
 $client = Join-Path $dir "ssge-relay.cjs"
@@ -38,39 +44,61 @@ function Read-ServerUrl {
   return $null
 }
 
-function Get-Sha256($path) {
+# MD5CryptoServiceProvider is in .NET 2, so this works on Windows 7 PowerShell 2.
+# Get-FileHash and HashAlgorithm.Dispose() are not. A thrown compare used to be
+# treated as "file changed", which re-downloaded and restarted on every launch.
+function Get-FileDigest($path) {
+  $hash = ""
+  $md5 = $null
+  $fs = $null
   try {
-    return (Get-FileHash $path -Algorithm SHA256).Hash
+    $md5 = New-Object System.Security.Cryptography.MD5CryptoServiceProvider
+    $fs = New-Object System.IO.FileStream($path, [System.IO.FileMode]::Open, [System.IO.FileAccess]::Read, [System.IO.FileShare]::ReadWrite)
+    $bytes = $md5.ComputeHash($fs)
+    $hash = ([System.BitConverter]::ToString($bytes)).Replace("-", "")
   } catch {
-    $sha = [Security.Cryptography.SHA256]::Create()
-    try {
-      $fs = [IO.File]::OpenRead($path)
-      try { return [BitConverter]::ToString($sha.ComputeHash($fs)).Replace("-", "") } finally { $fs.Close() }
-    } finally { $sha.Dispose() }
+    $hash = ""
   }
+  if ($null -ne $fs) { try { $fs.Close() } catch {} }
+  if ($null -ne $md5) { try { $md5.Clear() } catch {} }
+  return $hash
+}
+
+function Same-File($a, $b) {
+  $ha = Get-FileDigest $a
+  $hb = Get-FileDigest $b
+  if ($ha -and $hb) { return ($ha -eq $hb) }
+  $prev = $ErrorActionPreference
+  $ErrorActionPreference = "SilentlyContinue"
+  cmd.exe /c "fc /b `"$a`" `"$b`" >nul 2>&1" | Out-Null
+  $code = $LASTEXITCODE
+  $ErrorActionPreference = $prev
+  if ($code -eq 0) { return $true }
+  if ($code -eq 1) { return $false }
+  # Can't tell. Assume unchanged so a compare failure cannot restart forever.
+  return $true
 }
 
 function Update-File($url, $target) {
+  if (-not $target) { return $false }
+  $leaf = Split-Path $target -Leaf
+  if (-not $leaf) { return $false }
   $tmp = "$target.new"
   try {
     (New-Object Net.WebClient).DownloadFile("$url`?t=$(Get-Random)", $tmp)
   } catch {
-    Log "update check failed for $(Split-Path $target -Leaf): $($_.Exception.Message)"
+    Log "update check failed for ${leaf}: $($_.Exception.Message)"
     return $false
   }
   if ((Get-Item $tmp).Length -lt 100) { Remove-Item -Force $tmp; return $false }
-  $same = $false
-  if (Test-Path $target) {
-    try { $same = (Get-Sha256 $tmp) -eq (Get-Sha256 $target) } catch { $same = $false }
-  }
-  if ($same) { Remove-Item -Force $tmp; return $false }
+  if ((Test-Path $target) -and (Same-File $tmp $target)) { Remove-Item -Force $tmp; return $false }
   Move-Item -Force $tmp $target
-  Log "updated $(Split-Path $target -Leaf)"
+  Log "updated $leaf"
   return $true
 }
 
 function Get-Relaunch {
-  $fileArg = "-NoProfile -NonInteractive -ExecutionPolicy Bypass -File `"$PSCommandPath`""
+  $fileArg = "-NoProfile -NonInteractive -ExecutionPolicy Bypass -File `"$scriptPath`""
   $conhost = Join-Path $env:SystemRoot "System32\conhost.exe"
   $build = 0
   try { $build = [int](Get-ItemProperty "HKLM:\SOFTWARE\Microsoft\Windows NT\CurrentVersion").CurrentBuildNumber } catch {}
@@ -89,7 +117,7 @@ while ($true) {
   $server = Read-ServerUrl
   if ($server) {
     [void](Update-File "$server/relay/ssge-relay.cjs" $client)
-    if (Update-File "$server/relay/launcher.ps1" $PSCommandPath) {
+    if (Update-File "$server/relay/launcher.ps1" $scriptPath) {
       Log "launcher updated - restarting itself"
       try { $mutex.ReleaseMutex() | Out-Null } catch {}
       $re = Get-Relaunch
