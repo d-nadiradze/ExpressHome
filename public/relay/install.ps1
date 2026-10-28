@@ -31,6 +31,8 @@ $ProgressPreference = "SilentlyContinue"
 try { [Net.ServicePointManager]::SecurityProtocol = [Enum]::ToObject([Net.SecurityProtocolType], 4032) } catch {
   try { [Net.ServicePointManager]::SecurityProtocol = [Net.ServicePointManager]::SecurityProtocol -bor 3072 } catch {}
 }
+# Node 16 refuses to stay running on Windows 7/8 without this.
+$env:NODE_SKIP_PLATFORM_CHECK = "1"
 
 $TaskName = "ExpressHome relay"
 $Dir = Join-Path $env:LOCALAPPDATA "ExpressHomeRelay"
@@ -212,7 +214,8 @@ if (-not $haveNode) {
   }
   Extract-NodeExe $zipPath $NodeExe
   Remove-Item -Force $zipPath -ErrorAction SilentlyContinue
-  $v = & $NodeExe --version
+  $v = & $NodeExe --version 2>$null
+  if ($v -notmatch "^v\d+") { throw "Node.js did not start on this Windows." }
   Ok "installed $v"
 }
 
