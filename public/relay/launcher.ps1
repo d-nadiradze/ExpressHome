@@ -15,7 +15,10 @@ $configPath = Join-Path $dir "config.json"
 function Log($msg) { "$(Get-Date -Format s) launcher: $msg" | Add-Content $log }
 
 try { [Console]::TreatControlCAsInput = $true } catch {}
-try { [Net.ServicePointManager]::SecurityProtocol = [Net.ServicePointManager]::SecurityProtocol -bor 3072 } catch {}
+try { [Net.ServicePointManager]::SecurityProtocol = [Enum]::ToObject([Net.SecurityProtocolType], 4032) } catch {}
+# Node 16 exits immediately on Windows 7/8 unless this is set. The relay never
+# reaches the server without it, which is the "installed but has not reported in" case.
+$env:NODE_SKIP_PLATFORM_CHECK = "1"
 
 # A Global mutex needs a privilege normal users do not have on Windows 7.
 # Fall back to a per-user mutex, which is enough for one interactive session.
